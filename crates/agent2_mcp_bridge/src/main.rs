@@ -400,7 +400,11 @@ fn main() -> Result<()> {
     });
 
     info!("Shutting down MCP bridge");
-    if let Some(err) = run_error.lock().unwrap().take() {
+    let maybe_err = {
+        let mut guard = run_error.lock().unwrap();
+        guard.take()
+    };
+    if let Some(err) = maybe_err {
         Err(err)
     } else {
         Ok(())
