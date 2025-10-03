@@ -159,7 +159,7 @@ impl ContextServer {
 /// 3. Create a handler closure that schedules execution on the foreground thread
 /// 4. Stream incremental output (if desired) via `ToolResponseContent` events
 pub mod agent_tool_adapter {
-    use anyhow::{Result, anyhow};
+    use anyhow::anyhow;
     use gpui::AsyncApp;
     use serde_json::Value;
     use std::sync::Arc;
@@ -232,12 +232,6 @@ pub mod agent_tool_adapter {
                             "agent tool '{}' not yet wired for execution (adapter placeholder)",
                             export.name
                         ))
-                        .map(|_| super::listener::ToolResponse {
-                            content: vec![ToolResponseContent::Text {
-                                text: "unreachable".into(),
-                            }],
-                            structured_content: serde_json::Value::Null,
-                        })
                     })
                 }),
             );
