@@ -29,6 +29,7 @@ and what filesystem or project context to inject into the `ToolCallEventStream`.
 
 use std::sync::Arc;
 
+// Crate name in Cargo.toml is `agent-client-protocol`; Rust normalizes the hyphen to an underscore for the import path.
 use agent2::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};

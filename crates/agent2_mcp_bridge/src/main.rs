@@ -52,6 +52,7 @@ use serde_json::{json, Value};
 use gpui::App;
 
 mod export;
+// Crate name in Cargo.toml is `agent-client-protocol`; Rust normalizes the hyphen to an underscore (`agent_client_protocol`) for use paths.
 use export::{adapt_tool, EventStreamProvider, ExportedTool, InvocationResult};
 
 // -------------------------------------------------------------------------------------
