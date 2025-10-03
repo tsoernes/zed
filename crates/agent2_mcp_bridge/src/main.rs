@@ -50,7 +50,8 @@ use log::{error, info, warn};
 use serde_json::{json, Value};
 
 use gpui::App;
-use gpui::AppContext;
+
+use serde::Serialize;
 
 mod export;
 // Crate name in Cargo.toml is `agent-client-protocol`; Rust normalizes the hyphen to an underscore (`agent_client_protocol`) for use paths.
@@ -114,7 +115,7 @@ impl EventStreamProvider for PlaceholderEventStreamProvider {
 // Skeleton bootstrap logic
 // -------------------------------------------------------------------------------------
 
-fn bootstrap_bridge_state(app: &mut App) -> Result<BridgeState> {
+fn bootstrap_bridge_state(_app: &mut App) -> Result<BridgeState> {
     // NOTE:
     // A full bootstrap (Project + ProjectContext + ContextServerRegistry + Templates + Thread)
     // requires mirroring internal editor initialization that pulls in many subsystems.
@@ -132,7 +133,7 @@ fn bootstrap_bridge_state(app: &mut App) -> Result<BridgeState> {
     // reflects the final state expected by the rest of the server.
 
     let mut tools = HashMap::new();
-    let mut ready = false;
+    let ready = false;
 
     // --- BEGIN bootstrap sketch (non-functional placeholder) ---
     //
@@ -301,89 +302,109 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     info!("Starting agent2 context tools MCP bridge (skeleton)");
 
-    let mut app = App::new();
-    let bridge_state = Arc::new(Mutex::new(bootstrap_bridge_state(&mut app)?));
-    let stream_provider: Arc<dyn EventStreamProvider> = Arc::new(PlaceholderEventStreamProvider);
+    let application = gpui::Application::headless();
+    let run_error = Arc::new(Mutex::new(None::<anyhow::Error>));
+    let run_error_cloned = run_error.clone();
 
-    // Read entire stdin (simple; for production consider a streaming loop).
-    let mut buf = String::new();
-    io::stdin().read_to_string(&mut buf)?;
-    for (line_no, line) in buf.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
+    application.run(move |cx| match bootstrap_bridge_state(cx) {
+        Ok(state) => {
+            let bridge_state = Arc::new(Mutex::new(state));
+            let stream_provider: Arc<dyn EventStreamProvider> =
+                Arc::new(PlaceholderEventStreamProvider);
 
-        let parsed: Value = match serde_json::from_str(trimmed) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("Ignoring line {}: JSON parse error: {}", line_no + 1, e);
-                continue;
+            let mut buf = String::new();
+            if let Err(e) = io::stdin().read_to_string(&mut buf) {
+                error!("Failed reading stdin: {e}");
+                *run_error_cloned.lock().unwrap() = Some(e.into());
+                return;
             }
-        };
 
-        let id = parsed.get("id").cloned().unwrap_or(Value::Null);
-        let method = parsed
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or("<missing>");
+            for (line_no, line) in buf.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-        let response_value = {
-            let mut state_guard = bridge_state.lock().unwrap();
-            match method {
-                "initialize" => Either::Ok(handle_initialize(id)),
-                "tools/list" => Either::Ok(handle_tools_list(id, &state_guard)),
-                "tools/call" => {
-                    let params = parsed.get("params").cloned().unwrap_or(json!({}));
-                    match handle_tools_call(
-                        id,
-                        &params,
-                        &state_guard,
-                        &mut app,
-                        stream_provider.as_ref(),
-                    ) {
-                        Ok(success) => Either::Ok(success),
-                        Err(err) => Either::Err(RpcError {
+                let parsed: Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("Ignoring line {}: JSON parse error: {}", line_no + 1, e);
+                        continue;
+                    }
+                };
+
+                let id = parsed.get("id").cloned().unwrap_or(Value::Null);
+                let method = parsed
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>");
+
+                let response_value = {
+                    let state_guard = bridge_state.lock().unwrap();
+                    match method {
+                        "initialize" => Either::Ok(handle_initialize(id.clone())),
+                        "tools/list" => Either::Ok(handle_tools_list(id.clone(), &state_guard)),
+                        "tools/call" => {
+                            let params = parsed.get("params").cloned().unwrap_or(json!({}));
+                            match handle_tools_call(
+                                id.clone(),
+                                &params,
+                                &state_guard,
+                                cx,
+                                stream_provider.as_ref(),
+                            ) {
+                                Ok(success) => Either::Ok(success),
+                                Err(err) => Either::Err(RpcError {
+                                    jsonrpc: "2.0",
+                                    id: id.clone(),
+                                    error: RpcErrorBody {
+                                        code: 500,
+                                        message: err.to_string(),
+                                    },
+                                }),
+                            }
+                        }
+                        _ => Either::Err(RpcError {
                             jsonrpc: "2.0",
-                            id,
+                            id: id.clone(),
                             error: RpcErrorBody {
-                                code: 500,
-                                message: err.to_string(),
+                                code: 400,
+                                message: format!("Unsupported method: {method}"),
                             },
                         }),
                     }
-                }
-                _ => Either::Err(RpcError {
-                    jsonrpc: "2.0",
-                    id,
-                    error: RpcErrorBody {
-                        code: 400,
-                        message: format!("Unsupported method: {method}"),
-                    },
-                }),
-            }
-        };
+                };
 
-        match response_value {
-            Either::Ok(success) => {
-                if let Err(e) = serde_json::to_writer(io::stdout(), &success) {
-                    error!("Failed to write success response: {e}");
-                } else {
-                    print!("\n");
-                }
-            }
-            Either::Err(err_resp) => {
-                if let Err(e) = serde_json::to_writer(io::stdout(), &err_resp) {
-                    error!("Failed to write error response: {e}");
-                } else {
-                    print!("\n");
+                match response_value {
+                    Either::Ok(success) => {
+                        if let Err(e) = serde_json::to_writer(io::stdout(), &success) {
+                            error!("Failed to write success response: {e}");
+                        } else {
+                            print!("\n");
+                        }
+                    }
+                    Either::Err(err_resp) => {
+                        if let Err(e) = serde_json::to_writer(io::stdout(), &err_resp) {
+                            error!("Failed to write error response: {e}");
+                        } else {
+                            print!("\n");
+                        }
+                    }
                 }
             }
         }
-    }
+        Err(e) => {
+            error!("Failed to bootstrap bridge: {e}");
+            *run_error_cloned.lock().unwrap() = Some(e);
+        }
+    });
 
     info!("Shutting down MCP bridge");
-    Ok(())
+    if let Some(err) = run_error.lock().unwrap().take() {
+        Err(err)
+    } else {
+        Ok(())
+    }
 }
 
 // -------------------------------------------------------------------------------------
