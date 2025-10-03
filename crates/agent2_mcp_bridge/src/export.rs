@@ -1,4 +1,6 @@
-/*!
+/*! TODO(injection): add adapters / helper wrappers for planned message injection tools
+    (e.g. add_user_message, add_assistant_message, truncate_after) so they can be
+    exported alongside list_history, memory, and rewrite_history once implemented.
 Export adapters for exposing internal `AgentTool` implementations (e.g. `list_history`,
 `memory`, `rewrite_history`) through an external MCP (Model Context Protocol) server
 without coupling the server loop directly to the agent2 internals.
