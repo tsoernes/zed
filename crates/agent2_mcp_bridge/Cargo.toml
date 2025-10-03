@@ -21,7 +21,7 @@ pollster = "0.3"
 
 # Workspace (path) dependencies into existing Zed crates.
 agent2 = { path = "../agent2" }
-agent_client_protocol = { path = "../agent_client_protocol" }
+agent-client-protocol = { workspace = true }
 gpui = { path = "../gpui" }
 
 [dev-dependencies]

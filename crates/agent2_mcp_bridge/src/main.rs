@@ -43,16 +43,16 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use env_logger::Env;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use gpui::App;
 
 mod export;
-use export::{EventStreamProvider, ExportedTool, InvocationResult, adapt_tool};
+use export::{adapt_tool, EventStreamProvider, ExportedTool, InvocationResult};
 
 // -------------------------------------------------------------------------------------
 // JSON-RPC types

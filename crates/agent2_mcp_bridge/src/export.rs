@@ -29,13 +29,13 @@ and what filesystem or project context to inject into the `ToolCallEventStream`.
 
 use std::sync::Arc;
 
-use agent_client_protocol as acp;
 use agent2::{AgentTool, ToolCallEventStream};
-use anyhow::{Result, anyhow};
+use agent_client_protocol as acp;
+use anyhow::{anyhow, Result};
 use gpui::App;
-use schemars::{JsonSchema, schema_for};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use schemars::{schema_for, JsonSchema};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 /// Provides a way for the bridge/server to supply a fresh `ToolCallEventStream`
