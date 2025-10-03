@@ -165,7 +165,7 @@ pub mod agent_tool_adapter {
     use std::sync::Arc;
 
     use crate::listener::McpServer;
-    use crate::types::{ToolAnnotations, ToolResponseContent};
+    use crate::types::ToolAnnotations;
 
     /// Exported agent tool descriptor (schema + metadata).
     pub struct AgentToolExport {
@@ -220,17 +220,19 @@ pub mod agent_tool_adapter {
 
             // Placeholder handler: returns an explanatory error until bridged.
             // NOTE: Relies on `add_dynamic_tool` accepting a closure with the expected signature.
+            let name_owned = export.name.to_string();
             server.add_dynamic_tool(
                 export.name,
                 export.description.clone(),
                 export.input_schema.clone(),
                 export.output_schema.clone(),
                 Some(annotations),
-                Box::new(|_args: Option<Value>, cx: &mut AsyncApp| {
+                Box::new(move |_args: Option<Value>, cx: &mut AsyncApp| {
+                    let name = name_owned.clone();
                     cx.spawn(async move |_| {
                         Err(anyhow!(
                             "agent tool '{}' not yet wired for execution (adapter placeholder)",
-                            export.name
+                            name
                         ))
                     })
                 }),
