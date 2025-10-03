@@ -2,7 +2,7 @@ use crate::{AgentTool, Thread, ToolCallEventStream, thread::Message};
 use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, Context, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -10,6 +10,28 @@ use uuid::Uuid;
 
 use crate::thread::{UserMessage, UserMessageContent};
 
+/**
+ * Tool for shortening / compacting a portion of the conversation history when approaching
+ * context or token limits.
+ *
+ * Use this to:
+ * - Remove an obsolete span of messages (strategy = "remove")
+ * - Summarize a span of messages into a single compact placeholder (strategy = "summarize")
+ *
+ * The tool:
+ * 1. Generates a distinctive marker that records: range indices, message count, character count,
+ *    and an optional summary.
+ * 2. Inserts a preview (truncated if large) so the model still has immediate local signal.
+ * 3. Embeds the full original markdown inside a collapsible <details> block so the *deleted* /
+ *    *collapsed* context remains visible to the user (but is no longer fully re-sent in future
+ *    model requests).
+ *
+ * Indices referenced are the 0-based positions the model now sees because each message is annotated
+ * upstream in the request building step with [#<index>]. Provide inclusive start_index/end_index.
+ *
+ * This operation is lossy unless summarized content is sufficiently faithful. You can apply it
+ * multiple times over earlier compressed regions to progressively shrink history.
+ */
 /// Strategy for rewriting (shortening) a portion of the thread history.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -61,20 +83,19 @@ impl RewriteHistoryTool {
                 "start_index ({start_index}) was greater than end_index ({end_index})"
             ));
         }
-        if end_index >= thread.messages.len() {
+        if end_index >= thread.message_len() {
             return Err(anyhow!(
                 "end_index ({end_index}) out of bounds (messages len = {})",
-                thread.messages.len()
+                thread.message_len()
             ));
         }
 
         let range_len = end_index - start_index + 1;
 
-        // Collect original markdown
+        // Collect original markdown using public helper
         let mut original = String::new();
         for (ix, message) in thread
-            .messages
-            .iter()
+            .iter_messages()
             .enumerate()
             .skip(start_index)
             .take(range_len)
@@ -153,9 +174,8 @@ impl RewriteHistoryTool {
             content: vec![UserMessageContent::Text(placeholder.clone())],
         });
 
-        thread
-            .messages
-            .splice(start_index..=end_index, std::iter::once(replacement));
+        // Perform replacement via public API
+        thread.replace_range_with_message(start_index, end_index, replacement)?;
 
         let result_message = match strategy {
             RewriteStrategy::Remove => format!(
@@ -180,6 +200,10 @@ impl AgentTool for RewriteHistoryTool {
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
+    }
+
+    fn description(&self) -> SharedString {
+        "Use this tool to shorten/compact conversation history by removing or summarizing an indexed range of messages when nearing context or token limits. Provide inclusive start_index and end_index; choose strategy \"remove\" to drop detail or \"summarize\" to keep a concise representation.".into()
     }
 
     fn initial_title(
@@ -208,12 +232,14 @@ impl AgentTool for RewriteHistoryTool {
         };
 
         cx.update(|cx| {
-            thread.update(cx, |thread, _cx| {
+            thread.update(cx, |thread, thread_cx| {
                 let (result_msg, placeholder) = self.rewrite(thread, input)?;
                 event_stream.update_fields(acp::ToolCallUpdateFields {
                     content: Some(vec![result_msg.clone().into(), placeholder.into()]),
                     ..Default::default()
                 });
+                // Notify that the thread's message history structure changed.
+                thread_cx.notify();
                 Ok(result_msg)
             })
         })

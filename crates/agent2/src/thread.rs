@@ -1066,8 +1066,8 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
-        self.add_tool(MemoryTool::new(self.downgrade()));
-        self.add_tool(RewriteHistoryTool::new(self.downgrade()));
+        self.add_tool(MemoryTool::new(cx.weak_entity()));
+        self.add_tool(RewriteHistoryTool::new(cx.weak_entity()));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
     }
@@ -1078,6 +1078,88 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
+    }
+
+    // Public helpers for tools that need to inspect or rewrite message history.
+    // These functions provide a constrained interface for tools that wish to
+    // summarize, rewrite, or store ranges of prior messages without exposing the
+    // internal `messages` vector directly.
+    pub fn message_len(&self) -> usize {
+        self.messages.len()
+    }
+
+    pub fn iter_messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter()
+    }
+
+    /// Return the markdown serialization for the inclusive range [start, end].
+    /// Returns (combined_markdown, message_count, char_count).
+    pub fn serialize_range(&self, start: usize, end: usize) -> Result<(String, usize, usize)> {
+        let markdown = self.markdown_range(start, end)?;
+        let message_count = end - start + 1;
+        let char_count = markdown.len();
+        Ok((markdown, message_count, char_count))
+    }
+
+    /// Return a markdown string representing the inclusive range [start, end].
+    pub fn markdown_range(&self, start: usize, end: usize) -> Result<String> {
+        if start > end {
+            return Err(anyhow!(
+                "start_index ({start}) was greater than end_index ({end})"
+            ));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow!(
+                "end_index ({end}) out of bounds (messages len = {})",
+                self.messages.len()
+            ));
+        }
+        let mut combined = String::new();
+        for (ix, message) in self
+            .messages
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(end - start + 1)
+        {
+            if ix > start {
+                combined.push('\n');
+            }
+            combined.push_str(&message.to_markdown());
+        }
+        Ok(combined)
+    }
+
+    /// Replace the inclusive range [start, end] with a single replacement message.
+    pub fn replace_range_with_message(
+        &mut self,
+        start: usize,
+        end: usize,
+        replacement: Message,
+    ) -> Result<()> {
+        if start > end {
+            return Err(anyhow!(
+                "start_index ({start}) was greater than end_index ({end})"
+            ));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow!(
+                "end_index ({end}) out of bounds (messages len = {})",
+                self.messages.len()
+            ));
+        }
+        self.messages
+            .splice(start..=end, std::iter::once(replacement));
+        Ok(())
+    }
+
+    /// Legacy helper used by existing tool code. Performs a best‑effort replacement
+    /// without propagating an error (silently ignores invalid ranges).
+    pub fn splice_messages(&mut self, start: usize, end: usize, replacement: Message) {
+        if start > end || end >= self.messages.len() {
+            return;
+        }
+        let _ = self.replace_range_with_message(start, end, replacement);
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -1936,20 +2018,34 @@ impl Thread {
             self.messages.len()
         );
 
-        let system_prompt = SystemPromptTemplate {
+        let base_system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
         .expect("Invalid template");
+        // Inject lightweight token/context status so the model can proactively decide to compact history
+        // using the `memory` or `rewrite_history` tools before hitting limits.
+        let token_usage_info = if self.latest_token_usage().is_some() {
+            "[Context Status] Token usage available. Consider `memory` or `rewrite_history` to compress older messages if approaching limits."
+        } else {
+            "[Context Status] Token usage unavailable. You may still use `memory` or `rewrite_history` to shrink context."
+        };
+        let system_prompt = format!("{base_system_prompt}\n\n{token_usage_info}");
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
             content: vec![system_prompt.into()],
             cache: false,
         }];
-        for message in &self.messages {
-            messages.extend(message.to_request());
+        for (ix, message) in self.messages.iter().enumerate() {
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.first_mut() {
+                // Prepend an index annotation so the model can reference specific messages.
+                // Format: [#<index>]
+                first.content.insert(0, format!("[#{}]", ix).into());
+            }
+            messages.extend(reqs);
         }
 
         if let Some(last_message) = messages.last_mut() {

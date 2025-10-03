@@ -2,7 +2,8 @@ use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use db::kvp::KEY_VALUE_STORE;
+use gpui::{App, Context, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,10 +14,12 @@ use uuid::Uuid;
 
 use crate::thread::{Message, UserMessage, UserMessageContent};
 
-/// Global in‑memory store mapping memory handles to serialized context.
-/// This is process local and non‑persistent. A future implementation could
-/// persist or evict entries based on size limits.
+/// Global in-memory store mapping memory handles to serialized context.
+/// Now supplemented by persistence via KEY_VALUE_STORE.
+/// Values are written asynchronously; reads fall back to persistence if not present in memory.
 static MEMORY_STORE: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+
+const MEMORY_KV_PREFIX: &str = "agent_memory::";
 
 fn memory_store() -> &'static RwLock<HashMap<String, String>> {
     MEMORY_STORE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -45,6 +48,15 @@ pub struct MemoryToolInput {
     memory_handle: Option<String>,
 }
 
+/// Tool for compacting conversation history when nearing context/token limits.
+///
+/// Use this to:
+/// - Store a contiguous range of older messages in a persistent memory handle (operation = "store")
+///   which replaces them in the live history with a lightweight placeholder marker
+/// - Retrieve previously stored content by handle (operation = "load") without re‑expanding it
+///
+/// This helps prevent the model from running out of context window space while still allowing
+/// explicit retrieval of archived details later.
 pub struct MemoryTool {
     thread: WeakEntity<Thread>,
 }
@@ -54,9 +66,16 @@ impl MemoryTool {
         Self { thread }
     }
 
+    // (Helper methods removed; now using Thread's public helper methods)
+
+    fn kv_key(handle: &str) -> String {
+        format!("{MEMORY_KV_PREFIX}{handle}")
+    }
+
     fn store_range(
         &self,
         thread: &mut Thread,
+        cx: &mut Context<Thread>,
         start: usize,
         end: usize,
     ) -> Result<(String, usize, usize)> {
@@ -65,30 +84,16 @@ impl MemoryTool {
                 "start_index ({start}) was greater than end_index ({end})"
             ));
         }
-        if end >= thread.messages.len() {
+        // Delegate length check via helper to avoid direct field semantics.
+        if end >= thread.message_len() {
             return Err(anyhow!(
                 "end_index ({end}) out of bounds (messages len = {})",
-                thread.messages.len()
+                thread.message_len()
             ));
         }
 
-        // Collect markdown for selected messages before mutation.
-        let mut serialized = String::new();
-        for (ix, message) in thread
-            .messages
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(end - start + 1)
-        {
-            if ix > start {
-                serialized.push('\n');
-            }
-            serialized.push_str(&message.to_markdown());
-        }
-
-        let message_count = end - start + 1;
-        let char_count = serialized.len();
+        // Use thread helper to serialize the inclusive range.
+        let (serialized, message_count, char_count) = thread.serialize_range(start, end)?;
 
         // Generate a memory handle.
         let session_id = thread.id().0.to_string();
@@ -98,11 +103,19 @@ impl MemoryTool {
             let mut map = memory_store()
                 .write()
                 .map_err(|_| anyhow!("failed to acquire memory store lock for write"))?;
-            map.insert(handle.clone(), serialized);
+            map.insert(handle.clone(), serialized.clone());
+        }
+
+        // Persist asynchronously (skip in tests).
+        if !cfg!(any(feature = "test-support", test)) {
+            let key = Self::kv_key(&handle);
+            cx.background_spawn(async move {
+                let _ = KEY_VALUE_STORE.write_kvp(key, serialized).await;
+            })
+            .detach();
         }
 
         // Replace the range with a single synthetic user message referencing the memory handle.
-        // Represent as: [[memory:<handle>]]
         let placeholder =
             format!("[[memory: {handle} | {message_count} msgs | {char_count} chars]]");
         let replacement = Message::User(UserMessage {
@@ -110,23 +123,28 @@ impl MemoryTool {
             content: vec![UserMessageContent::Text(placeholder)],
         });
 
-        // Drain and insert.
-        thread
-            .messages
-            .splice(start..=end, std::iter::once(replacement));
+        thread.replace_range_with_message(start, end, replacement)?;
 
         Ok((handle, message_count, char_count))
     }
 
     fn load_handle(&self, handle: &str) -> Result<String> {
-        let map = memory_store()
-            .read()
-            .map_err(|_| anyhow!("failed to acquire memory store lock for read"))?;
-        let content = map
-            .get(handle)
-            .ok_or_else(|| anyhow!("memory handle not found: {handle}"))?
-            .clone();
-        Ok(content)
+        // First check in-memory.
+        if let Ok(map) = memory_store().read() {
+            if let Some(val) = map.get(handle) {
+                return Ok(val.clone());
+            }
+        }
+        // Fallback to persistence.
+        let key = Self::kv_key(handle);
+        if let Some(serialized) = KEY_VALUE_STORE.read_kvp(key).log_err().flatten() {
+            // Cache in memory for faster subsequent access.
+            if let Ok(mut map) = memory_store().write() {
+                map.insert(handle.to_string(), serialized.clone());
+            }
+            return Ok(serialized);
+        }
+        Err(anyhow!("memory handle not found: {handle}"))
     }
 }
 
@@ -141,6 +159,14 @@ impl AgentTool for MemoryTool {
     fn kind() -> acp::ToolKind {
         // No dedicated kind exists, so categorize as Other.
         acp::ToolKind::Other
+    }
+
+    fn description(&self) -> SharedString {
+        "Use this tool to shorten conversation history when nearing context/token limits: \
+store a contiguous range of older messages into a compact memory handle (operation=\"store\") \
+which replaces them with a small placeholder, or retrieve previously stored content on demand \
+(operation=\"load\")."
+            .into()
     }
 
     fn initial_title(
@@ -175,9 +201,9 @@ impl AgentTool for MemoryTool {
                     .end_index
                     .ok_or_else(|| anyhow!("end_index is required for store"))?;
                 cx.update(|cx| {
-                    thread.update(cx, |thread, _cx| {
+                    thread.update(cx, |thread, thread_cx| {
                         let (handle, msg_count, char_count) =
-                            self.store_range(thread, start, end)?;
+                            self.store_range(thread, thread_cx, start, end)?;
                         let output = format!(
                             "Stored {msg_count} message(s) ({char_count} chars) in memory handle: {handle}\n\
                              The selected range [{start}..{end}] was replaced by a memory reference."
