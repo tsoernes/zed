@@ -2,7 +2,7 @@ use crate::{AgentTool, Thread, ToolCallEventStream, thread::Message};
 use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Context, SharedString, Task, WeakEntity};
+use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -78,6 +78,7 @@ impl RewriteHistoryTool {
             strategy,
             summary,
             max_preview_chars,
+            ..
         } = input;
 
         if start_index > end_index {
@@ -233,17 +234,16 @@ impl AgentTool for RewriteHistoryTool {
             return Task::ready(Err(anyhow!("thread no longer exists")));
         };
 
-        cx.update(|cx| {
-            thread.update(cx, |thread, thread_cx| {
-                let (result_msg, placeholder) = self.rewrite(thread, input)?;
-                event_stream.update_fields(acp::ToolCallUpdateFields {
-                    content: Some(vec![result_msg.clone().into(), placeholder.into()]),
-                    ..Default::default()
-                });
-                // Notify that the thread's message history structure changed.
-                thread_cx.notify();
-                Ok(result_msg)
-            })
-        })
+        let result = thread.update(cx, |thread, thread_cx| {
+            let (result_msg, placeholder) = self.rewrite(thread, input)?;
+            event_stream.update_fields(acp::ToolCallUpdateFields {
+                content: Some(vec![result_msg.clone().into(), placeholder.into()]),
+                ..Default::default()
+            });
+            // Notify that the thread's message history structure changed.
+            thread_cx.notify();
+            Ok(result_msg)
+        });
+        Task::ready(result)
     }
 }

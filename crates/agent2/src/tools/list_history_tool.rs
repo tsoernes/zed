@@ -192,7 +192,7 @@ impl AgentTool for ListHistoryTool {
             table.push_str("|Idx|Role|Kind|Chars|Preview|\n");
             table.push_str("|---|----|----|-----|--------|\n");
             for s in &summaries {
-                let pv = Self::escape_table_cell(s.preview);
+                let pv = Self::escape_table_cell(&s.preview);
                 table.push_str(&format!(
                     "|{}|{}|{}|{}|{}|\n",
                     s.index, s.role, s.kind, s.char_count, pv

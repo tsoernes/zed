@@ -3,6 +3,7 @@ use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use db::kvp::KEY_VALUE_STORE;
+use gpui::AppContext; // for background_spawn
 use gpui::{App, Context, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,7 @@ use std::{
     collections::HashMap,
     sync::{OnceLock, RwLock},
 };
+use util::ResultExt; // for log_err()
 use uuid::Uuid;
 
 use crate::thread::{Message, UserMessage, UserMessageContent};
@@ -109,8 +111,11 @@ impl MemoryTool {
         // Persist asynchronously (skip in tests).
         if !cfg!(any(feature = "test-support", test)) {
             let key = Self::kv_key(&handle);
+            // Persist asynchronously
+            // Clone for the async move so we don't move the original serialized String unexpectedly.
+            let to_persist = serialized.clone();
             cx.background_spawn(async move {
-                let _ = KEY_VALUE_STORE.write_kvp(key, serialized).await;
+                let _ = KEY_VALUE_STORE.write_kvp(key, to_persist).await;
             })
             .detach();
         }
@@ -137,7 +142,7 @@ impl MemoryTool {
         }
         // Fallback to persistence.
         let key = Self::kv_key(handle);
-        if let Some(serialized) = KEY_VALUE_STORE.read_kvp(key).log_err().flatten() {
+        if let Some(serialized) = KEY_VALUE_STORE.read_kvp(&key).log_err().flatten() {
             // Cache in memory for faster subsequent access.
             if let Ok(mut map) = memory_store().write() {
                 map.insert(handle.to_string(), serialized.clone());
@@ -194,32 +199,35 @@ which replaces them with a small placeholder, or retrieve previously stored cont
                 let Some(thread) = self.thread.upgrade() else {
                     return Task::ready(Err(anyhow!("thread no longer exists")));
                 };
-                let start = input
-                    .start_index
-                    .ok_or_else(|| anyhow!("start_index is required for store"))?;
-                let end = input
-                    .end_index
-                    .ok_or_else(|| anyhow!("end_index is required for store"))?;
-                cx.update(|cx| {
-                    thread.update(cx, |thread, thread_cx| {
-                        let (handle, msg_count, char_count) =
-                            self.store_range(thread, thread_cx, start, end)?;
-                        let output = format!(
-                            "Stored {msg_count} message(s) ({char_count} chars) in memory handle: {handle}\n\
-                             The selected range [{start}..{end}] was replaced by a memory reference."
-                        );
-                        event_stream.update_fields(acp::ToolCallUpdateFields {
-                            content: Some(vec![output.clone().into()]),
-                            ..Default::default()
-                        });
-                        Ok(output)
-                    })
-                })
+                let start = match input.start_index {
+                    Some(s) => s,
+                    None => return Task::ready(Err(anyhow!("start_index is required for store"))),
+                };
+                let end = match input.end_index {
+                    Some(e) => e,
+                    None => return Task::ready(Err(anyhow!("end_index is required for store"))),
+                };
+                // Directly update the thread (no App::update usage)
+                let result = thread.update(cx, |thread, thread_cx| {
+                    let (handle, msg_count, char_count) =
+                        self.store_range(thread, thread_cx, start, end)?;
+                    let output = format!(
+                        "Stored {msg_count} message(s) ({char_count} chars) in memory handle: {handle}\n\
+                         The selected range [{start}..{end}] was replaced by a memory reference."
+                    );
+                    event_stream.update_fields(acp::ToolCallUpdateFields {
+                        content: Some(vec![output.clone().into()]),
+                        ..Default::default()
+                    });
+                    Ok(output)
+                });
+                Task::ready(result)
             }
             MemoryOperation::Load => {
-                let handle = input
-                    .memory_handle
-                    .ok_or_else(|| anyhow!("memory_handle is required for load"))?;
+                let handle = match input.memory_handle {
+                    Some(h) => h,
+                    None => return Task::ready(Err(anyhow!("memory_handle is required for load"))),
+                };
                 let content = match self.load_handle(&handle) {
                     Ok(c) => c,
                     Err(err) => return Task::ready(Err(err)),
