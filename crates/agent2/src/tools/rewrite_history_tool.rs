@@ -54,6 +54,8 @@ pub struct RewriteHistoryToolInput {
     summary: Option<String>,
     /// Maximum number of original characters to embed (after summary) for visibility. Defaults to 400 if omitted or zero.
     max_preview_chars: Option<usize>,
+    /// If strategy is `summarize` and this is true (or summary is None), attempt automated model summarization; fallback to heuristic if model unavailable.
+    auto: Option<bool>,
 }
 
 pub struct RewriteHistoryTool {

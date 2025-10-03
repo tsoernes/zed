@@ -1,7 +1,7 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MemoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool,
+    ListDirectoryTool, ListHistoryTool, MemoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool,
     RewriteHistoryTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
     WebSearchTool,
 };
@@ -1066,6 +1066,7 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(ListHistoryTool::new(cx.weak_entity()));
         self.add_tool(MemoryTool::new(cx.weak_entity()));
         self.add_tool(RewriteHistoryTool::new(cx.weak_entity()));
         self.add_tool(ThinkingTool);
@@ -2025,14 +2026,31 @@ impl Thread {
         .render(&self.templates)
         .context("failed to build system prompt")
         .expect("Invalid template");
-        // Inject lightweight token/context status so the model can proactively decide to compact history
-        // using the `memory` or `rewrite_history` tools before hitting limits.
-        let token_usage_info = if self.latest_token_usage().is_some() {
-            "[Context Status] Token usage available. Consider `memory` or `rewrite_history` to compress older messages if approaching limits."
+        // Provide detailed numeric token usage so the model can decide when to compact history
+        // via `list_history`, `memory`, or `rewrite_history`.
+        let usage_block = if let Some(usage) = self.latest_token_usage() {
+            let used = usage.used_tokens;
+            let max = usage.max_tokens;
+            let remaining = max.saturating_sub(used);
+            let pct_used = if max > 0 {
+                (used as f64 / max as f64) * 100.0
+            } else {
+                0.0
+            };
+            let pct_remaining = 100.0 - pct_used;
+            const COMPACT_THRESHOLD_PCT: f64 = 70.0;
+            let advisory = if pct_used >= COMPACT_THRESHOLD_PCT {
+                "Advisory: >70% of context used. Consider compressing earlier messages with `list_history`, `memory`, or `rewrite_history` before continuing."
+            } else {
+                "You may proactively compress earlier messages with `list_history`, `memory`, or `rewrite_history` to preserve headroom."
+            };
+            format!(
+                "[Context Status]\nused_tokens = {used}\nmax_tokens = {max}\nremaining = {remaining}\nused_percent = {pct_used:.1}%\nremaining_percent = {pct_remaining:.1}%\n{advisory}"
+            )
         } else {
-            "[Context Status] Token usage unavailable. You may still use `memory` or `rewrite_history` to shrink context."
+            "[Context Status]\nToken usage not yet available (no completion measured). You may still use `list_history`, `memory`, or `rewrite_history` to shrink context proactively.".to_string()
         };
-        let system_prompt = format!("{base_system_prompt}\n\n{token_usage_info}");
+        let system_prompt = format!("{base_system_prompt}\n\n{usage_block}");
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
             content: vec![system_prompt.into()],
