@@ -136,7 +136,7 @@ impl AgentTool for ListHistoryTool {
             }
             let end_inclusive = (start + limit - 1).min(total.saturating_sub(1));
 
-            #[derive(Serialize)]
+            #[derive(Serialize, Clone)]
             struct MsgSummary {
                 index: usize,
                 role: String,
@@ -170,18 +170,18 @@ impl AgentTool for ListHistoryTool {
             }
 
             #[derive(Serialize)]
-            struct HistorySlice {
+            struct HistorySlice<'a> {
                 total_messages: usize,
                 range_start: usize,
                 range_end: usize,
-                messages: Vec<MsgSummary>,
+                messages: &'a [MsgSummary],
             }
 
             let slice = HistorySlice {
                 total_messages: total,
                 range_start: start,
                 range_end: end_inclusive,
-                messages: summaries,
+                messages: &summaries,
             };
 
             let json_block = serde_json::to_string_pretty(&slice)
