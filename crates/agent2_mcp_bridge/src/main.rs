@@ -46,10 +46,11 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use env_logger::Env;
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+
 use serde_json::{json, Value};
 
 use gpui::App;
+use gpui::AppContext;
 
 mod export;
 // Crate name in Cargo.toml is `agent-client-protocol`; Rust normalizes the hyphen to an underscore (`agent_client_protocol`) for use paths.
@@ -159,16 +160,11 @@ fn bootstrap_bridge_state(app: &mut App) -> Result<BridgeState> {
     // Until the above is fully implemented we expose only a stub informational tool so
     // clients can detect bridge readiness programmatically.
     struct StubStatusTool;
-    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
     struct StubStatusInput {}
-    #[derive(serde::Serialize)]
-    struct StubStatusOutput {
-        ready: bool,
-        available: Vec<String>,
-    }
     impl agent2::AgentTool for StubStatusTool {
         type Input = StubStatusInput;
-        type Output = StubStatusOutput;
+        type Output = String;
         fn name() -> &'static str {
             "bridge_status"
         }
@@ -191,11 +187,7 @@ fn bootstrap_bridge_state(app: &mut App) -> Result<BridgeState> {
             _event_stream: agent2::ToolCallEventStream,
             _cx: &mut App,
         ) -> gpui::Task<Result<Self::Output>> {
-            // The output will be filled after we know tool names (in closure below)
-            let output = StubStatusOutput {
-                ready: false,
-                available: vec![],
-            };
+            let output = "{\"ready\":false,\"available\":[]}".to_string();
             gpui::Task::ready(Ok(output))
         }
     }

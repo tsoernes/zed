@@ -124,7 +124,7 @@ where
     let metadata = ToolMetadata {
         name: T::name().to_string(),
         description,
-        kind: tool.kind(),
+        kind: T::kind(),
         input_schema: schema_json,
     };
 
