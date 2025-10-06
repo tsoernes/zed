@@ -612,3 +612,84 @@
 {"ts":1759746143.2735605,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\"}"}
 {"ts":1759746143.27365,"tag":"recv_parsed","id":5,"method":"tools/list"}
 {"ts":1759746143.2737443,"tag":"send","preview":"{'id': 5, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746639.5229473,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/list\"}"}
+{"ts":1759746639.5230954,"tag":"recv_parsed","id":6,"method":"tools/list"}
+{"ts":1759746639.5232296,"tag":"send","preview":"{'id': 6, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746681.1760566,"tag":"stdin_eof"}
+{"ts":1759746681.1764748,"tag":"stdin_eof"}
+{"ts":1759746797.871425,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759746797.8716002,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759746797.8716106,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759746797.8716862,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759746797.8717268,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759746797.8717682,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759746797.8717844,"tag":"initialize","client_msg_id":0}
+{"ts":1759746797.8718069,"tag":"initialize","client_msg_id":0}
+{"ts":1759746798.4423752,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759746798.4426267,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759746798.4427211,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759746798.4438384,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759746798.4440472,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759746798.4441864,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759746798.45254,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"}
+{"ts":1759746798.4528873,"tag":"recv_parsed","id":1,"method":"tools/list"}
+{"ts":1759746798.4531894,"tag":"send","preview":"{'id': 1, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746799.5784733,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"}
+{"ts":1759746799.5785987,"tag":"recv_parsed","id":2,"method":"tools/list"}
+{"ts":1759746799.5787036,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746807.7003646,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}"}
+{"ts":1759746807.7004993,"tag":"recv_parsed","id":3,"method":"tools/list"}
+{"ts":1759746807.700611,"tag":"send","preview":"{'id': 3, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746853.1861315,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}"}
+{"ts":1759746853.1862824,"tag":"recv_parsed","id":4,"method":"tools/list"}
+{"ts":1759746853.186428,"tag":"send","preview":"{'id': 4, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747277.7513022,"tag":"stdin_eof"}
+{"ts":1759747277.7524347,"tag":"stdin_eof"}
+{"ts":1759747339.823091,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759747339.8232925,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759747339.8233802,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759747339.82347,"tag":"initialize","client_msg_id":0}
+{"ts":1759747340.2080042,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759747340.2083986,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759747340.2085898,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759747340.208757,"tag":"initialize","client_msg_id":0}
+{"ts":1759747340.2427564,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759747340.2429483,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759747340.2430077,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759747340.2482371,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"}
+{"ts":1759747340.2482276,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759747340.2484112,"tag":"recv_parsed","id":1,"method":"tools/list"}
+{"ts":1759747340.2484908,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759747340.248547,"tag":"send","preview":"{'id': 1, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747340.2486012,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759747340.9139216,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"}
+{"ts":1759747340.9140759,"tag":"recv_parsed","id":2,"method":"tools/list"}
+{"ts":1759747340.9141798,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747404.688652,"tag":"stdin_eof"}
+{"ts":1759747404.6886942,"tag":"stdin_eof"}
+{"ts":1759747507.3147342,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759747507.315059,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759747507.315195,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759747507.3152783,"tag":"initialize","client_msg_id":0}
+{"ts":1759747507.4848194,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759747507.4849362,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759747507.4850042,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759747507.485084,"tag":"initialize","client_msg_id":0}
+{"ts":1759747508.1772766,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759747508.177521,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759747508.1776364,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759747508.183796,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759747508.1839821,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759747508.1840491,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759747508.1928182,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"}
+{"ts":1759747508.192999,"tag":"recv_parsed","id":1,"method":"tools/list"}
+{"ts":1759747508.19323,"tag":"send","preview":"{'id': 1, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747509.1714284,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"}
+{"ts":1759747509.1715338,"tag":"recv_parsed","id":2,"method":"tools/list"}
+{"ts":1759747509.1716356,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747512.9578834,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}"}
+{"ts":1759747512.9580112,"tag":"recv_parsed","id":3,"method":"tools/list"}
+{"ts":1759747512.958153,"tag":"send","preview":"{'id': 3, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759747549.6079912,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}"}
+{"ts":1759747549.6080704,"tag":"recv_parsed","id":4,"method":"tools/list"}
+{"ts":1759747549.60821,"tag":"send","preview":"{'id': 4, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
