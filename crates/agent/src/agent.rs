@@ -2,6 +2,7 @@ pub mod agent_profile;
 pub mod context;
 pub mod context_server_tool;
 pub mod context_store;
+pub mod embedded_mcp_server;
 pub mod history_store;
 pub mod thread;
 pub mod thread_store;
@@ -19,4 +20,5 @@ pub use thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut gpui::App) {
     thread_store::init(fs, cx);
+    embedded_mcp_server::init(cx);
 }

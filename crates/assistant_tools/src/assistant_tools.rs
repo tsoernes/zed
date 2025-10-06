@@ -1,3 +1,4 @@
+mod context_management;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -16,6 +17,7 @@ mod read_file_tool;
 mod schema;
 pub mod templates;
 mod terminal_tool;
+mod test_context_tool;
 mod thinking_tool;
 mod ui;
 mod web_search_tool;
@@ -25,6 +27,7 @@ use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
+use log;
 use move_path_tool::MovePathTool;
 use std::sync::Arc;
 use web_search_tool::WebSearchTool;
@@ -38,8 +41,13 @@ use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
+use crate::test_context_tool::TestContextTool;
 use crate::thinking_tool::ThinkingTool;
 
+pub use context_management::{
+    CallContextTool, CallContextToolInput, ContextToolName, ListHistoryTool, ListHistoryToolInput,
+    MemoryOperation, MemoryTool, MemoryToolInput,
+};
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
@@ -50,6 +58,8 @@ pub use terminal_tool::TerminalTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
+
+    log::info!("Initializing assistant_tools");
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
@@ -68,6 +78,22 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
+
+    // Test tool to verify registration mechanism
+    log::error!("Registering TestContextTool - THIS SHOULD APPEAR IN LOGS");
+    registry.register_tool(TestContextTool);
+    log::error!("TestContextTool registered successfully");
+
+    // Context management tools
+    log::info!("Registering context management tools: list_history, memory, call_context_tool");
+    registry.register_tool(ListHistoryTool);
+    log::info!("Registered ListHistoryTool");
+    registry.register_tool(MemoryTool);
+    log::info!("Registered MemoryTool");
+    registry.register_tool(CallContextTool);
+    log::info!("Registered CallContextTool");
+
+    log::info!("All assistant tools registered successfully");
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
