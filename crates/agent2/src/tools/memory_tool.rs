@@ -2,7 +2,8 @@ use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
-use schemars::JsonSchema;
+use log::debug;
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -46,6 +47,26 @@ pub struct MemoryToolInput {
     /// For store: if true and summary omitted, generate heuristic summary
     #[serde(default)]
     auto: bool,
+
+    /// Maximum characters to include in generated previews (clamped internally)
+    #[serde(default = "default_preview_chars")]
+    max_preview_chars: usize,
+
+    /// Index at which to insert restored messages (restore operation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restore_insert_index: Option<usize>,
+
+    /// Whether to remove the placeholder after restore
+    #[serde(default)]
+    remove_placeholder: bool,
+
+    /// If provided, replaces the placeholder with this text instead of removing it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replace_placeholder_with: Option<String>,
+}
+
+fn default_preview_chars() -> usize {
+    160
 }
 
 pub struct MemoryTool;
@@ -61,6 +82,14 @@ impl AgentTool for MemoryTool {
     type Output = String;
 
     fn name() -> &'static str {
+        // Log the schema property keys once to help diagnose external (Claude) 400 errors
+        {
+            let schema = schema_for!(MemoryToolInput);
+            if let Some(obj) = schema.schema.object {
+                let keys: Vec<_> = obj.properties.keys().cloned().collect();
+                debug!("agent2::MemoryToolInput schema properties: {:?}", keys);
+            }
+        }
         "memory"
     }
 
