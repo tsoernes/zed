@@ -581,3 +581,34 @@
 {"ts":1759745757.4210446,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}"}
 {"ts":1759745757.4211996,"tag":"recv_parsed","id":3,"method":"tools/list"}
 {"ts":1759745757.421352,"tag":"send","preview":"{'id': 3, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746088.6131043,"tag":"stdin_eof"}
+{"ts":1759746088.6131966,"tag":"stdin_eof"}
+{"ts":1759746100.7804163,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759746100.7804992,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759746100.7805388,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759746100.780579,"tag":"initialize","client_msg_id":0}
+{"ts":1759746100.84672,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1759746100.8467855,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1759746100.846811,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1759746100.8468387,"tag":"initialize","client_msg_id":0}
+{"ts":1759746101.2974107,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759746101.297556,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759746101.2976284,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759746101.2992454,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1759746101.299348,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1759746101.2993891,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1759746101.3633192,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"}
+{"ts":1759746101.3634176,"tag":"recv_parsed","id":1,"method":"tools/list"}
+{"ts":1759746101.3635285,"tag":"send","preview":"{'id': 1, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746102.1131375,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"}
+{"ts":1759746102.1132495,"tag":"recv_parsed","id":2,"method":"tools/list"}
+{"ts":1759746102.113355,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746107.1582327,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\"}"}
+{"ts":1759746107.1583753,"tag":"recv_parsed","id":3,"method":"tools/list"}
+{"ts":1759746107.1585042,"tag":"send","preview":"{'id': 3, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746143.272842,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"}"}
+{"ts":1759746143.272967,"tag":"recv_parsed","id":4,"method":"tools/list"}
+{"ts":1759746143.273097,"tag":"send","preview":"{'id': 4, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1759746143.2735605,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\"}"}
+{"ts":1759746143.27365,"tag":"recv_parsed","id":5,"method":"tools/list"}
+{"ts":1759746143.2737443,"tag":"send","preview":"{'id': 5, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}

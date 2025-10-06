@@ -426,3 +426,14 @@
 1759745993.705985 RECV method=tools/call id=6
 1759746004.572594 RECV method=tools/call id=7
 1759746063.081089 RECV method=tools/call id=8
+1759746099.826222 SERVER_START main_loop_entered
+1759746099.826514 RECV method=initialize id=0
+1759746099.902911 SERVER_START main_loop_entered
+1759746099.903202 RECV method=initialize id=0
+1759746101.163369 RECV method=notifications/initialized id=None
+1759746101.163575 RECV method=notifications/initialized id=None
+1759746101.363177 RECV method=tools/list id=1
+1759746102.113031 RECV method=tools/list id=2
+1759746107.158099 RECV method=tools/list id=3
+1759746143.272604 RECV method=tools/list id=4
+1759746143.273319 RECV method=tools/list id=5

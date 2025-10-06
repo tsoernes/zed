@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Global handle to the embedded MCP server that exposes context management tools
 pub struct EmbeddedMcpServer {
-    server: Entity<McpServerHandle>,
+    _server: Entity<McpServerHandle>,
 }
 
 impl Global for EmbeddedMcpServer {}
@@ -63,7 +63,7 @@ pub fn init(cx: &mut App) {
             });
 
             cx.set_global(EmbeddedMcpServer {
-                server: server_entity,
+                _server: server_entity,
             });
 
             log::info!("Embedded MCP server initialized");

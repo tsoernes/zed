@@ -338,3 +338,19 @@
 [DEBUG 2025-10-06T10:15:41] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
 [DEBUG 2025-10-06T10:15:41] server starting model=gpt-5
 [DEBUG 2025-10-06T10:15:41] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
+[DEBUG 2025-10-06T10:21:28] __main__ completed cli_main exit_code=0
+[DEBUG 2025-10-06T10:21:28] SystemExit encountered in __main__: code=0
+[DEBUG 2025-10-06T10:21:28] __main__ completed cli_main exit_code=0
+[DEBUG 2025-10-06T10:21:28] SystemExit encountered in __main__: code=0
+[DEBUG 2025-10-06T10:21:40] cli_main invoked argv=['serve', '--max-tokens', '270000']
+[DEBUG 2025-10-06T10:21:40] parsed command=serve args=Namespace(command='serve', path='.', model='gpt-5', max_tokens=270000)
+[DEBUG 2025-10-06T10:21:40] eager_env_snapshot={'AZURE_ENDPOINT': True, 'AZURE_API_KEY': True, 'AZURE_GPT5_API_VERSION': True, 'AZURE_GPT5_CHAT_DEPLOYMENT': True, 'AZURE_LLM_DEPLOYMENT': True, 'AZURE_OPENAI_API_VERSION': True}
+[DEBUG 2025-10-06T10:21:40] CLI dispatch to serve: path=. model=gpt-5 max_tokens=270000
+[DEBUG 2025-10-06T10:21:40] server starting model=gpt-5
+[DEBUG 2025-10-06T10:21:40] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
+[DEBUG 2025-10-06T10:21:40] cli_main invoked argv=['serve', '--max-tokens', '270000']
+[DEBUG 2025-10-06T10:21:40] parsed command=serve args=Namespace(command='serve', path='.', model='gpt-5', max_tokens=270000)
+[DEBUG 2025-10-06T10:21:40] eager_env_snapshot={'AZURE_ENDPOINT': True, 'AZURE_API_KEY': True, 'AZURE_GPT5_API_VERSION': True, 'AZURE_GPT5_CHAT_DEPLOYMENT': True, 'AZURE_LLM_DEPLOYMENT': True, 'AZURE_OPENAI_API_VERSION': True}
+[DEBUG 2025-10-06T10:21:40] CLI dispatch to serve: path=. model=gpt-5 max_tokens=270000
+[DEBUG 2025-10-06T10:21:40] server starting model=gpt-5
+[DEBUG 2025-10-06T10:21:40] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
