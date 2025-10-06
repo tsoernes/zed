@@ -80,20 +80,12 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(EditFileTool);
 
     // Test tool to verify registration mechanism
-    log::error!("Registering TestContextTool - THIS SHOULD APPEAR IN LOGS");
     registry.register_tool(TestContextTool);
-    log::error!("TestContextTool registered successfully");
 
     // Context management tools
-    log::info!("Registering context management tools: list_history, memory, call_context_tool");
     registry.register_tool(ListHistoryTool);
-    log::info!("Registered ListHistoryTool");
     registry.register_tool(MemoryTool);
-    log::info!("Registered MemoryTool");
     registry.register_tool(CallContextTool);
-    log::info!("Registered CallContextTool");
-
-    log::info!("All assistant tools registered successfully");
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(

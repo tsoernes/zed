@@ -19,7 +19,6 @@ pub struct TestContextTool;
 
 impl Tool for TestContextTool {
     fn name(&self) -> String {
-        log::error!("TestContextTool::name() called - THIS SHOULD APPEAR IN LOGS");
         "test_context".into()
     }
 

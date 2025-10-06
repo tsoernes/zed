@@ -43,7 +43,6 @@ pub struct ListHistoryTool;
 
 impl Tool for ListHistoryTool {
     fn name(&self) -> String {
-        log::info!("ListHistoryTool::name() called - returning 'list_history'");
         "list_history".into()
     }
 
