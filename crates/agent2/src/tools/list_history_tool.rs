@@ -34,11 +34,16 @@ fn default_max_chars() -> usize {
     160
 }
 
-pub struct ListHistoryTool;
+use crate::thread::Thread;
+use gpui::WeakEntity;
+
+pub struct ListHistoryTool {
+    thread: WeakEntity<Thread>,
+}
 
 impl ListHistoryTool {
-    pub fn new() -> Self {
-        Self
+    pub fn new(thread: WeakEntity<Thread>) -> Self {
+        Self { thread }
     }
 }
 
@@ -74,29 +79,85 @@ impl AgentTool for ListHistoryTool {
         self: Arc<Self>,
         mut input: Self::Input,
         _event_stream: ToolCallEventStream,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        // Clamp values to valid ranges
         input.limit = input.limit.clamp(1, 500);
         input.max_chars_per_message = input.max_chars_per_message.clamp(16, 4096);
 
-        // For now, return a placeholder response indicating the feature needs thread context
+        let Some(thread) = self.thread.upgrade() else {
+            return Task::ready(Ok(String::from(
+                "# Conversation History\n\nThread no longer exists.\n",
+            )));
+        };
+
+        // Read thread state
+        let (total_messages, messages_vec) =
+            thread.read_with(cx, |t, _| (t.messages.len(), t.messages.clone()));
+
+        if input.start >= total_messages {
+            let mut out = String::new();
+            out.push_str("# Conversation History\n\n");
+            out.push_str(&format!(
+                "No messages found starting from index {} (total messages: {})\n",
+                input.start, total_messages
+            ));
+            return Task::ready(Ok(out));
+        }
+
+        let end_index = (input.start + input.limit).min(total_messages);
+        let slice = &messages_vec[input.start..end_index];
+
         let mut output = String::new();
         output.push_str("# Conversation History\n\n");
-        output.push_str("**Note:** This tool requires access to the thread's message history.\n");
-        output.push_str("The full implementation is pending thread context integration.\n\n");
 
-        output.push_str(&format!("Requested parameters:\n"));
-        output.push_str(&format!("- Start index: {}\n", input.start));
-        output.push_str(&format!("- Limit: {}\n", input.limit));
-        output.push_str(&format!(
-            "- Max chars per message: {}\n",
-            input.max_chars_per_message
-        ));
-        output.push_str(&format!(
-            "- Include full markdown: {}\n",
-            input.include_full_markdown
-        ));
+        // Summary JSON block
+        output.push_str("```json\n");
+        output.push_str(
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "total_messages": total_messages,
+                "showing_range": format!("{}..{}", input.start, end_index),
+                "messages_shown": end_index - input.start,
+            }))
+            .unwrap_or_default(),
+        );
+        output.push_str("\n```\n\n");
+
+        // Table header
+        output.push_str("| Idx | Role | Chars | Preview |\n");
+        output.push_str("|-----|------|-------|---------|\n");
+
+        for (offset, message) in slice.iter().enumerate() {
+            let idx = input.start + offset;
+            let role = format!("{:?}", message.role());
+            let markdown = message.to_markdown();
+            let full = markdown.as_ref();
+            let chars = full.len();
+            let preview = if full.len() <= input.max_chars_per_message {
+                full
+            } else {
+                &full[..input.max_chars_per_message]
+            };
+            let mut preview = preview.replace('|', "\\|").replace('\n', " ");
+            if chars > input.max_chars_per_message {
+                preview.push_str("...");
+            }
+            output.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                idx, role, chars, preview
+            ));
+        }
+
+        if input.include_full_markdown {
+            output.push_str("\n## Full Message Content\n\n");
+            for (offset, message) in slice.iter().enumerate() {
+                let idx = input.start + offset;
+                let role = format!("{:?}", message.role());
+                let markdown = message.to_markdown();
+                output.push_str(&format!("### Message {} ({})\n\n", idx, role));
+                output.push_str(markdown.as_ref());
+                output.push_str("\n\n");
+            }
+        }
 
         Task::ready(Ok(output))
     }
