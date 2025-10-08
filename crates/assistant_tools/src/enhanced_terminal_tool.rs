@@ -9,12 +9,16 @@ use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchem
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::Project;
 
+use agent_settings::AgentSettings;
+#[cfg(unix)]
+use libc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env,
-    io::{Read, BufRead},
+    io::Read,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -24,16 +28,14 @@ use std::{
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
-/// Environment variable used to override / extend the built‑in denylist (comma separated patterns).
-const ENV_DENYLIST: &str = "ENHANCED_TERMINAL_DENYLIST";
-/// Environment variable that, when set to `1`, disables the built‑in default dangerous patterns (only env ones apply).
-const ENV_DISABLE_DEFAULT_DENYLIST: &str = "ENHANCED_TERMINAL_DISABLE_DEFAULT_PATTERNS";
+/// Enhanced terminal safety configuration now sourced from AgentSettings (settings.json / default.json).
+/// Environment-variable based configuration has been removed.
 
 const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
 const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 // Detached job registry
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct JobRecord {
     // Original command
     command: String,
@@ -61,50 +63,34 @@ struct JobRecord {
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 static JOBS: OnceLock<Mutex<HashMap<String, JobRecord>>> = OnceLock::new();
 
-/// Cached, merged denylist (default + env overrides) built on first use.
-static MERGED_DENYLIST: OnceLock<HashSet<String>> = OnceLock::new();
-
-fn merged_denylist() -> &'static HashSet<String> {
-    MERGED_DENYLIST.get_or_init(|| {
-        let mut set = HashSet::new();
-        let disable_defaults = env::var(ENV_DISABLE_DEFAULT_DENYLIST)
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-
-        if !disable_defaults {
-            // Built‑in conservative patterns
-            for pat in &[
-                "rm -rf /",
-                "mkfs",
-                ":(){:|:&};:",
-                "dd if=",
-                "shutdown -h",
-                "reboot",
-                "chmod 777 /",
-                "chown root:",
-            ] {
-                set.insert(pat.to_string());
-            }
+/// Build the effective denylist from settings each time (settings are user‑mutable at runtime).
+fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<String> {
+    let mut patterns: Vec<String> = Vec::new();
+    if !settings.enhanced_terminal_disable_default_denylist {
+        for pat in &[
+            "rm -rf /",
+            "mkfs",
+            ":(){:|:&};:",
+            "dd if=",
+            "shutdown -h",
+            "reboot",
+            "chmod 777 /",
+            "chown root:",
+        ] {
+            patterns.push(pat.to_string());
         }
-
-        if let Ok(extra) = env::var(ENV_DENYLIST) {
-            for raw in extra.split(',') {
-                let trimmed = raw.trim();
-                if !trimmed.is_empty() {
-                    set.insert(trimmed.to_lowercase());
-                }
-            }
+    }
+    for pat in &settings.enhanced_terminal_denylist {
+        if !pat.is_empty() {
+            patterns.push(pat.to_lowercase());
         }
-        set
-    })
+    }
+    patterns
 }
 
-/// Returns true if the command matches a (lower‑cased substring) denylist pattern.
-fn command_is_denylisted(cmd: &str) -> bool {
+fn command_matches_any(patterns: &[String], cmd: &str) -> bool {
     let lowered = cmd.to_lowercase();
-    merged_denylist()
-        .iter()
-        .any(|pat| lowered.contains(pat))
+    patterns.iter().any(|p| lowered.contains(p))
 }
 
 fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
@@ -264,18 +250,20 @@ impl Tool for EnhancedTerminalTool {
                         if rec.finished_at.is_none() {
                             rec.canceled = true;
                             #[cfg(unix)]
-                            if let Some(pid) = rec.pid {
-                                unsafe {
-                                    let _ = libc::kill(pid as i32, libc::SIGTERM);
-                                }
-                                // Schedule SIGKILL escalation
-                                let pid_kill = pid;
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_secs(5));
+                            {
+                                if let Some(pid) = rec.pid {
+                                    // Send SIGTERM first
                                     unsafe {
-                                        let _ = libc::kill(pid_kill as i32, libc::SIGKILL);
+                                        let _ = libc::kill(pid as i32, libc::SIGTERM);
                                     }
-                                });
+                                    // Escalate to SIGKILL after 5s if still not finished
+                                    std::thread::spawn(move || {
+                                        std::thread::sleep(std::time::Duration::from_secs(5));
+                                        unsafe {
+                                            let _ = libc::kill(pid as i32, libc::SIGKILL);
+                                        }
+                                    });
+                                }
                             }
                         }
                     }
@@ -308,7 +296,7 @@ impl Tool for EnhancedTerminalTool {
                                 output: Task::ready(Ok(format!(
                                     "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"full_output\":{}}}",
                                     rec.success, rec.truncated, rec.canceled, fo
-                                ))),
+                                ).into())),
                                 card: None,
                             };
                         }
@@ -332,7 +320,7 @@ impl Tool for EnhancedTerminalTool {
                     }
                 };
                 return ToolResult {
-                    output: Task::ready(Ok(msg)),
+                    output: Task::ready(Ok(msg.into())),
                     card: None,
                 };
             }
@@ -340,23 +328,34 @@ impl Tool for EnhancedTerminalTool {
 
         // DETACH MODE:
         if input.detach {
-            if command_is_dangerous(&input.command) && !input.allow_dangerous {
+            // Fetch settings for enhanced terminal safety
+            let settings = AgentSettings::get_global(cx);
+            // allow_dangerous flag only honored if globally enabled
+            if input.allow_dangerous && !settings.enhanced_terminal_allow_dangerous {
                 return ToolResult {
                     output: Task::ready(Err(anyhow!(
-                        "Command denied by safety policy (matches denylist). Set allow_dangerous=true if you intend to proceed."
+                        "allow_dangerous=true was specified but is not permitted (enable enhanced_terminal_allow_dangerous in settings to allow)."
                     ))),
                     card: None,
                 };
             }
-            // Normal (blocking) mode:
-            // Denylist enforcement (unless caller opts out via allow_dangerous flag - not present in minimal input struct
-            // but can be added later or piped via an env override)
-            if command_is_denylisted(&input.command) {
+            let effective_allow_dangerous =
+                input.allow_dangerous && settings.enhanced_terminal_allow_dangerous;
+
+            let denylist = build_effective_denylist(&settings);
+
+            if command_is_dangerous(&input.command) && !effective_allow_dangerous {
                 return ToolResult {
                     output: Task::ready(Err(anyhow!(
-                        "Command rejected by safety policy (matched denylist). Set {} or {} to adjust.",
-                        ENV_DENYLIST,
-                        ENV_DISABLE_DEFAULT_DENYLIST
+                        "Command denied by safety policy (matches dangerous pattern). Enable allow_dangerous in the tool input AND enhanced_terminal_allow_dangerous in settings to proceed."
+                    ))),
+                    card: None,
+                };
+            }
+            if command_matches_any(&denylist, &input.command) && !effective_allow_dangerous {
+                return ToolResult {
+                    output: Task::ready(Err(anyhow!(
+                        "Command rejected by safety policy (matched denylist). Update enhanced_terminal_denylist / settings or explicitly allow (requires global enhanced_terminal_allow_dangerous + allow_dangerous=true)."
                     ))),
                     card: None,
                 };
@@ -422,15 +421,11 @@ impl Tool for EnhancedTerminalTool {
                     let mut child = pair.slave.spawn_command(cmd)?;
                     #[cfg(unix)]
                     {
-                        let pid = child.process_id();
-                        if let Some(pid) = pid {
+                        if let Some(pid) = child.process_id() {
                             let mut map = jobs().lock().unwrap();
                             if let Some(rec) = map.get_mut(&job_id) {
                                 rec.pid = Some(pid);
                             }
-
-                            // pid captured; denylist already evaluated before spawn.
-                            // Streaming loop below will incrementally update preview & full buffers.
                         }
                     }
                     let mut reader = pair.master.try_clone_reader()?;
@@ -505,16 +500,37 @@ impl Tool for EnhancedTerminalTool {
 
             let response = format!("{{\"job_id\":\"{job_id}\",\"state\":\"running\"}}");
             return ToolResult {
-                output: Task::ready(Ok(response)),
+                output: Task::ready(Ok(response.into())),
                 card: None,
             };
         }
 
         // Normal (blocking) mode:
-        if command_is_dangerous(&input.command) && !input.allow_dangerous {
+        let settings = AgentSettings::get_global(cx);
+        if input.allow_dangerous && !settings.enhanced_terminal_allow_dangerous {
             return ToolResult {
                 output: Task::ready(Err(anyhow!(
-                    "Command denied by safety policy (matches denylist). Set allow_dangerous=true if you intend to proceed."
+                    "allow_dangerous=true was specified but is not permitted (enable enhanced_terminal_allow_dangerous in settings to allow)."
+                ))),
+                card: None,
+            };
+        }
+        let effective_allow_dangerous =
+            input.allow_dangerous && settings.enhanced_terminal_allow_dangerous;
+        let denylist = build_effective_denylist(&settings);
+
+        if command_is_dangerous(&input.command) && !effective_allow_dangerous {
+            return ToolResult {
+                output: Task::ready(Err(anyhow!(
+                    "Command denied by safety policy (matches dangerous pattern). Enable allow_dangerous in the tool input AND enhanced_terminal_allow_dangerous in settings to proceed."
+                ))),
+                card: None,
+            };
+        }
+        if command_matches_any(&denylist, &input.command) && !effective_allow_dangerous {
+            return ToolResult {
+                output: Task::ready(Err(anyhow!(
+                    "Command rejected by safety policy (matched denylist). Update enhanced_terminal_denylist / settings or explicitly allow (requires global enhanced_terminal_allow_dangerous + allow_dangerous=true)."
                 ))),
                 card: None,
             };
@@ -570,10 +586,6 @@ impl Tool for EnhancedTerminalTool {
                         Ok(n) => {
                             let chunk = String::from_utf8_lossy(&buf[..n]);
                             raw.push_str(&chunk);
-
-                            // Placeholder: partial output streaming hook.
-                            // In a future update we could surface an event/card update here.
-                            // e.g. event_stream.update_partial(raw_tail)
                         }
                         Err(e) => {
                             raw.push_str(&format!("\n[read error: {e}]"));

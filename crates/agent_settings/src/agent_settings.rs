@@ -51,6 +51,10 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    // Enhanced terminal safety configuration (from AgentSettingsContent)
+    pub enhanced_terminal_allow_dangerous: bool,
+    pub enhanced_terminal_denylist: Vec<Arc<str>>,
+    pub enhanced_terminal_disable_default_denylist: bool,
 }
 
 impl AgentSettings {
@@ -184,6 +188,13 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            enhanced_terminal_allow_dangerous: agent
+                .enhanced_terminal_allow_dangerous
+                .unwrap_or(false),
+            enhanced_terminal_denylist: agent.enhanced_terminal_denylist.unwrap_or_default(),
+            enhanced_terminal_disable_default_denylist: agent
+                .enhanced_terminal_disable_default_denylist
+                .unwrap_or(false),
         }
     }
 

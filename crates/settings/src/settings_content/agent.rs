@@ -109,6 +109,25 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+
+    /// Whether dangerous enhanced_terminal commands (those matching the denylist) may proceed
+    /// when the tool invocation sets `allow_dangerous:true`.
+    ///
+    /// Default: false
+    pub enhanced_terminal_allow_dangerous: Option<bool>,
+
+    /// Additional denylist patterns (case-insensitive substring matches) to append to the built-in
+    /// enhanced_terminal dangerous pattern list. Use this to extend, not replace, unless you also
+    /// disable the defaults below.
+    ///
+    /// Default: []
+    pub enhanced_terminal_denylist: Option<Vec<Arc<str>>>,
+
+    /// When true, disables the built-in enhanced_terminal dangerous patterns so that only the
+    /// custom `enhanced_terminal_denylist` entries apply.
+    ///
+    /// Default: false
+    pub enhanced_terminal_disable_default_denylist: Option<bool>,
 }
 
 impl AgentSettingsContent {

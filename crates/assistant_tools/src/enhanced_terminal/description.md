@@ -132,8 +132,8 @@ Real cancellation:
 - Canceled jobs report state:"canceled" and can still return full_output.
 
 Safety denylist:
-- Certain destructive / risky patterns are blocked unless allow_dangerous:true is explicitly set (or you modify environment overrides below).
-- Current built-in patterns (substring match, case-insensitive):
+- Destructive / risky patterns are blocked by default. To run a matching command you must set allow_dangerous:true in the tool input AND have the global setting agent.enhanced_terminal_allow_dangerous=true.
+- Built-in dangerous patterns (substring match, case-insensitive):
   rm -rf /
   mkfs
   :(){:|:&};:
@@ -142,10 +142,11 @@ Safety denylist:
   reboot
   chmod 777 /
   chown root:
-- Environment overrides:
-  * ENHANCED_TERMINAL_DENYLIST="pattern1,pattern2" (comma-separated, added to the effective denylist; patterns matched case-insensitively as substrings)
-  * ENHANCED_TERMINAL_DISABLE_DEFAULT_PATTERNS=1 (if set, removes the built-in defaults; only env-provided patterns remain)
-- Rationale: Prevent accidental destructive operations while allowing explicit, auditable override via env or per-command allow_dangerous.
+- Settings (configured in settings.json / default.json under agent.*):
+  * agent.enhanced_terminal_allow_dangerous (bool, default false): Must be true (along with per-call allow_dangerous:true) to permit execution of a matching dangerous/denylisted command.
+  * agent.enhanced_terminal_denylist (array of strings, default []): Additional case-insensitive substring patterns appended to the built-ins.
+  * agent.enhanced_terminal_disable_default_denylist (bool, default false): When true, removes the built-in patterns so only the custom denylist applies.
+- Rationale: Centralized, auditable safety configuration via settings.
 
 Overriding safety:
 - Set allow_dangerous:true only when you intentionally need a blocked pattern.
