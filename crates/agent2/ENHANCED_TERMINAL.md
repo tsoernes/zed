@@ -4,10 +4,11 @@ This document describes the enhanced terminal capabilities added to the agent sy
 
 ## Overview
 
-Two new tools have been added to provide advanced terminal execution capabilities:
+Two primary tool categories have been added providing advanced terminal execution and environment introspection capabilities:
 
-1. **`enhanced_terminal`** - Execute commands with sudo, flexible directory handling, shell selection, and long-running command support
+1. **`enhanced_terminal`** - Execute commands with sudo, flexible directory handling, shell selection, long-running command support, background (detached) execution, streaming previews, cancellation, full output retrieval, safety denylist override
 2. **`detect_shells`** - Detect and list available shells on the system
+3. **`detect_binaries`** - Enumerate common developer / build / infra binaries (grouped by category) and report presence, install path, and a short version string using bounded concurrency
 
 ## Enhanced Terminal Tool
 
@@ -134,6 +135,76 @@ Current shell (from $SHELL): `/usr/bin/fish`
 
 You can use any of these shells when executing terminal commands by specifying the full path or shell name.
 ```
+
+## Detect Binaries Tool
+
+### Features
+
+- Scans a curated set of common developer, build, infra, cloud, and tooling binaries.
+- Groups results by category (package managers, rust_tools, python_quality, search_productivity, system_perf, containers, cloud, infra, networking, databases, docs, vcs).
+- Reports for each candidate:
+  - found (bool)
+  - path (first resolvable executable on PATH)
+  - version (first non-empty line from `--version`, `version`, or `-V`)
+  - elapsed_ms (per-binary probe duration)
+  - truncated / timeout error (omitted unless `include_errors` feature added upstream)
+- Bounded concurrency to avoid overwhelming the system.
+- Per-binary version probe timeout (defaults to 1500ms) to skip slow or hanging tools.
+
+### Input (JSON)
+
+```json
+{
+  "filter_categories": ["rust_tools", "cloud"],
+  "max_concurrency": 8,
+  "version_timeout_ms": 1500,
+  "include_errors": false
+}
+```
+
+All fields optional:
+- `filter_categories`: limit scan to listed category identifiers (unmatched names ignored).
+- `max_concurrency`: soft upper bound on simultaneous version probes (>=1).
+- `version_timeout_ms`: per-binary version detection timeout.
+- `include_errors`: when true, include spawn/timeout error messages.
+
+### Example Output (abridged)
+
+```json
+{
+  "binaries": [
+    {
+      "name": "cargo",
+      "category": "rust_tools",
+      "found": true,
+      "path": "/usr/bin/cargo",
+      "version": "cargo 1.80.0 (api)",
+      "elapsed_ms": 27
+    },
+    {
+      "name": "aws",
+      "category": "cloud",
+      "found": false,
+      "path": null,
+      "version": null
+    }
+  ],
+  "summary": {
+    "total_scanned": 40,
+    "found": 12,
+    "missing": 28,
+    "categories_scanned": ["rust_tools","cloud"],
+    "version_timeout_ms": 1500
+  }
+}
+```
+
+### Notes
+
+- Version detection tries `--version`, then `version`, then `-V`.
+- If a probe exceeds the timeout it is recorded without blocking remaining probes.
+- Missing binaries are still listed (found=false) for consistent schema.
+- Use category filtering to minimize overhead when only certain stacks matter.
 
 ## Security Considerations
 

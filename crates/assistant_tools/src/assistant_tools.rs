@@ -1,6 +1,7 @@
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
+mod detect_binaries_tool;
 mod diagnostics_tool;
 pub mod edit_agent;
 mod edit_file_tool;
@@ -42,6 +43,7 @@ use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
+pub use detect_binaries_tool::DetectBinariesTool;
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use enhanced_terminal_tool::EnhancedTerminalTool;
 pub use find_path_tool::*;
@@ -57,6 +59,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
     registry.register_tool(EnhancedTerminalTool);
+    registry.register_tool(DetectBinariesTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
