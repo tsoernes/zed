@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{Tool, ToolResult, ToolResultOutput};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use log;
+
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

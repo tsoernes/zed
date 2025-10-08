@@ -4,6 +4,7 @@ mod history_store;
 mod native_agent_server;
 mod templates;
 mod thread;
+mod token_usage;
 mod tool_schema;
 mod tools;
 

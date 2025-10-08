@@ -38,6 +38,7 @@ use settings::{Settings, SettingsStore};
 use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
 
+mod memory_history_integration_tests;
 mod test_tools;
 use test_tools::*;
 

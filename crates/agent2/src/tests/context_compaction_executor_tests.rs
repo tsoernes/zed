@@ -122,3 +122,83 @@ fn list_history_full_execution_placeholder() {
     // Intentionally left blank; see doc comment above.
     // Returning () implicitly; the ignore attribute prevents running.
 }
+
+/// The following memory tool tests are integration placeholders. They are marked
+/// #[ignore] until a lightweight harness for constructing a Thread + App context
+/// (with foreground executor and project entities) is available. Each test
+/// documents the intended assertions for durable file-based memory archives.
+
+/// Store + List round‑trip:
+/// Steps:
+/// 1. Create thread with 3 user + 2 agent messages (text + thinking + tool use).
+/// 2. Invoke memory store (range covering first 3 messages).
+/// 3. Assert:
+///    * Placeholder inserted at original start index.
+///    * Archived directory exists with metadata + messages.zst.
+/// 4. Run memory list; assert handle present, count matches, placeholder=yes.
+/// 5. (Optional) Deserialize metadata.json and verify summary not empty.
+#[test]
+#[ignore]
+fn memory_store_and_list_roundtrip_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}
+
+/// Load excerpt:
+/// Steps:
+/// 1. Reuse archive from store test.
+/// 2. Invoke memory load with large max_preview_chars.
+/// 3. Assert markdown contains handle + "Messages:" line + at least one "### [0]".
+#[test]
+#[ignore]
+fn memory_load_excerpt_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}
+
+/// Restore with placeholder retained, then removed:
+/// Steps:
+/// 1. Store archive (range 0..1).
+/// 2. Restore without remove_placeholder => placeholder stays; restored=yes.
+/// 3. Restore again with remove_placeholder=true should:
+///    * Insert messages again only if placeholder still there (single restore rule)
+///    * Or (preferred) return an error after first remove (once implemented).
+#[test]
+#[ignore]
+fn memory_restore_retained_then_removed_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}
+
+/// Prune after restore + placeholder removal:
+/// Steps:
+/// 1. Store + restore with remove_placeholder=true.
+/// 2. Run prune => archive directory deleted.
+/// 3. Subsequent list omits handle.
+#[test]
+#[ignore]
+fn memory_prune_after_restore_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}
+
+/// Reject user message with mention/image:
+/// Steps:
+/// 1. Insert a user message containing a mention (or image segment).
+/// 2. Attempt store over that index => expect error matching
+///    "unsupported user content (mention/image)".
+/// 3. Ensure no archive directory created.
+#[test]
+#[ignore]
+fn memory_store_rejects_user_mention_or_image_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}
+
+/// Store + restore with tool uses:
+/// Steps:
+/// 1. Agent message containing ToolUse + Text segs.
+/// 2. Store range including that message.
+/// 3. Restore at end of thread.
+/// 4. Assert reconstructed AgentMessage contains ToolUse segment (raw_input preserved)
+///    and text segments appear in original order.
+#[test]
+#[ignore]
+fn memory_store_and_restore_tool_use_placeholder() {
+    // Placeholder – see doc comment for intended implementation steps.
+}

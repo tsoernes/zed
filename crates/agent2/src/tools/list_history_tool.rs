@@ -92,7 +92,7 @@ impl AgentTool for ListHistoryTool {
 
         // Read thread state
         let (total_messages, messages_vec) =
-            thread.read_with(cx, |t, _| (t.messages.len(), t.messages.clone()));
+            thread.read_with(cx, |t, _| (t.messages().len(), t.messages().to_vec()));
 
         if input.start >= total_messages {
             let mut out = String::new();
@@ -130,17 +130,24 @@ impl AgentTool for ListHistoryTool {
             let idx = input.start + offset;
             let role = format!("{:?}", message.role());
             let markdown = message.to_markdown();
-            let full = markdown.as_ref();
-            let chars = full.len();
-            let preview = if full.len() <= input.max_chars_per_message {
-                full
-            } else {
-                &full[..input.max_chars_per_message]
-            };
-            let mut preview = preview.replace('|', "\\|").replace('\n', " ");
-            if chars > input.max_chars_per_message {
-                preview.push_str("...");
+            let chars = markdown.len();
+
+            // Build a preview with character-based truncation and escaping
+            let mut preview = String::new();
+            let mut char_count = 0;
+            for ch in markdown.chars() {
+                if char_count >= input.max_chars_per_message {
+                    preview.push_str("...");
+                    break;
+                }
+                match ch {
+                    '|' => preview.push_str("\\|"),
+                    '\n' => preview.push(' '),
+                    _ => preview.push(ch),
+                }
+                char_count += 1;
             }
+
             output.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
                 idx, role, chars, preview
@@ -152,9 +159,9 @@ impl AgentTool for ListHistoryTool {
             for (offset, message) in slice.iter().enumerate() {
                 let idx = input.start + offset;
                 let role = format!("{:?}", message.role());
-                let markdown = message.to_markdown();
+                let markdown: String = message.to_markdown();
                 output.push_str(&format!("### Message {} ({})\n\n", idx, role));
-                output.push_str(markdown.as_ref());
+                output.push_str(&markdown);
                 output.push_str("\n\n");
             }
         }

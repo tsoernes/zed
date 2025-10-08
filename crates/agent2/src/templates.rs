@@ -38,6 +38,13 @@ pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
+    // Optional: live token usage (if provided by caller)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_pct: Option<f64>,
 }
 
 impl Template for SystemPromptTemplate<'_> {

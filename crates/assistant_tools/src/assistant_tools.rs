@@ -5,6 +5,8 @@ mod delete_path_tool;
 mod diagnostics_tool;
 pub mod edit_agent;
 mod edit_file_tool;
+/// Temporarily disabled: underlying module file missing
+// mod enhanced_terminal_tool;
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
