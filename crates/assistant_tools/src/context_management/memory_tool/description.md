@@ -1,11 +1,11 @@
 # Memory Tool
 
-Archive, load, list, restore, or prune conversation message segments to manage context window usage.
+Archive, load, list, restore, or prune conversation message segments to manage context window usage while maintaining precise awareness of token consumption.
 
 ## Purpose
 
 The memory tool provides comprehensive management of conversation context by allowing you to:
-- Archive contiguous ranges of messages to free up context window space
+- Archive contiguous ranges of messages to free up context window space (precise token counts captured at archive time)
 - Load archived content for inspection without modifying the conversation
 - List all memory placeholders in the current conversation
 - Restore archived messages back into the conversation
@@ -15,7 +15,7 @@ The memory tool provides comprehensive management of conversation context by all
 
 ### Store
 
-Archive a contiguous range of messages, replacing them with a compact placeholder.
+Archive a contiguous range of messages, replacing them with a compact placeholder. The placeholder includes precise token and character counts captured at the time of storage.
 
 **Required Parameters:**
 - `operation`: "store"
@@ -23,7 +23,7 @@ Archive a contiguous range of messages, replacing them with a compact placeholde
 - `end_index`: Inclusive ending message index
 
 **Optional Parameters:**
-- `summary`: User-defined summary of the archived content
+- `summary`: User-defined summary of the archived content (Include forward-relevant decisions, constraints, commitments, evolving preferences, and open questions. Avoid merely paraphrasing; capture what future turns will need to recall.)
 - `auto`: If true and summary is omitted, generates a heuristic summary (default: false)
 - `max_preview_chars`: Character limit for preview (default: 200, clamped 40-400)
 
@@ -38,7 +38,7 @@ Archive a contiguous range of messages, replacing them with a compact placeholde
 }
 ```
 
-**Output:** Creates a memory handle (e.g., `mem://session-id/uuid`) and replaces the message range with a placeholder containing the handle, summary, and preview.
+**Output:** Creates a memory handle (e.g., `mem://session-id/uuid`) and replaces the message range with a placeholder containing the handle, summary, preview, and precise token count (`tokens=...`).
 
 ### Load
 
@@ -128,25 +128,26 @@ Preview: User: I need help setting up a new React project...
 ## Typical Workflow
 
 1. Use `list_history` to inspect conversation messages
-2. Identify a range of older messages that can be archived
-3. Call `memory` with operation "store" to archive them
-4. Continue conversation with freed context space
-5. If needed, use `memory` with operation "load" to inspect archived content
-6. Use `memory` with operation "restore" if archived information becomes relevant again
+2. Identify a range of older messages that can be archived (favor large low-signal stretches: logs, long raw code blocks, enumerations)
+3. Call `memory` with operation "store" to archive them (precise token count recorded)
+4. Continue conversation with freed context space; placeholders remain compact
+5. If needed, use `memory` with operation "load" to inspect archived content without inflating active token usage
+6. Use `memory` with operation "restore" if archived information becomes relevant again (then optionally re-store with a refined summary)
 7. Periodically use `memory` with operation "prune" to clean up unused archives
 
 ## When to Use
 
-- **Store**: When approaching token limits (60-70% of context window)
-- **Load**: To review what was archived without restoring it to the conversation
-- **List**: To see what memories are currently archived
-- **Restore**: When archived information becomes relevant to the current discussion
-- **Prune**: To clean up memory storage after a long conversation
+- **Store**: When active precise token usage exceeds ~70% of model context (aim to drop usage back toward 55–60%)
+- **Load**: To review archived content without restoring it (no token expansion)
+- **List**: To see which ranges are compacted and track their handles
+- **Restore**: When archived information becomes relevant enough to justify reintroducing full detail
+- **Prune**: To remove orphaned archives whose placeholders were deleted or replaced
 
 ## Notes
 
 - Archives are stored in-memory for the session duration
 - Memory handles are unique per session and UUID
 - Archived content can be safely restored multiple times
-- The heuristic summary uses the first non-empty message line (up to 140 chars)
+- Summaries are user-provided or auto-generated (first non-empty line up to 140 chars). Make them forward-relevant: encode decisions, constraints, preferences, pending follow-ups, assumptions, and unresolved risks—exclude transient narration or redundant paraphrase.
 - Previews are truncated with "...(truncated)" if they exceed max_preview_chars
+- Stats use precise per-message token accounting (prefix method) and will recommend an early contiguous archive range if usage > 70%
