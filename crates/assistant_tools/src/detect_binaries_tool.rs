@@ -240,8 +240,8 @@ impl Tool for DetectBinariesTool {
                     let reports = Arc::clone(&reports);
                     handles.push(thread::spawn(move || {
                         let start = Instant::now();
-                        let path = which(&name);
-                        if path.is_none() {
+                        let paths = which_all(&name);
+                        if paths.is_empty() {
                             reports.lock().unwrap().push(BinaryReport {
                                 name,
                                 category,
@@ -253,8 +253,14 @@ impl Tool for DetectBinariesTool {
                             });
                             return;
                         }
-                        let path = path.unwrap();
-                        let version_res = detect_version_with_timeout(&path, timeout);
+                        // Only disclose concrete paths if multiple occurrences are found (privacy / noise reduction).
+                        let path_field = if paths.len() > 1 {
+                            Some(paths.join(";"))
+                        } else {
+                            None
+                        };
+                        let probe_path = &paths[0];
+                        let version_res = detect_version_with_timeout(probe_path, timeout);
                         let elapsed_ms = start.elapsed().as_millis();
 
                         let (version, error) = match version_res {
@@ -272,7 +278,7 @@ impl Tool for DetectBinariesTool {
                             name,
                             category,
                             found: true,
-                            path: Some(path),
+                            path: path_field.clone(),
                             version,
                             elapsed_ms: Some(elapsed_ms),
                             error,
@@ -312,16 +318,23 @@ impl Tool for DetectBinariesTool {
     }
 }
 
-/// Locate a binary in PATH by scanning entries manually.
-fn which(name: &str) -> Option<String> {
-    let path_val = env::var_os("PATH")?;
+/// Locate all occurrences of a binary in PATH. Returns every executable match in PATH order.
+/// The caller decides how (or whether) to disclose paths; we only surface them when >1 match.
+fn which_all(name: &str) -> Vec<String> {
+    let mut matches = Vec::new();
+    let path_val = match env::var_os("PATH") {
+        Some(p) => p,
+        None => return matches,
+    };
     for dir in env::split_paths(&path_val) {
         let candidate = dir.join(name);
         if candidate.is_file() && is_executable(&candidate) {
-            return candidate.to_str().map(|s| s.to_string());
+            if let Some(s) = candidate.to_str() {
+                matches.push(s.to_string());
+            }
         }
     }
-    None
+    matches
 }
 
 #[cfg(unix)]

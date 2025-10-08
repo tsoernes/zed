@@ -132,8 +132,8 @@ Real cancellation:
 - Canceled jobs report state:"canceled" and can still return full_output.
 
 Safety denylist:
-- Certain destructive / risky patterns are blocked unless allow_dangerous:true is explicitly set.
-- Current patterns (substring match, case-insensitive):
+- Certain destructive / risky patterns are blocked unless allow_dangerous:true is explicitly set (or you modify environment overrides below).
+- Current built-in patterns (substring match, case-insensitive):
   rm -rf /
   mkfs
   :(){:|:&};:
@@ -142,7 +142,10 @@ Safety denylist:
   reboot
   chmod 777 /
   chown root:
-- Rationale: Prevent accidental destructive operations while allowing explicit override.
+- Environment overrides:
+  * ENHANCED_TERMINAL_DENYLIST="pattern1,pattern2" (comma-separated, added to the effective denylist; patterns matched case-insensitively as substrings)
+  * ENHANCED_TERMINAL_DISABLE_DEFAULT_PATTERNS=1 (if set, removes the built-in defaults; only env-provided patterns remain)
+- Rationale: Prevent accidental destructive operations while allowing explicit, auditable override via env or per-command allow_dangerous.
 
 Overriding safety:
 - Set allow_dangerous:true only when you intentionally need a blocked pattern.

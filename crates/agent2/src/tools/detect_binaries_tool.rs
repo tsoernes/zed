@@ -199,8 +199,8 @@ impl AgentTool for DetectBinariesTool {
                     let results = Arc::clone(&shared_results);
                     handles.push(thread::spawn(move || {
                         let start = Instant::now();
-                        let which_path = which(&bin);
-                        if which_path.is_none() {
+                        let paths = which_all(&bin);
+                        if paths.is_empty() {
                             results.lock().unwrap().push(BinaryReport {
                                 name: display,
                                 category,
@@ -212,8 +212,15 @@ impl AgentTool for DetectBinariesTool {
                             });
                             return;
                         }
-                        let path = which_path.unwrap();
-                        let version = detect_version_with_timeout(&path, timeout_ms);
+                        // Only expose a path if multiple distinct occurrences (interpreted as multiple versions / installations).
+                        // If exactly one match, we suppress the path (privacy / noise reduction) but still use it for version probing.
+                        let path_field = if paths.len() > 1 {
+                            Some(paths.join(";"))
+                        } else {
+                            None
+                        };
+                        let probe_path = &paths[0];
+                        let version = detect_version_with_timeout(probe_path, timeout_ms);
                         let elapsed = start.elapsed().as_millis();
 
                         match version {
@@ -222,7 +229,7 @@ impl AgentTool for DetectBinariesTool {
                                     name: display,
                                     category,
                                     found: true,
-                                    path: Some(path),
+                                    path: path_field,
                                     version: Some(v),
                                     elapsed_ms: Some(elapsed),
                                     error: None,
@@ -233,7 +240,7 @@ impl AgentTool for DetectBinariesTool {
                                     name: display,
                                     category,
                                     found: true,
-                                    path: Some(path),
+                                    path: path_field,
                                     version: None,
                                     elapsed_ms: Some(elapsed),
                                     error: Some(e.to_string()),
@@ -275,22 +282,23 @@ impl AgentTool for DetectBinariesTool {
     }
 }
 
-/// Locate a binary in PATH by iterating path entries manually.
-fn which(name: &str) -> Option<String> {
+/// Locate all occurrences of a binary in PATH. Returns every executable match encountered
+/// in PATH order. The caller decides how to display (only reveals path list if >1).
+fn which_all(name: &str) -> Vec<String> {
+    let mut matches = Vec::new();
     let path_var = match env::var_os("PATH") {
         Some(p) => p,
-        None => return None,
+        None => return matches,
     };
     for dir in env::split_paths(&path_var) {
         let candidate = dir.join(name);
         if candidate.is_file() && is_executable(&candidate) {
             if let Some(s) = candidate.to_str() {
-                return Some(s.to_string());
+                matches.push(s.to_string());
             }
         }
-        // On Windows we might consider .exe, but this tool primarily targets Unix-like patterns here.
     }
-    None
+    matches
 }
 
 #[cfg(unix)]

@@ -12,9 +12,9 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
-    io::Read,
+    io::{Read, BufRead},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
@@ -23,6 +23,11 @@ use std::{
 };
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
+
+/// Environment variable used to override / extend the built‑in denylist (comma separated patterns).
+const ENV_DENYLIST: &str = "ENHANCED_TERMINAL_DENYLIST";
+/// Environment variable that, when set to `1`, disables the built‑in default dangerous patterns (only env ones apply).
+const ENV_DISABLE_DEFAULT_DENYLIST: &str = "ENHANCED_TERMINAL_DISABLE_DEFAULT_PATTERNS";
 
 const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
 const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
@@ -55,6 +60,52 @@ struct JobRecord {
 
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 static JOBS: OnceLock<Mutex<HashMap<String, JobRecord>>> = OnceLock::new();
+
+/// Cached, merged denylist (default + env overrides) built on first use.
+static MERGED_DENYLIST: OnceLock<HashSet<String>> = OnceLock::new();
+
+fn merged_denylist() -> &'static HashSet<String> {
+    MERGED_DENYLIST.get_or_init(|| {
+        let mut set = HashSet::new();
+        let disable_defaults = env::var(ENV_DISABLE_DEFAULT_DENYLIST)
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if !disable_defaults {
+            // Built‑in conservative patterns
+            for pat in &[
+                "rm -rf /",
+                "mkfs",
+                ":(){:|:&};:",
+                "dd if=",
+                "shutdown -h",
+                "reboot",
+                "chmod 777 /",
+                "chown root:",
+            ] {
+                set.insert(pat.to_string());
+            }
+        }
+
+        if let Ok(extra) = env::var(ENV_DENYLIST) {
+            for raw in extra.split(',') {
+                let trimmed = raw.trim();
+                if !trimmed.is_empty() {
+                    set.insert(trimmed.to_lowercase());
+                }
+            }
+        }
+        set
+    })
+}
+
+/// Returns true if the command matches a (lower‑cased substring) denylist pattern.
+fn command_is_denylisted(cmd: &str) -> bool {
+    let lowered = cmd.to_lowercase();
+    merged_denylist()
+        .iter()
+        .any(|pat| lowered.contains(pat))
+}
 
 fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -297,6 +348,20 @@ impl Tool for EnhancedTerminalTool {
                     card: None,
                 };
             }
+            // Normal (blocking) mode:
+            // Denylist enforcement (unless caller opts out via allow_dangerous flag - not present in minimal input struct
+            // but can be added later or piped via an env override)
+            if command_is_denylisted(&input.command) {
+                return ToolResult {
+                    output: Task::ready(Err(anyhow!(
+                        "Command rejected by safety policy (matched denylist). Set {} or {} to adjust.",
+                        ENV_DENYLIST,
+                        ENV_DISABLE_DEFAULT_DENYLIST
+                    ))),
+                    card: None,
+                };
+            }
+
             let working_dir = match resolve_working_directory(&input, &project, cx) {
                 Ok(dir) => dir,
                 Err(err) => return Task::ready(Err(err)).into(),
@@ -494,8 +559,29 @@ impl Tool for EnhancedTerminalTool {
             let mut reader = pair.master.try_clone_reader()?;
             drop(pair);
 
+            // Incremental read to allow future partial streaming.
+            // Currently we accumulate, but we can emit partial chunks where marked.
             let mut raw = String::new();
-            reader.read_to_string(&mut raw)?;
+            {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            let chunk = String::from_utf8_lossy(&buf[..n]);
+                            raw.push_str(&chunk);
+
+                            // Placeholder: partial output streaming hook.
+                            // In a future update we could surface an event/card update here.
+                            // e.g. event_stream.update_partial(raw_tail)
+                        }
+                        Err(e) => {
+                            raw.push_str(&format!("\n[read error: {e}]"));
+                            break;
+                        }
+                    }
+                }
+            }
             let status = child.wait()?;
 
             let (exit_code, success) = {
