@@ -2,7 +2,8 @@ use crate::schema::json_schema_for;
 use action_log::ActionLog;
 use anyhow::{Result, anyhow};
 use assistant_tool::{Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use assistant_tool::{ToolResultContent, ToolResultOutput};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use portable_pty as _; // keep dependency aligned with other tools (not used directly here)
 use project::Project;
@@ -164,7 +165,7 @@ impl Tool for DetectBinariesTool {
     }
 
     fn icon(&self) -> ui::IconName {
-        ui::IconName::Search
+        ui::IconName::ToolSearch
     }
 
     fn input_schema(
@@ -208,7 +209,7 @@ impl Tool for DetectBinariesTool {
             Err(e) => return Task::ready(Err(anyhow!(e))).into(),
         };
 
-        let task = cx.background_spawn(async move {
+        let task: Task<anyhow::Result<ToolResultOutput>> = cx.background_spawn(async move {
             let filter_set: Option<HashSet<String>> = input
                 .filter_categories
                 .as_ref()
@@ -308,7 +309,11 @@ impl Tool for DetectBinariesTool {
             };
 
             let json = serde_json::to_string_pretty(&result)?;
-            Ok(json)
+            let value = serde_json::to_value(&result)?;
+            Ok(ToolResultOutput {
+                content: ToolResultContent::Text(json),
+                output: Some(value),
+            })
         });
 
         ToolResult {
@@ -362,7 +367,7 @@ fn detect_version_with_timeout(path: &str, timeout_ms: u64) -> Result<String> {
         let flags_vec: Vec<String> = flags.iter().map(|s| s.to_string()).collect();
         let start = Instant::now();
 
-        let handle = thread::spawn(move || {
+        let _handle = thread::spawn(move || {
             let out = Command::new(&path_string).args(&flags_vec).output();
             let res = match out {
                 Ok(o) => {
@@ -400,7 +405,10 @@ fn detect_version_with_timeout(path: &str, timeout_ms: u64) -> Result<String> {
         }
 
         // If we have a result, return it.
-        if let Some(res) = shared.lock().unwrap().clone() {
+        if let Some(res) = {
+            let mut guard = shared.lock().unwrap();
+            guard.take()
+        } {
             return res;
         }
 
