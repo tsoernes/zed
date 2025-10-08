@@ -43,7 +43,7 @@ wayland = [
     "blade-macros",
     "blade-util",
     "bytemuck",
-    "ashpd/wayland",
+    "ashpd",
     "cosmic-text",
     "font-kit",
     "calloop-wayland-source",

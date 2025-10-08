@@ -164,9 +164,7 @@ pub enum WorkingDirectory {
 }
 
 #[skip_serializing_none]
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
-)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
@@ -201,25 +199,11 @@ impl TerminalLineHeight {
 /// When to show the scrollbar.
 ///
 /// Default: auto
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowScrollbar {
     /// Show the scrollbar if there's important information or
     /// follow the system's configured behavior.
-    #[default]
     Auto,
     /// Match the system's configured behavior.
     System,

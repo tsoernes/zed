@@ -331,7 +331,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Arc<SanitizedPath>,
+        new_path: Option<Arc<SanitizedPath>>,
     },
 }
 
@@ -1769,19 +1769,21 @@ impl LocalWorktree {
 
     pub fn update_abs_path_and_refresh(
         &mut self,
-        new_path: Arc<SanitizedPath>,
+        new_path: Option<Arc<SanitizedPath>>,
         cx: &Context<Worktree>,
     ) {
-        self.snapshot.git_repositories = Default::default();
-        self.snapshot.ignores_by_parent_abs_path = Default::default();
-        let root_name = new_path
-            .as_path()
-            .file_name()
-            .and_then(|f| f.to_str())
-            .map_or(RelPath::empty().into(), |f| {
-                RelPath::unix(f).unwrap().into()
-            });
-        self.snapshot.update_abs_path(new_path, root_name);
+        if let Some(new_path) = new_path {
+            self.snapshot.git_repositories = Default::default();
+            self.snapshot.ignores_by_parent_abs_path = Default::default();
+            let root_name = new_path
+                .as_path()
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map_or(RelPath::empty().into(), |f| {
+                    RelPath::unix(f).unwrap().into()
+                });
+            self.snapshot.update_abs_path(new_path, root_name);
+        }
         self.restart_background_scanners(cx);
     }
 }
@@ -3773,18 +3775,18 @@ impl BackgroundScanner {
                     .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
-                if let Some(new_path) = new_path {
+                if let Some(new_path) = new_path.as_ref() {
                     log::info!(
                         "root renamed from {} to {}",
                         root_path.as_path().display(),
                         new_path.as_path().display()
-                    );
-                    self.status_updates_tx
-                        .unbounded_send(ScanState::RootUpdated { new_path })
-                        .ok();
+                    )
                 } else {
                     log::warn!("root path could not be canonicalized: {}", err);
                 }
+                self.status_updates_tx
+                    .unbounded_send(ScanState::RootUpdated { new_path })
+                    .ok();
                 return;
             }
         };

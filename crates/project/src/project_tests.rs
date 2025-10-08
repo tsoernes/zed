@@ -8986,14 +8986,9 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     });
 
     assert_eq!(
-        repository_updates
-            .lock()
-            .iter()
-            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
-            .cloned()
-            .collect::<Vec<_>>(),
+        repository_updates.lock().as_slice(),
         Vec::new(),
-        "No further RepositoryUpdated events should happen, as only ignored dirs' contents was changed",
+        "No further repo events should happen, as only ignored dirs' contents was changed",
     );
     assert_eq!(
         project_events.lock().as_slice(),
@@ -9093,11 +9088,7 @@ async fn test_odd_events_for_ignored_dirs(
     });
 
     assert_eq!(
-        repository_updates
-            .lock()
-            .drain(..)
-            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
-            .collect::<Vec<_>>(),
+        repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::Updated {
                 full_scan: true,
@@ -9128,14 +9119,9 @@ async fn test_odd_events_for_ignored_dirs(
     cx.executor().run_until_parked();
 
     assert_eq!(
-        repository_updates
-            .lock()
-            .iter()
-            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
-            .cloned()
-            .collect::<Vec<_>>(),
+        repository_updates.lock().as_slice(),
         Vec::new(),
-        "No further RepositoryUpdated events should happen, as only ignored dirs received FS events",
+        "No further repo events should happen, as only ignored dirs received FS events",
     );
     assert_eq!(
         project_events.lock().as_slice(),

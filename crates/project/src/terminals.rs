@@ -145,7 +145,7 @@ impl Project {
             project.update(cx, move |this, cx| {
                 let format_to_run = || {
                     if let Some(command) = &spawn_task.command {
-                        let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
+                        let mut command: Option<Cow<str>> = shlex::try_quote(command).ok();
                         if let Some(command) = &mut command
                             && command.starts_with('"')
                             && let Some(prefix) = shell_kind.command_prefix()
@@ -156,8 +156,7 @@ impl Project {
                         let args = spawn_task
                             .args
                             .iter()
-                            .filter_map(|arg| shell_kind.try_quote(&arg));
-
+                            .filter_map(|arg| shlex::try_quote(arg).ok());
                         command.into_iter().chain(args).join(" ")
                     } else {
                         // todo: this breaks for remotes to windows

@@ -30,10 +30,8 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Opens the settings JSON file.
-        OpenSettings,
         /// Opens the settings editor.
-        OpenSettingsEditor,
+        OpenSettings,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens account settings.

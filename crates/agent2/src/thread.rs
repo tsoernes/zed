@@ -1,8 +1,8 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool,
+    GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, ShellDetectorTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1064,9 +1064,28 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(EnhancedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
+        // removed EnhancedTerminalHyphenTool alias registration
+        self.add_tool(ShellDetectorTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        let registered_tools = self.tools.keys().cloned().collect::<Vec<_>>();
+        log::info!(
+            "About to expose {} tools via MCP (pre-serialization): {:?}",
+            registered_tools.len(),
+            registered_tools
+        );
+        let has_enhanced = registered_tools.iter().any(|n| n == "enhanced_terminal");
+        log::info!("Registered tools: {:?}", registered_tools);
+        log::info!(
+            "Registration check: enhanced_terminal present: {}",
+            has_enhanced
+        );
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1852,6 +1871,20 @@ impl Thread {
         };
 
         log::debug!("Completion request built successfully");
+        {
+            let tool_names: Vec<_> = request.tools.iter().map(|t| t.name.clone()).collect();
+            log::info!(
+                "MCP serialization: final tool list ({} tools): {:?}",
+                tool_names.len(),
+                tool_names
+            );
+            // Presence check for single enhanced_terminal tool name
+            let has_enhanced = tool_names.iter().any(|n| n == "enhanced_terminal");
+            log::info!(
+                "MCP serialization: enhanced_terminal present: {}",
+                has_enhanced
+            );
+        }
         Ok(request)
     }
 
@@ -1875,9 +1908,17 @@ impl Thread {
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                if tool.supported_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
-                {
+                let supported = tool.supported_provider(&model.provider_id());
+                let enabled = profile.is_tool_enabled(tool_name);
+                let include = supported && enabled;
+                log::debug!(
+                    "enabled_tools: tool='{}' supported={} enabled={} include={}",
+                    tool_name,
+                    supported,
+                    enabled,
+                    include
+                );
+                if include {
                     Some((truncate(tool_name), tool.clone()))
                 } else {
                     None

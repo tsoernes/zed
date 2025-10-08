@@ -383,18 +383,7 @@ pub struct DebuggerSettingsContent {
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
 #[derive(
-    PartialEq,
-    Eq,
-    Debug,
-    Hash,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
+    PartialEq, Eq, Debug, Hash, Clone, Copy, Deserialize, Serialize, JsonSchema, MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SteppingGranularity {
@@ -408,19 +397,7 @@ pub enum SteppingGranularity {
     Instruction,
 }
 
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DockPosition {
     Left,
@@ -594,18 +571,7 @@ pub struct FileFinderSettingsContent {
 }
 
 #[derive(
-    Debug,
-    PartialEq,
-    Eq,
-    Clone,
-    Copy,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
+    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidthContent {
@@ -767,19 +733,7 @@ pub enum DockSide {
     Right,
 }
 
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    Deserialize,
-    Serialize,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
     Always,
@@ -787,9 +741,7 @@ pub enum ShowIndentGuides {
 }
 
 #[skip_serializing_none]
-#[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,

@@ -22794,6 +22794,9 @@ fn snippet_completions(
     }
 
     let snapshot = buffer.read(cx).text_snapshot();
+    let chars: String = snapshot
+        .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
+        .collect();
     let executor = cx.background_executor().clone();
 
     cx.background_spawn(async move {
@@ -22802,16 +22805,11 @@ fn snippet_completions(
         for (scope, snippets) in scopes.into_iter() {
             let classifier =
                 CharClassifier::new(Some(scope)).scope_context(Some(CharScopeContext::Completion));
-
-            const MAX_WORD_PREFIX_LEN: usize = 128;
-            let last_word: String = snapshot
-                .reversed_chars_for_range(text::Anchor::MIN..buffer_position)
-                .take(MAX_WORD_PREFIX_LEN)
-                .take_while(|c| classifier.is_word(*c))
-                .collect::<String>()
+            let mut last_word = chars
                 .chars()
-                .rev()
-                .collect();
+                .take_while(|c| classifier.is_word(*c))
+                .collect::<String>();
+            last_word = last_word.chars().rev().collect();
 
             if last_word.is_empty() {
                 return Ok(CompletionResponse {

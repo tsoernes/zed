@@ -1,6 +1,3 @@
-((line_comment) @injection.content
-    (#set! injection.language "comment"))
-
 (macro_invocation
     macro: (identifier) @_macro_name
     (#not-any-of? @_macro_name "view" "html")

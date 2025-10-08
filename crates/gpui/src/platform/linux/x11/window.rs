@@ -284,7 +284,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
-    pub(crate) x_window: xproto::Window,
+    x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {

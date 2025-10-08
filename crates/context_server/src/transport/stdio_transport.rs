@@ -41,9 +41,12 @@ impl StdioTransport {
             command.current_dir(working_directory);
         }
 
-        let mut server = command
-            .spawn()
-            .with_context(|| format!("failed to spawn command {command:?})",))?;
+        let mut server = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn command. (path={:?}, args={:?})",
+                binary.executable, &binary.args
+            )
+        })?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();

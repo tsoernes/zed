@@ -1,6 +1,6 @@
 use documented::Documented;
 use gpui::{
-    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
     transparent_black,
 };
@@ -41,8 +41,6 @@ pub trait ButtonCommon: Clickable + Disableable {
     fn tab_index(self, tab_index: impl Into<isize>) -> Self;
 
     fn layer(self, elevation: ElevationIndex) -> Self;
-
-    fn track_focus(self, focus_handle: &FocusHandle) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
@@ -407,7 +405,6 @@ pub struct ButtonLike {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
-    focus_handle: Option<FocusHandle>,
 }
 
 impl ButtonLike {
@@ -431,7 +428,6 @@ impl ButtonLike {
             on_right_click: None,
             layer: None,
             tab_index: None,
-            focus_handle: None,
         }
     }
 
@@ -553,11 +549,6 @@ impl ButtonCommon for ButtonLike {
         self.layer = Some(elevation);
         self
     }
-
-    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
-        self.focus_handle = Some(focus_handle.clone());
-        self
-    }
 }
 
 impl VisibleOnHover for ButtonLike {
@@ -584,9 +575,6 @@ impl RenderOnce for ButtonLike {
             .h_flex()
             .id(self.id.clone())
             .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
-            .when_some(self.focus_handle, |this, focus_handle| {
-                this.track_focus(&focus_handle)
-            })
             .font_ui(cx)
             .group("")
             .flex_none()
@@ -625,13 +613,7 @@ impl RenderOnce for ButtonLike {
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
-                    .map(|this| {
-                        if matches!(self.style, ButtonStyle::Outlined) {
-                            this.focus(|s| s.border_color(cx.theme().colors().border_focused))
-                        } else {
-                            this.focus(focus_color)
-                        }
-                    })
+                    .focus(focus_color)
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(

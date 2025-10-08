@@ -11,7 +11,6 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 use smol::{fs, process};
 use std::{
-    ffi::OsStr,
     fmt::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
@@ -106,7 +105,7 @@ impl WslRemoteConnection {
         windows_path_to_wsl_path_impl(&self.connection_options, source).await
     }
 
-    fn wsl_command(&self, program: &str, args: &[impl AsRef<OsStr>]) -> process::Command {
+    fn wsl_command(&self, program: &str, args: &[&str]) -> process::Command {
         wsl_command_impl(&self.connection_options, program, args)
     }
 
@@ -293,22 +292,23 @@ impl RemoteConnection for WslRemoteConnection {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
-        let mut proxy_args = vec![];
-        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
-            if let Some(value) = std::env::var(env_var).ok() {
-                proxy_args.push(format!("{}='{}'", env_var, value));
-            }
-        }
-        proxy_args.push(remote_binary_path.display(PathStyle::Posix).into_owned());
-        proxy_args.push("proxy".to_owned());
-        proxy_args.push("--identifier".to_owned());
-        proxy_args.push(unique_identifier);
+        let mut proxy_command = format!(
+            "exec {} proxy --identifier {}",
+            remote_binary_path.display(PathStyle::Posix),
+            unique_identifier
+        );
 
         if reconnect {
-            proxy_args.push("--reconnect".to_owned());
+            proxy_command.push_str(" --reconnect");
+        }
+
+        for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
+            if let Some(value) = std::env::var(env_var).ok() {
+                proxy_command = format!("{}='{}' {}", env_var, value, proxy_command);
+            }
         }
         let proxy_process = match self
-            .wsl_command("env", &proxy_args)
+            .wsl_command("sh", &["-lc", &proxy_command])
             .kill_on_drop(true)
             .spawn()
         {
@@ -382,22 +382,22 @@ impl RemoteConnection for WslRemoteConnection {
             .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
 
-        let mut exec = String::from("exec env ");
+        let mut script = String::new();
 
         for (k, v) in env.iter() {
-            if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-                write!(exec, "{}={} ", k, v).unwrap();
-            }
+            write!(&mut script, "{}='{}' ", k, v).unwrap();
         }
 
         if let Some(program) = program {
-            write!(exec, "{}", shlex::try_quote(&program)?).unwrap();
+            let command = shlex::try_quote(&program)?;
+            script.push_str(&command);
             for arg in args {
                 let arg = shlex::try_quote(&arg)?;
-                write!(exec, " {}", &arg).unwrap();
+                script.push_str(" ");
+                script.push_str(&arg);
             }
         } else {
-            write!(&mut exec, "{} -l", self.shell).unwrap();
+            write!(&mut script, "exec {} -l", self.shell).unwrap();
         }
 
         let wsl_args = if let Some(user) = &self.connection_options.user {
@@ -411,7 +411,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                exec,
+                script,
             ]
         } else {
             vec![
@@ -422,7 +422,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                exec,
+                script,
             ]
         };
 
@@ -492,7 +492,7 @@ async fn run_wsl_command_impl(
 fn wsl_command_impl(
     options: &WslConnectionOptions,
     program: &str,
-    args: &[impl AsRef<OsStr>],
+    args: &[&str],
 ) -> process::Command {
     let mut command = util::command::new_smol_command("wsl.exe");
 
@@ -512,6 +512,5 @@ fn wsl_command_impl(
         .arg(program)
         .args(args);
 
-    log::debug!("wsl {:?}", command);
     command
 }

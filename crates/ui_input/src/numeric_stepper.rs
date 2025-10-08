@@ -1,24 +1,33 @@
 use std::{
     fmt::Display,
-    num::{NonZero, NonZeroU32, NonZeroU64},
+    num::{NonZeroU32, NonZeroU64},
     rc::Rc,
     str::FromStr,
 };
 
 use editor::{Editor, EditorStyle};
-use gpui::{ClickEvent, CursorStyle, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
+use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::{CodeFade, MinimumContrast};
-use ui::prelude::*;
+use settings::CodeFade;
+use ui::{IconButtonShape, prelude::*};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NumberFieldMode {
+pub enum NumericStepperStyle {
+    Outlined,
+    #[default]
+    Ghost,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NumericStepperMode {
     #[default]
     Read,
     Edit,
 }
 
-pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr + 'static {
+pub trait NumericStepperType:
+    Display + Copy + Clone + Sized + PartialOrd + FromStr + 'static
+{
     fn default_format(value: &Self) -> String {
         format!("{}", value)
     }
@@ -31,7 +40,7 @@ pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr
     fn saturating_sub(self, rhs: Self) -> Self;
 }
 
-impl NumberFieldType for gpui::FontWeight {
+impl NumericStepperType for gpui::FontWeight {
     fn default_step() -> Self {
         FontWeight(10.0)
     }
@@ -55,7 +64,7 @@ impl NumberFieldType for gpui::FontWeight {
     }
 }
 
-impl NumberFieldType for settings::CodeFade {
+impl NumericStepperType for settings::CodeFade {
     fn default_step() -> Self {
         CodeFade(0.10)
     }
@@ -79,33 +88,9 @@ impl NumberFieldType for settings::CodeFade {
     }
 }
 
-impl NumberFieldType for settings::MinimumContrast {
-    fn default_step() -> Self {
-        MinimumContrast(1.0)
-    }
-    fn large_step() -> Self {
-        MinimumContrast(10.0)
-    }
-    fn small_step() -> Self {
-        MinimumContrast(0.5)
-    }
-    fn min_value() -> Self {
-        MinimumContrast(0.0)
-    }
-    fn max_value() -> Self {
-        MinimumContrast(106.0)
-    }
-    fn saturating_add(self, rhs: Self) -> Self {
-        MinimumContrast((self.0 + rhs.0).min(Self::max_value().0))
-    }
-    fn saturating_sub(self, rhs: Self) -> Self {
-        MinimumContrast((self.0 - rhs.0).max(Self::min_value().0))
-    }
-}
-
 macro_rules! impl_numeric_stepper_int {
     ($type:ident) => {
-        impl NumberFieldType for $type {
+        impl NumericStepperType for $type {
             fn default_step() -> Self {
                 1
             }
@@ -139,7 +124,7 @@ macro_rules! impl_numeric_stepper_int {
 
 macro_rules! impl_numeric_stepper_nonzero_int {
     ($nonzero:ty, $inner:ty) => {
-        impl NumberFieldType for $nonzero {
+        impl NumericStepperType for $nonzero {
             fn default_step() -> Self {
                 <$nonzero>::new(1).unwrap()
             }
@@ -175,7 +160,7 @@ macro_rules! impl_numeric_stepper_nonzero_int {
 
 macro_rules! impl_numeric_stepper_float {
     ($type:ident) => {
-        impl NumberFieldType for $type {
+        impl NumericStepperType for $type {
             fn default_format(value: &Self) -> String {
                 format!("{:.2}", value)
             }
@@ -222,14 +207,14 @@ impl_numeric_stepper_int!(u64);
 
 impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
 impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
-impl_numeric_stepper_nonzero_int!(NonZero<usize>, usize);
 
 #[derive(RegisterComponent)]
-pub struct NumberField<T = usize> {
+pub struct NumericStepper<T = usize> {
     id: ElementId,
     value: T,
+    style: NumericStepperStyle,
     focus_handle: FocusHandle,
-    mode: Entity<NumberFieldMode>,
+    mode: Entity<NumericStepperMode>,
     format: Box<dyn FnOnce(&T) -> String>,
     large_step: T,
     small_step: T,
@@ -241,12 +226,12 @@ pub struct NumberField<T = usize> {
     tab_index: Option<isize>,
 }
 
-impl<T: NumberFieldType> NumberField<T> {
+impl<T: NumericStepperType> NumericStepper<T> {
     pub fn new(id: impl Into<ElementId>, value: T, window: &mut Window, cx: &mut App) -> Self {
         let id = id.into();
 
         let (mode, focus_handle) = window.with_id(id.clone(), |window| {
-            let mode = window.use_state(cx, |_, _| NumberFieldMode::default());
+            let mode = window.use_state(cx, |_, _| NumericStepperMode::default());
             let focus_handle = window.use_state(cx, |_, cx| cx.focus_handle());
             (mode, focus_handle)
         });
@@ -256,6 +241,7 @@ impl<T: NumberFieldType> NumberField<T> {
             mode,
             value,
             focus_handle: focus_handle.read(cx).clone(),
+            style: NumericStepperStyle::default(),
             format: Box::new(T::default_format),
             large_step: T::large_step(),
             step: T::default_step(),
@@ -298,6 +284,11 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
+    pub fn style(mut self, style: NumericStepperStyle) -> Self {
+        self.style = style;
+        self
+    }
+
     pub fn on_reset(
         mut self,
         on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -317,7 +308,7 @@ impl<T: NumberFieldType> NumberField<T> {
     }
 }
 
-impl<T: NumberFieldType> IntoElement for NumberField<T> {
+impl<T: NumericStepperType> IntoElement for NumericStepper<T> {
     type Element = gpui::Component<Self>;
 
     fn into_element(self) -> Self::Element {
@@ -325,8 +316,12 @@ impl<T: NumberFieldType> IntoElement for NumberField<T> {
     }
 }
 
-impl<T: NumberFieldType> RenderOnce for NumberField<T> {
+impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let shape = IconButtonShape::Square;
+        let icon_size = IconSize::Small;
+
+        let is_outlined = matches!(self.style, NumericStepperStyle::Outlined);
         let mut tab_index = self.tab_index;
 
         let get_step = {
@@ -344,27 +339,6 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             }
         };
 
-        let bg_color = cx.theme().colors().surface_background;
-        let hover_bg_color = cx.theme().colors().element_hover;
-
-        let border_color = cx.theme().colors().border_variant;
-        let focus_border_color = cx.theme().colors().border_focused;
-
-        let base_button = |icon: IconName| {
-            h_flex()
-                .cursor(CursorStyle::PointingHand)
-                .p_1p5()
-                .size_full()
-                .justify_center()
-                .overflow_hidden()
-                .border_1()
-                .border_color(border_color)
-                .bg(bg_color)
-                .hover(|s| s.bg(hover_bg_color))
-                .focus(|s| s.border_color(focus_border_color).bg(hover_bg_color))
-                .child(Icon::new(icon).size(IconSize::Small))
-        };
-
         h_flex()
             .id(self.id.clone())
             .track_focus(&self.focus_handle)
@@ -372,7 +346,8 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             .when_some(self.on_reset, |this, on_reset| {
                 this.child(
                     IconButton::new("reset", IconName::RotateCcw)
-                        .icon_size(IconSize::Small)
+                        .shape(shape)
+                        .icon_size(icon_size)
                         .when_some(tab_index.as_mut(), |this, tab_index| {
                             *tab_index += 1;
                             this.tab_index(*tab_index - 1)
@@ -382,6 +357,18 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             })
             .child(
                 h_flex()
+                    .gap_1()
+                    .rounded_sm()
+                    .map(|this| {
+                        if is_outlined {
+                            this.overflow_hidden()
+                                .bg(cx.theme().colors().surface_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border_variant)
+                        } else {
+                            this.px_1().bg(cx.theme().colors().editor_background)
+                        }
+                    })
                     .map(|decrement| {
                         let decrement_handler = {
                             let value = self.value;
@@ -396,46 +383,69 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                             }
                         };
 
-                        decrement.child(
-                            base_button(IconName::Dash)
-                                .id("decrement_button")
-                                .rounded_tl_sm()
-                                .rounded_bl_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
+                        if is_outlined {
+                            decrement.child(
+                                h_flex()
+                                    .id("decrement_button")
+                                    .p_1p5()
+                                    .size_full()
+                                    .justify_center()
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .border_r_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(Icon::new(IconName::Dash).size(IconSize::Small))
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1).focus(|style| {
+                                            style.bg(cx.theme().colors().element_hover)
                                         })
-                                        .unwrap_or(0),
-                                )
-                                .on_click(decrement_handler),
-                        )
+                                    })
+                                    .on_click(decrement_handler),
+                            )
+                        } else {
+                            decrement.child(
+                                IconButton::new("decrement", IconName::Dash)
+                                    .shape(shape)
+                                    .icon_size(icon_size)
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1)
+                                    })
+                                    .on_click(decrement_handler),
+                            )
+                        }
                     })
                     .child(
                         h_flex()
+                            .h_8()
                             .min_w_16()
-                            .size_full()
-                            .border_y_1()
-                            .border_color(border_color)
-                            .bg(bg_color)
-                            .in_focus(|this| this.border_color(focus_border_color))
+                            .w_full()
+                            .border_1()
+                            .border_color(cx.theme().colors().border_transparent)
+                            .in_focus(|this| this.border_color(cx.theme().colors().border_focused))
                             .child(match *self.mode.read(cx) {
-                                NumberFieldMode::Read => h_flex()
-                                    .px_1()
+                                NumericStepperMode::Read => h_flex()
+                                    .id("numeric_stepper_label")
                                     .flex_1()
                                     .justify_center()
-                                    .child(Label::new((self.format)(&self.value)))
+                                    .child(Label::new((self.format)(&self.value)).mx_3())
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1).focus(|style| {
+                                            style.bg(cx.theme().colors().element_hover)
+                                        })
+                                    })
+                                    .on_click({
+                                        let _mode = self.mode.clone();
+                                        move |click, _, _cx| {
+                                            if click.click_count() == 2 || click.is_keyboard() {
+                                                // Edit mode is disabled until we implement center text alignment for editor
+                                                // mode.write(cx, NumericStepperMode::Edit);
+                                            }
+                                        }
+                                    })
                                     .into_any_element(),
-                                // Edit mode is disabled until we implement center text alignment for editor
-                                // mode.write(cx, NumberFieldMode::Edit);
-                                //
-                                // When we get to making Edit mode work, we shouldn't even focus the decrement/increment buttons.
-                                // Focus should go instead straight to the editor, avoiding any double-step focus.
-                                // In this world, the buttons become a mouse-only interaction, given users should be able
-                                // to do everything they'd do with the buttons straight in the editor anyway.
-                                NumberFieldMode::Edit => h_flex()
+                                NumericStepperMode::Edit => h_flex()
                                     .flex_1()
                                     .child(window.use_state(cx, {
                                         |window, cx| {
@@ -470,7 +480,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                                         }
                                                         on_change(&new_value, window, cx);
                                                     };
-                                                    mode.write(cx, NumberFieldMode::Read);
+                                                    mode.write(cx, NumericStepperMode::Read);
                                                 }
                                             })
                                             .detach();
@@ -501,34 +511,49 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                             }
                         };
 
-                        increment.child(
-                            base_button(IconName::Plus)
-                                .id("increment_button")
-                                .rounded_tr_sm()
-                                .rounded_br_sm()
-                                .tab_index(
-                                    tab_index
-                                        .as_mut()
-                                        .map(|tab_index| {
-                                            *tab_index += 1;
-                                            *tab_index - 1
+                        if is_outlined {
+                            increment.child(
+                                h_flex()
+                                    .id("increment_button")
+                                    .p_1p5()
+                                    .size_full()
+                                    .justify_center()
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .border_l_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(Icon::new(IconName::Plus).size(IconSize::Small))
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1).focus(|style| {
+                                            style.bg(cx.theme().colors().element_hover)
                                         })
-                                        .unwrap_or(0),
-                                )
-                                .on_click(increment_handler),
-                        )
+                                    })
+                                    .on_click(increment_handler),
+                            )
+                        } else {
+                            increment.child(
+                                IconButton::new("increment", IconName::Plus)
+                                    .shape(shape)
+                                    .icon_size(icon_size)
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1)
+                                    })
+                                    .on_click(increment_handler),
+                            )
+                        }
                     }),
             )
     }
 }
 
-impl Component for NumberField<usize> {
+impl Component for NumericStepper<usize> {
     fn scope() -> ComponentScope {
         ComponentScope::Input
     }
 
     fn name() -> &'static str {
-        "Number Field"
+        "Numeric Stepper"
     }
 
     fn sort_name() -> &'static str {
@@ -536,30 +561,50 @@ impl Component for NumberField<usize> {
     }
 
     fn description() -> Option<&'static str> {
-        Some("A numeric input element with increment and decrement buttons.")
+        Some("A button used to increment or decrement a numeric value.")
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let stepper_example = window.use_state(cx, |_, _| 100.0);
-
+        let first_stepper = window.use_state(cx, |_, _| 100usize);
+        let second_stepper = window.use_state(cx, |_, _| 100.0);
         Some(
             v_flex()
                 .gap_6()
-                .children(vec![single_example(
-                    "Default Numeric Stepper",
-                    NumberField::new(
-                        "numeric-stepper-component-preview",
-                        *stepper_example.read(cx),
-                        window,
-                        cx,
-                    )
-                    .on_change({
-                        let stepper_example = stepper_example.clone();
-                        move |value, _, cx| stepper_example.write(cx, *value)
-                    })
-                    .min(1.0)
-                    .max(100.0)
-                    .into_any_element(),
+                .children(vec![example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            NumericStepper::new(
+                                "numeric-stepper-component-preview",
+                                *first_stepper.read(cx),
+                                window,
+                                cx,
+                            )
+                            .on_change({
+                                let first_stepper = first_stepper.clone();
+                                move |value, _, cx| first_stepper.write(cx, *value)
+                            })
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Outlined",
+                            NumericStepper::new(
+                                "numeric-stepper-with-border-component-preview",
+                                *second_stepper.read(cx),
+                                window,
+                                cx,
+                            )
+                            .on_change({
+                                let second_stepper = second_stepper.clone();
+                                move |value, _, cx| second_stepper.write(cx, *value)
+                            })
+                            .min(1.0)
+                            .max(100.0)
+                            .style(NumericStepperStyle::Outlined)
+                            .into_any_element(),
+                        ),
+                    ],
                 )])
                 .into_any_element(),
         )

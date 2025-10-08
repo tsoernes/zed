@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use std::num;
 
 use collections::HashMap;
@@ -154,8 +153,7 @@ pub struct EditorSettingsContent {
     ///
     /// Values range from 0 to 106. Set to 0 to disable adjustments.
     /// Default: 45
-    #[schemars(range(min = 0, max = 106))]
-    pub minimum_contrast_for_highlights: Option<MinimumContrast>,
+    pub minimum_contrast_for_highlights: Option<f32>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -427,18 +425,7 @@ pub enum DoubleClickInMultibuffer {
 ///
 /// Default: always
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
@@ -453,18 +440,7 @@ pub enum MinimapThumb {
 ///
 /// Default: left_open
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumbBorder {
@@ -484,19 +460,7 @@ pub enum MinimapThumbBorder {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
@@ -718,18 +682,7 @@ pub struct DragAndDropSelectionContent {
 ///
 /// Default: never
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ShowMinimap {
@@ -746,18 +699,7 @@ pub enum ShowMinimap {
 ///
 /// Default: all_editors
 #[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
@@ -766,29 +708,4 @@ pub enum DisplayIn {
     /// Show the minimap on the active editor only.
     #[default]
     ActiveEditor,
-}
-
-/// Minimum APCA perceptual contrast for text over highlight backgrounds.
-///
-/// Valid range: 0.0 to 106.0
-/// Default: 45.0
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    PartialOrd,
-    derive_more::FromStr,
-)]
-#[serde(transparent)]
-pub struct MinimumContrast(pub f32);
-
-impl Display for MinimumContrast {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.1}", self.0)
-    }
 }
