@@ -5,25 +5,63 @@ use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    env,
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
     path::Path,
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
+/// Structure parsed from settings.json -> "detect_binaries"
+#[derive(Debug, Default, Deserialize)]
+struct DetectBinariesSettingsFile {
+    #[serde(default)]
+    add_groups: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    add_binaries: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    exclude_groups: Vec<String>,
+    #[serde(default)]
+    exclude_binaries: Vec<String>,
+    #[serde(default)]
+    include_only_groups: Option<Vec<String>>,
+}
+
+fn load_settings_file() -> DetectBinariesSettingsFile {
+    // Best-effort: look for .zed/settings.json in current working directory.
+    // If not found or invalid, return defaults silently.
+    let candidate_paths = [
+        ".zed/settings.json",
+        "settings.json", // fallback if user keeps a flat project settings file
+    ];
+    for p in candidate_paths {
+        if let Ok(data) = fs::read_to_string(p) {
+            if let Ok(root) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(obj) = root.get("detect_binaries") {
+                    if let Ok(cfg) =
+                        serde_json::from_value::<DetectBinariesSettingsFile>(obj.clone())
+                    {
+                        return cfg;
+                    }
+                }
+            }
+        }
+    }
+    DetectBinariesSettingsFile::default()
+}
+
 /// Input for the `detect_binaries` tool.
-/// `filter_categories` (if provided) limits scanning to those category identifiers.
+/// `filter_categories` (if provided) limits scanning to those category identifiers (case-insensitive).
 /// `max_concurrency` is a soft upper bound; values < 1 are treated as 1.
+/// `version_timeout_ms` applies per attempt (flag) for each binary.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DetectBinariesToolInput {
     #[serde(default)]
     filter_categories: Option<Vec<String>>,
     #[serde(default = "default_max_concurrency")]
     max_concurrency: usize,
-    /// Per-binary version probe timeout in milliseconds (applies to --version / -V / version attempts).
     #[serde(default = "default_version_timeout_ms")]
     version_timeout_ms: u64,
 }
@@ -36,9 +74,9 @@ fn default_version_timeout_ms() -> u64 {
     1500
 }
 
-/// Category identifiers and associated candidate binary names.
+/// Category identifiers and associated candidate binary names (base set).
 /// Order matters (stable output).
-const CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
+const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "package_managers",
         &[
@@ -96,6 +134,86 @@ const CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     ("docs", &["pandoc", "sphinx-build", "mkdocs", "mdbook"]),
     ("vcs", &["git", "gh"]),
 ];
+
+/// Build the effective groups list applying settings.json overrides.
+fn build_effective_groups(
+    cfg: &DetectBinariesSettingsFile,
+    filtered_categories: &Option<Vec<String>>,
+) -> Vec<(String, Vec<String>)> {
+    // Start with base groups
+    let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (g, bins) in BASE_CANDIDATE_GROUPS {
+        map.entry((*g).to_string())
+            .or_default()
+            .extend(bins.iter().map(|b| (*b).to_string()));
+    }
+
+    // Add whole new groups
+    for (g, bins) in &cfg.add_groups {
+        map.entry(g.to_lowercase())
+            .or_default()
+            .extend(bins.iter().map(|b| b.to_string()));
+    }
+
+    // Add binaries to existing groups
+    for (g, bins) in &cfg.add_binaries {
+        map.entry(g.to_lowercase())
+            .or_default()
+            .extend(bins.iter().map(|b| b.to_string()));
+    }
+
+    // Exclude binaries
+    let exclude_bin: BTreeSet<String> = cfg
+        .exclude_binaries
+        .iter()
+        .map(|b| b.to_lowercase())
+        .collect();
+
+    // Exclude groups
+    let exclude_groups: BTreeSet<String> = cfg
+        .exclude_groups
+        .iter()
+        .map(|g| g.to_lowercase())
+        .collect();
+
+    // If include_only_groups present, treat it as hard filter (after excludes)
+    let include_only: Option<BTreeSet<String>> = cfg
+        .include_only_groups
+        .as_ref()
+        .map(|v| v.iter().map(|g| g.to_lowercase()).collect());
+
+    // Apply explicit input filter_categories (provided via tool input) as secondary filter
+    let input_filter: Option<BTreeSet<String>> = filtered_categories
+        .as_ref()
+        .map(|v| v.iter().map(|g| g.to_lowercase()).collect());
+
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for (group, bins) in map {
+        let gl = group.to_lowercase();
+        if exclude_groups.contains(&gl) {
+            continue;
+        }
+        if let Some(only) = &include_only {
+            if !only.contains(&gl) {
+                continue;
+            }
+        }
+        if let Some(filt) = &input_filter {
+            if !filt.contains(&gl) {
+                continue;
+            }
+        }
+        let final_bins: Vec<String> = bins
+            .into_iter()
+            .filter(|b| !exclude_bin.contains(&b.to_lowercase()))
+            .collect();
+        if !final_bins.is_empty() {
+            out.push((group, final_bins));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
 
 #[derive(Debug, Serialize)]
 struct BinaryReport {
@@ -162,28 +280,27 @@ impl AgentTool for DetectBinariesTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        // Authorization step ensures user visibility/consent where required.
         let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_cx| {
             authorize.await?;
+
             let filtered_categories: Option<Vec<String>> = input
                 .filter_categories
                 .as_ref()
                 .map(|v| v.iter().map(|s| s.to_lowercase()).collect());
 
-            let mut tasks: Vec<(String, String, String)> = Vec::new(); // (category, binary, display_name)
-            let mut categories_used = vec![];
-            for (cat, names) in CANDIDATE_GROUPS {
+            let cfg = load_settings_file();
+            let effective_groups = build_effective_groups(&cfg, &filtered_categories);
+
+            let mut tasks: Vec<(String, String, String)> = Vec::new();
+            let mut categories_used = Vec::new();
+
+            for (cat, names_vec) in effective_groups {
                 let cat_lower = cat.to_string();
-                if let Some(filter) = &filtered_categories {
-                    if !filter.iter().any(|f| f == &cat_lower) {
-                        continue;
-                    }
-                }
                 categories_used.push(cat_lower.clone());
-                for name in *names {
-                    tasks.push((cat_lower.clone(), (*name).to_string(), (*name).to_string()));
+                for name in names_vec {
+                    tasks.push((cat_lower.clone(), name.clone(), name));
                 }
             }
 
@@ -192,7 +309,6 @@ impl AgentTool for DetectBinariesTool {
 
             let shared_results: Arc<Mutex<Vec<BinaryReport>>> = Arc::new(Mutex::new(Vec::new()));
 
-            // Simple chunked concurrency to avoid thread explosion while still parallelizing.
             for chunk in tasks.chunks(max_conc) {
                 let mut handles = Vec::with_capacity(chunk.len());
                 for (category, bin, display) in chunk.iter().cloned() {
@@ -201,51 +317,48 @@ impl AgentTool for DetectBinariesTool {
                         let start = Instant::now();
                         let paths = which_all(&bin);
                         if paths.is_empty() {
-                            results.lock().unwrap().push(BinaryReport {
-                                name: display,
-                                category,
-                                found: false,
-                                path: None,
-                                version: None,
-                                elapsed_ms: Some(start.elapsed().as_millis()),
-                                error: None,
-                            });
+                            if let Ok(mut vec) = results.lock() {
+                                vec.push(BinaryReport {
+                                    name: display,
+                                    category,
+                                    found: false,
+                                    path: None,
+                                    version: None,
+                                    elapsed_ms: Some(start.elapsed().as_millis()),
+                                    error: None,
+                                });
+                            }
                             return;
                         }
-                        // Only expose a path if multiple distinct occurrences (interpreted as multiple versions / installations).
-                        // If exactly one match, we suppress the path (privacy / noise reduction) but still use it for version probing.
+
                         let path_field = if paths.len() > 1 {
                             Some(paths.join(";"))
                         } else {
                             None
                         };
+
                         let probe_path = &paths[0];
-                        let version = detect_version_with_timeout(probe_path, timeout_ms);
+                        let version_result = detect_version_with_timeout(probe_path, timeout_ms);
                         let elapsed = start.elapsed().as_millis();
 
-                        match version {
-                            Ok(v) => {
-                                results.lock().unwrap().push(BinaryReport {
-                                    name: display,
-                                    category,
-                                    found: true,
-                                    path: path_field,
-                                    version: Some(v),
-                                    elapsed_ms: Some(elapsed),
-                                    error: None,
-                                });
-                            }
-                            Err(e) => {
-                                results.lock().unwrap().push(BinaryReport {
-                                    name: display,
-                                    category,
-                                    found: true,
-                                    path: path_field,
-                                    version: None,
-                                    elapsed_ms: Some(elapsed),
-                                    error: Some(e.to_string()),
-                                });
-                            }
+                        let mut push_report =
+                            |found: bool, version: Option<String>, error: Option<String>| {
+                                if let Ok(mut vec) = results.lock() {
+                                    vec.push(BinaryReport {
+                                        name: display.clone(),
+                                        category: category.clone(),
+                                        found,
+                                        path: path_field.clone(),
+                                        version,
+                                        elapsed_ms: Some(elapsed),
+                                        error,
+                                    });
+                                }
+                            };
+
+                        match version_result {
+                            Ok(v) => push_report(true, Some(v), None),
+                            Err(e) => push_report(true, None, Some(e.to_string())),
                         }
                     }));
                 }
@@ -254,11 +367,14 @@ impl AgentTool for DetectBinariesTool {
                 }
             }
 
-            let mut reports = Arc::try_unwrap(shared_results)
-                .unwrap()
-                .into_inner()
-                .unwrap();
-            // Stable ordering: category then name
+            let mut reports = match Arc::try_unwrap(shared_results) {
+                Ok(mutex) => match mutex.into_inner() {
+                    Ok(vec) => vec,
+                    Err(_) => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            };
+
             reports.sort_by(|a, b| {
                 (a.category.as_str(), a.name.as_str()).cmp(&(b.category.as_str(), b.name.as_str()))
             });
@@ -282,8 +398,6 @@ impl AgentTool for DetectBinariesTool {
     }
 }
 
-/// Locate all occurrences of a binary in PATH. Returns every executable match encountered
-/// in PATH order. The caller decides how to display (only reveals path list if >1).
 fn which_all(name: &str) -> Vec<String> {
     let mut matches = Vec::new();
     let path_var = match env::var_os("PATH") {
@@ -314,105 +428,131 @@ fn is_executable(p: &Path) -> bool {
 
 #[cfg(not(unix))]
 fn is_executable(p: &Path) -> bool {
-    // Simplistic heuristic for non-Unix
     p.is_file()
 }
 
-/// Attempt to detect a version string using common flags within a timeout.
-/// If retrieval exceeds timeout, returns an error.
 fn detect_version_with_timeout(path: &str, timeout_ms: u64) -> Result<String> {
     let attempts: &[&[&str]] = &[&["--version"], &["version"], &["-V"]];
-
-    // Shared state for thread join timeout simulation (coarse; avoids needing an async timeout crate).
-    let version_out = Arc::new(Mutex::new(None::<Result<String>>));
+    let mut last_err: Option<anyhow::Error> = None;
 
     for args in attempts {
-        let captured = Arc::clone(&version_out);
-        let path_string = path.to_string();
-        let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-
-        let handle = thread::spawn(move || {
-            let output = Command::new(&path_string).args(&args_vec).output();
-
-            let result = match output {
-                Ok(out) => {
-                    if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
-                        Err(anyhow!("non-success exit (no output)"))
-                    } else {
-                        let text = if !out.stdout.is_empty() {
-                            String::from_utf8_lossy(&out.stdout).to_string()
-                        } else {
-                            String::from_utf8_lossy(&out.stderr).to_string()
-                        };
-                        let first_line = text.lines().next().unwrap_or("").trim();
-                        if first_line.is_empty() {
-                            Err(anyhow!("empty version output"))
-                        } else {
-                            Ok(first_line.to_string())
-                        }
-                    }
+        match probe_once(path, args, timeout_ms) {
+            Ok(line) => return Ok(line),
+            Err(e) => {
+                last_err = Some(e);
+                if last_err
+                    .as_ref()
+                    .map(|er| er.to_string().contains("timeout"))
+                    .unwrap_or(false)
+                {
+                    break;
                 }
-                Err(e) => Err(anyhow!("spawn failed: {e}")),
-            };
-
-            let mut guard = captured.lock().unwrap();
-            if guard.is_none() {
-                *guard = Some(result);
             }
-        });
-
-        let joined = join_with_timeout(handle, Duration::from_millis(timeout_ms));
-        {
-            let guard = version_out.lock().unwrap();
-            if let Some(res) = guard.as_ref() {
-                return res.clone();
-            }
-        }
-
-        if !joined {
-            // Timed out; continue to next attempt but record that previous attempt hung.
-            let mut guard = version_out.lock().unwrap();
-            if guard.is_none() {
-                *guard = Some(Err(anyhow!("version probe timeout after {timeout_ms}ms")));
-            }
-            // Break; a hang indicates further attempts may also hang.
-            break;
         }
     }
 
-    let guard = version_out.lock().unwrap();
-    guard
-        .clone()
-        .unwrap_or_else(|| Err(anyhow!("no version retrieved")))
+    Err(last_err.unwrap_or_else(|| anyhow!("no version retrieved")))
 }
 
-/// Join a thread with a timeout (coarse polyfill).
-fn join_with_timeout<T>(handle: thread::JoinHandle<T>, dur: Duration) -> bool {
-    let start = Instant::now();
-    // Polling loop: simple + portable. Lower overhead than channels for small N.
-    loop {
-        if start.elapsed() >= dur {
-            // We cannot actually kill the thread safely; caller treats as timeout.
-            return false;
+fn probe_once(path: &str, args: &[&str], timeout_ms: u64) -> Result<String> {
+    let (tx, rx) = mpsc::channel();
+
+    let path_string = path.to_string();
+    let args_vec: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+    thread::spawn(move || {
+        let output = Command::new(&path_string).args(&args_vec).output();
+        let result = match output {
+            Ok(out) => {
+                if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
+                    Err(anyhow!("non-success exit (no output)"))
+                } else {
+                    let text = if !out.stdout.is_empty() {
+                        String::from_utf8_lossy(&out.stdout).to_string()
+                    } else {
+                        String::from_utf8_lossy(&out.stderr).to_string()
+                    };
+                    let first_line = text.lines().next().unwrap_or("").trim();
+                    if first_line.is_empty() {
+                        Err(anyhow!("empty version output"))
+                    } else {
+                        Ok(first_line.to_string())
+                    }
+                }
+            }
+            Err(e) => Err(anyhow!("spawn failed: {e}")),
+        };
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(r) => r,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err(anyhow!("version probe timeout after {timeout_ms}ms"))
         }
-        // Try non-blocking join by using a small sleep and checking a shared flag would need extra plumbing.
-        // Instead, attempt a zero-duration park by joining in a separate trick: we cannot peek join status
-        // without blocking in stable std, so approximate with small sleep and continue.
-        // This keeps code dependency-free. In a future refinement, use a scoped channel for a signal.
-        thread::sleep(Duration::from_millis(10));
-        // There is no direct way to test join readiness; break only if already finished via interior state.
-        // We rely on the version_out guard being set by the worker to short-circuit attempts.
-        // The caller inspects shared result after calling this function.
-        // Return false to let caller inspect shared state; they will see if it was set.
-        if start.elapsed() >= dur {
-            return false;
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(anyhow!("version probe worker disconnected"))
         }
-        // Continue looping until timeout; join handle is purposely leaked until natural finish.
-        // (We cannot safely force-cancel. Accepts potential orphan thread finishing later.)
-        if start.elapsed() >= dur {
-            return false;
+    }
+}
+
+#[cfg(unix)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, io::Write, os::unix::fs::PermissionsExt};
+
+    fn make_script(body: &str) -> String {
+        let uniq = format!(
+            "detect_bin_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(uniq);
+        {
+            let mut f = fs::File::create(&path).expect("create script");
+            writeln!(f, "#!/bin/sh").unwrap();
+            f.write_all(body.as_bytes()).unwrap();
         }
-        // To avoid indefinite loop if thread finished early, try a blocking join with very small probability window:
-        // This risks blocking; deliberately avoided. We accept coarse timeout only.
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn version_detection_success() {
+        let script = make_script("echo MyTool 1.2.3");
+        let v = detect_version_with_timeout(&script, 500).expect("should get version");
+        assert!(v.contains("MyTool"));
+        assert!(v.contains("1.2.3"));
+    }
+
+    #[test]
+    fn version_detection_timeout() {
+        let script = make_script("sleep 2; echo LateOutput 9.9.9");
+        let err = detect_version_with_timeout(&script, 200).expect_err("should timeout");
+        assert!(err.to_string().contains("timeout"));
+    }
+
+    #[test]
+    fn version_detection_fallback_attempt() {
+        // First attempt (--version) exits non-zero with no output, second (version) succeeds.
+        let script = make_script(
+            r#"
+if [ "$1" = "--version" ]; then
+  exit 1
+elif [ "$1" = "version" ]; then
+  echo FallbackTool 0.9.0
+else
+  echo Unexpected $1
+fi
+"#,
+        );
+        let v = detect_version_with_timeout(&script, 800).expect("fallback should succeed");
+        assert!(v.contains("FallbackTool"));
+        assert!(v.contains("0.9.0"));
     }
 }
