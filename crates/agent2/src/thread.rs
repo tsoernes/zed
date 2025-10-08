@@ -608,6 +608,12 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Precise active token count for current conversation messages (if computed).
+    pub(crate) precise_active_tokens: Option<u64>,
+    /// Precise model max token capacity (cached when token count is computed).
+    pub(crate) precise_max_tokens: Option<u64>,
+    /// Precise per-message token counts aligned with current request messages, if computed.
+    pub(crate) precise_per_message_tokens: Option<Vec<usize>>,
 }
 
 impl Thread {
@@ -658,6 +664,9 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
             model,
             summarization_model: None,
             prompt_capabilities_tx,
@@ -669,6 +678,111 @@ impl Thread {
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    /// Returns an immutable slice of all messages in the thread.
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
+    /// Extract (remove) a contiguous inclusive range of messages from the thread,
+    /// returning the removed messages in their original order.
+    /// "Why": Needed by memory/context compaction to archive messages while shrinking
+    /// the active context. This is exposed (rather than direct field access) to
+    /// centralize bounds checking and notification logic.
+    pub fn extract_messages(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Vec<Message>> {
+        let start = *range.start();
+        let end = *range.end();
+        if start > end {
+            return Err(anyhow::anyhow!("start index greater than end index"));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "range {}..={} out of bounds (len={})",
+                start,
+                end,
+                self.messages.len()
+            ));
+        }
+        let count = end - start + 1;
+        let mut removed = Vec::with_capacity(count);
+        // Remove in-place by repeatedly removing at 'start'
+        for _ in 0..count {
+            removed.push(self.messages.remove(start));
+        }
+        // Any cached summary may now be invalid
+        self.summary = None;
+        cx.notify();
+        Ok(removed)
+    }
+
+    /// Insert a sequence of messages starting at the given index (clamped to len).
+    /// "Why": Allows restoration of archived messages (memory restore) at an arbitrary
+    /// point without exposing internal vector operations elsewhere.
+    pub fn insert_messages(
+        &mut self,
+        index: usize,
+        mut msgs: Vec<Message>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let insert_at = index.min(self.messages.len());
+        // Preserve order: insert by extending via splice pattern
+        if insert_at == self.messages.len() {
+            self.messages.extend(msgs.drain(..));
+        } else {
+            for (offset, msg) in msgs.drain(..).enumerate() {
+                self.messages.insert(insert_at + offset, msg);
+            }
+        }
+        self.summary = None;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Replace a single message at `index` with an agent placeholder message containing
+    /// the provided text. Fails if index is out of bounds.
+    /// "Why": Memory archiving uses placeholders to retain a compact semantic summary
+    /// and a handle reference in place of original verbose content.
+    pub fn set_placeholder(
+        &mut self,
+        index: usize,
+        placeholder_text: String,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        if index >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "placeholder index {} out of bounds (len={})",
+                index,
+                self.messages.len()
+            ));
+        }
+        self.messages[index] = Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(placeholder_text)],
+            tool_results: Default::default(),
+        });
+        self.summary = None;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Remove a single message at index (used when eliminating a placeholder after restore).
+    /// "Why": Keeps placeholder removal logic consistent and bounds-checked.
+    pub fn remove_message(&mut self, index: usize, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        if index >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "remove index {} out of bounds (len={})",
+                index,
+                self.messages.len()
+            ));
+        }
+        self.messages.remove(index);
+        self.summary = None;
+        cx.notify();
+        Ok(())
     }
 
     pub fn replay(
@@ -832,6 +946,10 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            // Newly added precise token usage cache fields (were missing causing E0063)
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
             model,
             summarization_model: None,
             project,
@@ -1058,7 +1176,7 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(ListHistoryTool::new(cx.weak_entity()));
-        self.add_tool(MemoryTool::new());
+        self.add_tool(MemoryTool::new(cx.weak_entity()));
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -1173,6 +1291,8 @@ impl Thread {
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
+        // Kick off (non-blocking) precise token usage computation.
+        self.spawn_compute_precise_usage(cx);
         self.run_turn(cx)
     }
 
@@ -1935,9 +2055,57 @@ impl Thread {
             self.messages.len()
         );
 
+        // Token usage (centralized):
+        // - If precise values are already cached on the thread (`precise_active_tokens` / `precise_max_tokens`),
+        //   use them directly.
+        // - Otherwise compute a quick heuristic using the token_usage helper.
+        // A separate async updater should populate the precise fields after an initial request build.
+        let (active_tokens, max_tokens, usage_pct) = {
+            if let (Some(precise), Some(max)) =
+                (self.precise_active_tokens, self.precise_max_tokens)
+            {
+                let pct = if max > 0 {
+                    (precise as f64 / max as f64) * 100.0
+                } else {
+                    0.0
+                };
+                (precise as usize, max as usize, pct)
+            } else {
+                // Heuristic fallback
+                let est = crate::token_usage::heuristic_token_count(
+                    &self
+                        .messages
+                        .iter()
+                        .flat_map(|m| m.to_request())
+                        .collect::<Vec<_>>(),
+                );
+                let max_tokens = self.precise_max_tokens.unwrap_or(128_000) as usize;
+                let pct = if max_tokens > 0 {
+                    (est as f64 / max_tokens as f64) * 100.0
+                } else {
+                    0.0
+                };
+                (est, max_tokens, pct)
+            }
+        };
+
+        // Only surface usage in the system prompt when above 70% to reduce noise.
+        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if usage_pct > 70.0 {
+            (
+                Some(active_tokens),
+                Some(max_tokens),
+                Some((usage_pct * 100.0).round() / 100.0),
+            )
+        } else {
+            (None, None, None)
+        };
+
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
+            active_tokens: active_tokens_opt,
+            max_tokens: max_tokens_opt,
+            usage_pct: usage_pct_opt,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -1960,6 +2128,103 @@ impl Thread {
         }
 
         messages
+    }
+
+    /// Spawn an async task to compute precise token usage (total + per-message) and
+    /// cache the aggregate values in the thread so subsequent prompt builds can
+    /// surface accurate usage data in the system prompt. This runs best-effort:
+    /// failures (e.g. provider not supporting counting) fall back silently to
+    /// heuristic-only behavior. It only updates when values change to limit
+    /// unnecessary UI events.
+    fn spawn_compute_precise_usage(&mut self, cx: &mut Context<Self>) {
+        if self.model.is_none() {
+            return;
+        }
+        let model = self.model.clone();
+        let prompt_id = self.prompt_id.clone();
+        let completion_mode = self.completion_mode;
+        let messages_snapshot: Vec<_> = self.messages.iter().flat_map(|m| m.to_request()).collect();
+
+        let base_request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(prompt_id.to_string()),
+            intent: None,
+            mode: Some(completion_mode.into()),
+            messages: messages_snapshot.clone(),
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: Some(0.0),
+            thinking_allowed: true,
+        };
+
+        cx.spawn({
+            let thread = cx.weak_entity();
+            async move |_, cx| {
+                let Some(model) = model else {
+                    return;
+                };
+
+                // Attempt full per-message precise counting first (can be expensive).
+                let per_message_result = crate::token_usage::precise_per_message_tokens(
+                    &model,
+                    &base_request,
+                    &messages_snapshot,
+                    cx, // AsyncApp implements TokenCountApp
+                )
+                .await;
+
+                // Fallback to heuristic if precise per-message fails.
+                let (per_message, total_precise) = match per_message_result {
+                    Ok((per, total)) => (Some(per), total),
+                    Err(_) => {
+                        let total = crate::token_usage::precise_tokens_for_slice(
+                            &model,
+                            &base_request,
+                            &messages_snapshot,
+                            cx,
+                        )
+                        .await;
+                        // If precise total also failed (unlikely), heuristic fallback.
+                        let final_total = if total == 0 {
+                            crate::token_usage::heuristic_token_count(&messages_snapshot)
+                        } else {
+                            total
+                        };
+                        let per = crate::token_usage::heuristic_per_message(&messages_snapshot);
+                        (Some(per), final_total)
+                    }
+                };
+
+                let max_tokens = model.max_token_count();
+
+                let _ = thread.update(cx, |this, cx| {
+                    let total_changed = this
+                        .precise_active_tokens
+                        .map(|v| v as usize != total_precise)
+                        .unwrap_or(true);
+                    let max_changed = this
+                        .precise_max_tokens
+                        .map(|v| v != max_tokens)
+                        .unwrap_or(true);
+                    let per_changed = match (&this.precise_per_message_tokens, &per_message) {
+                        (None, Some(_)) => true,
+                        (Some(old), Some(new)) => old.len() != new.len() || old != new,
+                        (Some(_), None) => false, // keep existing if new unavailable
+                        (None, None) => false,
+                    };
+
+                    if total_changed || max_changed || per_changed {
+                        this.precise_active_tokens = Some(total_precise as u64);
+                        this.precise_max_tokens = Some(max_tokens);
+                        if per_message.is_some() {
+                            this.precise_per_message_tokens = per_message;
+                        }
+                        cx.notify();
+                    }
+                });
+            }
+        });
     }
 
     pub fn to_markdown(&self) -> String {
