@@ -32,7 +32,7 @@ pub fn init(cx: &mut App) {
 
                 // Register tools
                 handle.server.add_tool(ListHistoryMcpTool);
-                handle.server.add_tool(MemoryMcpTool);
+
                 handle.server.add_tool(CallContextMcpTool);
 
                 // Write socket path to file for CLI access
@@ -162,120 +162,12 @@ impl McpServerTool for ListHistoryMcpTool {
 }
 
 // ============================================================================
-// Memory Tool
+// Memory Tool (removed)
 // ============================================================================
-
-#[derive(Clone)]
-struct MemoryMcpTool;
-
-/// Perform memory operations: store, load, list, restore, or prune conversation segments.
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-struct MemoryInput {
-    /// The operation to perform
-    operation: MemoryOperation,
-
-    /// Starting message index (for store operation)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    start_index: Option<usize>,
-
-    /// Ending message index (for store operation)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    end_index: Option<usize>,
-
-    /// Memory handle identifier (for load/restore operations)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_handle: Option<String>,
-
-    /// Optional summary text
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<String>,
-
-    /// Whether to use auto mode
-    #[serde(default)]
-    auto: bool,
-
-    /// Maximum preview characters
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_preview_chars: Option<usize>,
-
-    /// Insert index for restore operation
-    #[serde(skip_serializing_if = "Option::is_none")]
-    restore_insert_index: Option<usize>,
-
-    /// Remove placeholder after restore
-    #[serde(default)]
-    remove_placeholder: bool,
-
-    /// Replace placeholder with this text
-    #[serde(skip_serializing_if = "Option::is_none")]
-    replace_placeholder_with: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum MemoryOperation {
-    Store,
-    Load,
-    List,
-    Restore,
-    Prune,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-struct MemoryOutput {
-    operation: String,
-    success: bool,
-    message: String,
-}
-
-impl McpServerTool for MemoryMcpTool {
-    type Input = MemoryInput;
-    type Output = MemoryOutput;
-
-    const NAME: &'static str = "memory";
-
-    fn annotations(&self) -> ToolAnnotations {
-        ToolAnnotations {
-            title: Some("Memory Management".to_string()),
-            read_only_hint: None,
-            destructive_hint: Some(false),
-            idempotent_hint: None,
-            open_world_hint: None,
-        }
-    }
-
-    async fn run(
-        &self,
-        input: Self::Input,
-        _cx: &mut AsyncApp,
-    ) -> Result<ToolResponse<Self::Output>> {
-        let operation_name = format!("{:?}", input.operation).to_lowercase();
-
-        // For now, return a placeholder response
-        // This will need to be wired up to the actual memory management system
-        let output = MemoryOutput {
-            operation: operation_name.clone(),
-            success: false,
-            message: format!(
-                "Memory operation '{}' requires active thread context",
-                operation_name
-            ),
-        };
-
-        let text = format!(
-            "# Memory Operation: {}\n\n\
-            Note: This tool requires access to an active thread context.\n\
-            Operation: {:?}\n",
-            operation_name, input.operation
-        );
-
-        Ok(ToolResponse {
-            content: vec![ToolResponseContent::Text { text }],
-            structured_content: output,
-        })
-    }
-}
-
+// The former in-repo MCP 'memory' tool (store/load/list/restore/prune conversation
+// segments) has been fully removed. This placeholder block remains only to
+// preserve line number stability for downstream patches and to document the
+// deprecation decision.
 // ============================================================================
 // CallContextTool
 // ============================================================================
