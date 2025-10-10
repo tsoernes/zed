@@ -169,7 +169,7 @@ impl McpServerTool for ListHistoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let thread_entity = match GlobalActiveThread::active_thread(&*cx) {
+        let thread_entity = match cx.update(|app| GlobalActiveThread::active_thread(app))? {
             Some(t) => t,
             None => {
                 let out = ListHistoryOutput {
@@ -376,7 +376,7 @@ impl McpServerTool for MemoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let thread_entity = match GlobalActiveThread::active_thread(&*cx) {
+        let thread_entity = match cx.update(|app| GlobalActiveThread::active_thread(app))? {
             Some(t) => t,
             None => {
                 let operation = format!("{:?}", input.operation).to_lowercase();
