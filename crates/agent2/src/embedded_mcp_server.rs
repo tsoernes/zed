@@ -43,8 +43,11 @@ struct McpServerHandle {
 
 /// Initialize the embedded MCP server and register context-management tools.
 pub fn init(cx: &mut App) {
+    log::info!("agent2::embedded_mcp_server::init called");
     let task = cx.spawn(async move |cx| {
+        log::info!("agent2::embedded_mcp_server spawning MCP server initialization");
         let server = McpServer::new(&cx).await?;
+        log::info!("agent2::embedded_mcp_server MCP server created successfully");
 
         cx.update(|cx| {
             let server_entity = cx.new(|cx| {
@@ -54,9 +57,13 @@ pub fn init(cx: &mut App) {
                 };
 
                 // Register tools
+                log::info!("agent2::embedded_mcp_server registering tools");
                 handle.server.add_tool(ListHistoryMcpTool);
+                log::info!("agent2::embedded_mcp_server registered ListHistoryMcpTool");
                 handle.server.add_tool(MemoryMcpTool);
+                log::info!("agent2::embedded_mcp_server registered MemoryMcpTool");
                 handle.server.add_tool(CallContextMcpTool);
+                log::info!("agent2::embedded_mcp_server registered CallContextMcpTool");
 
                 // Persist socket path for external (CLI) access.
                 let socket_path = handle.server.socket_path().to_path_buf();
@@ -94,11 +101,12 @@ pub fn init(cx: &mut App) {
             cx.set_global(EmbeddedMcpServer {
                 _server: server_entity,
             });
-            log::info!("agent2 embedded MCP server initialized");
+            log::info!("agent2 embedded MCP server initialized successfully");
             anyhow::Ok(())
         })
     });
 
+    log::info!("agent2::embedded_mcp_server init task spawned, will run asynchronously");
     task.detach_and_log_err(cx);
 }
 
@@ -685,6 +693,11 @@ impl McpServerTool for CallContextMcpTool {
 
 /// Set the active thread (Some) or clear it (None).
 pub fn set_active_thread(thread: Option<Entity<Thread>>, cx: &mut App) {
+    if thread.is_some() {
+        log::info!("agent2::embedded_mcp_server::set_active_thread called with Some(thread)");
+    } else {
+        log::info!("agent2::embedded_mcp_server::set_active_thread called with None");
+    }
     GlobalActiveThread::set_active_thread(thread, cx);
 }
 
