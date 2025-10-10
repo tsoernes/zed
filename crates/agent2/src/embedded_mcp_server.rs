@@ -44,6 +44,11 @@ struct McpServerHandle {
 /// Initialize the embedded MCP server and register context-management tools.
 pub fn init(cx: &mut App) {
     log::info!("agent2::embedded_mcp_server::init called");
+
+    // Initialize GlobalActiveThread immediately to prevent "global not found" errors
+    GlobalActiveThread::set_global(cx, GlobalActiveThread(None));
+    log::info!("agent2::embedded_mcp_server GlobalActiveThread initialized");
+
     let task = cx.spawn(async move |cx| {
         log::info!("agent2::embedded_mcp_server spawning MCP server initialization");
         let server = McpServer::new(&cx).await?;
