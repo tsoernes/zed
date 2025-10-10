@@ -169,7 +169,7 @@ impl McpServerTool for ListHistoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let thread_entity = match GlobalActiveThread::active_thread(cx) {
+        let thread_entity = match GlobalActiveThread::active_thread(&*cx) {
             Some(t) => t,
             None => {
                 let out = ListHistoryOutput {
@@ -376,7 +376,7 @@ impl McpServerTool for MemoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let thread_entity = match GlobalActiveThread::active_thread(cx) {
+        let thread_entity = match GlobalActiveThread::active_thread(&*cx) {
             Some(t) => t,
             None => {
                 let operation = format!("{:?}", input.operation).to_lowercase();
@@ -407,7 +407,6 @@ impl McpServerTool for MemoryMcpTool {
                         .end_index
                         .ok_or_else(|| anyhow!("end_index required for store"))?;
                     let id = thread.store_memory_segment(start, end, cx)?;
-                    // Retrieve segment metadata
                     let seg = thread
                         .list_memory_segments()
                         .iter()
@@ -594,7 +593,6 @@ impl McpServerTool for MemoryMcpTool {
                 }
             }
         });
-
         let (output, text) = result?;
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
