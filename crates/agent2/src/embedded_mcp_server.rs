@@ -111,6 +111,7 @@ struct ListHistoryMcpTool;
 
 /// Enumerate a slice of the thread's messages with indices, previews, and optional full markdown.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// Input schema for the list_history tool. Provides pagination and preview size limits.
 struct ListHistoryInput {
     #[serde(default)]
     start: usize,
@@ -303,6 +304,7 @@ fn escape_pipes(s: &str) -> String {
 struct MemoryMcpTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// Input schema for the memory tool. Specifies the operation and related parameters.
 struct MemoryInput {
     operation: MemoryOperation,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -625,6 +627,7 @@ impl McpServerTool for MemoryMcpTool {
 struct CallContextMcpTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+/// Input schema for the call_context_tool. Identifies the tool name and raw JSON input.
 struct CallContextInput {
     tool_name: String,
     #[serde(default)]
