@@ -1296,6 +1296,13 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Update global active thread for MCP memory tools
+        match &thread {
+            AgentDiffThread::AcpThread(acp_thread) => {
+                agent2::embedded_mcp_server::set_active_thread(Some(acp_thread.clone()), cx);
+            }
+        }
+
         let action_log = thread.action_log(cx);
 
         let action_log_subscription = cx.observe_in(&action_log, window, {
