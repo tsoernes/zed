@@ -3,7 +3,7 @@ use context_server::{
     listener::{McpServer, McpServerTool, ToolResponse},
     types::{ToolAnnotations, ToolResponseContent},
 };
-use gpui::{App, AppContext, AsyncApp, Entity, Global, Task, ReadGlobal, UpdateGlobal};
+use gpui::{App, AppContext, AsyncApp, Entity, Global, ReadGlobal, Task, UpdateGlobal};
 use log;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -169,8 +169,7 @@ impl McpServerTool for ListHistoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let maybe_thread = cx.update(|cx| GlobalActiveThread::active_thread(cx));
-        let thread_entity = match maybe_thread {
+        let thread_entity = match GlobalActiveThread::active_thread(cx) {
             Some(t) => t,
             None => {
                 let out = ListHistoryOutput {
@@ -377,8 +376,7 @@ impl McpServerTool for MemoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let maybe_thread = cx.update(|cx| GlobalActiveThread::active_thread(cx));
-        let thread_entity = match maybe_thread {
+        let thread_entity = match GlobalActiveThread::active_thread(cx) {
             Some(t) => t,
             None => {
                 let operation = format!("{:?}", input.operation).to_lowercase();
@@ -413,24 +411,20 @@ impl McpServerTool for MemoryMcpTool {
                     let seg = thread
                         .list_memory_segments()
                         .iter()
-                        .find(|s| {
-                            // Cannot access private fields; fall back to load after store.
-                            false
-                        })
+                        .find(|s| s.id == id)
                         .ok_or_else(|| anyhow!("segment stored but not found"))?;
                     let meta = MemorySegmentMeta {
-                        // Use load_memory_segment metadata instead of private fields.
-                        id: meta_json["id"].as_u64().unwrap_or(id),
-                        start: meta_json["start"].as_u64().unwrap_or(0) as usize,
-                        end: meta_json["end"].as_u64().unwrap_or(0) as usize,
-                        count: meta_json["count"].as_u64().unwrap_or(0) as usize,
-                        chars: meta_json["chars"].as_u64().unwrap_or(0) as usize,
-                        placeholder_chars: meta_json["placeholder_chars"].as_u64().unwrap_or(0) as usize,
+                        id: seg.id,
+                        start: seg.start,
+                        end: seg.end,
+                        count: seg.message_count,
+                        chars: seg.message_char_count,
+                        placeholder_chars: seg.placeholder_char_count,
                         token_savings_estimate: seg
-                            .as_u64().unwrap_or(0) as usize
-                            .saturating_sub(meta_json["placeholder_chars"].as_u64().unwrap_or(0) as usize),
-                        summary: meta_json["summary"].as_str().unwrap_or("").to_string(),
-                        stored_epoch_ms: meta_json["stored_epoch_ms"].as_u64().unwrap_or(0) as u128,
+                            .message_char_count
+                            .saturating_sub(seg.placeholder_char_count),
+                        summary: seg.summary.to_string(),
+                        stored_epoch_ms: seg.stored_epoch_ms,
                     };
                     let out = MemoryOutput {
                         operation: op_name.clone(),
@@ -518,17 +512,17 @@ impl McpServerTool for MemoryMcpTool {
                     let mut metas = Vec::new();
                     for seg in thread.list_memory_segments() {
                         metas.push(MemorySegmentMeta {
-                            id: meta_json["id"].as_u64().unwrap_or(id),
-                            start: meta_json["start"].as_u64().unwrap_or(0) as usize,
-                            end: meta_json["end"].as_u64().unwrap_or(0) as usize,
-                            count: meta_json["count"].as_u64().unwrap_or(0) as usize,
-                            chars: meta_json["chars"].as_u64().unwrap_or(0) as usize,
-                            placeholder_chars: meta_json["placeholder_chars"].as_u64().unwrap_or(0) as usize,
+                            id: seg.id,
+                            start: seg.start,
+                            end: seg.end,
+                            count: seg.message_count,
+                            chars: seg.message_char_count,
+                            placeholder_chars: seg.placeholder_char_count,
                             token_savings_estimate: seg
-                                .as_u64().unwrap_or(0) as usize
-                                .saturating_sub(meta_json["placeholder_chars"].as_u64().unwrap_or(0) as usize),
-                            summary: meta_json["summary"].as_str().unwrap_or("").to_string(),
-                            stored_epoch_ms: meta_json["stored_epoch_ms"].as_u64().unwrap_or(0) as u128,
+                                .message_char_count
+                                .saturating_sub(seg.placeholder_char_count),
+                            summary: seg.summary.to_string(),
+                            stored_epoch_ms: seg.stored_epoch_ms,
                         });
                     }
                     let out = MemoryOutput {
@@ -599,7 +593,7 @@ impl McpServerTool for MemoryMcpTool {
                     Ok((out, txt))
                 }
             }
-        })?;
+        });
 
         let (output, text) = result?;
         Ok(ToolResponse {

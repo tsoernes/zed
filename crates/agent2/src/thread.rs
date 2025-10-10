@@ -1,7 +1,7 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, ListHistoryTool, MemoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool,
+    ListDirectoryTool, ListHistoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -14,6 +14,7 @@ use agent_settings::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
+
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
@@ -98,6 +99,20 @@ pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+}
+
+// Internal thread-scoped archived memory segment.
+// Not exposed publicly; used for context compaction.
+struct ThreadMemorySegment {
+    pub(crate) id: u64,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) summary: SharedString,
+    pub(crate) message_char_count: usize,
+    pub(crate) message_count: usize,
+    pub(crate) stored_epoch_ms: u128,
+    pub(crate) placeholder_char_count: usize,
+    pub(crate) messages: Vec<Message>,
 }
 
 impl Message {
@@ -585,6 +600,9 @@ pub struct Thread {
     pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
+    // Thread-scoped memory archive segments (non-public).
+    memory_segments: Vec<ThreadMemorySegment>,
+    memory_next_id: u64,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -647,6 +665,8 @@ impl Thread {
             pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
+            memory_segments: Vec::new(),
+            memory_next_id: 0,
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
@@ -683,6 +703,224 @@ impl Thread {
     /// Returns an immutable slice of all messages in the thread.
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Archive (store) a contiguous inclusive range of messages, replacing them
+    /// with a single placeholder summary message. Returns the new memory segment id.
+    pub fn store_memory_segment(
+        &mut self,
+        start: usize,
+        end: usize,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<u64> {
+        if start > end {
+            return Err(anyhow::anyhow!("start index greater than end index"));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "range {}..={} out of bounds (len={})",
+                start,
+                end,
+                self.messages.len()
+            ));
+        }
+        if self.memory_range_overlaps(start, end) {
+            return Err(anyhow::anyhow!(
+                "range {}..={} overlaps an existing archived memory segment",
+                start,
+                end
+            ));
+        }
+
+        // Extract messages
+        let removed = self.extract_messages(start..=end, cx)?;
+        if removed.is_empty() {
+            return Err(anyhow::anyhow!("empty range cannot be archived"));
+        }
+
+        // Synthesize summary from first/last content
+        fn truncate(s: &str, max: usize) -> String {
+            if s.len() <= max {
+                s.to_string()
+            } else {
+                let mut out = s.chars().take(max).collect::<String>();
+                out.push('…');
+                out
+            }
+        }
+
+        let mut char_total = 0usize;
+        let mut rendered: Vec<String> = Vec::with_capacity(removed.len());
+        for m in &removed {
+            let md = m.to_markdown();
+            char_total += md.len();
+            rendered.push(md);
+        }
+
+        let summary = if rendered.len() == 1 {
+            format!("Single message: {}", truncate(&rendered[0], 48))
+        } else {
+            let first = truncate(&rendered.first().unwrap(), 48);
+            let last = truncate(&rendered.last().unwrap(), 48);
+            format!(
+                "{} msgs | first: {} | last: {}",
+                rendered.len(),
+                first,
+                last
+            )
+        };
+
+        let id = self.memory_next_id;
+        self.memory_next_id = self.memory_next_id.saturating_add(1);
+
+        // Insert placeholder representing archived segment at original start index.
+        let placeholder_text = format!("[memory:{}] {}", id, summary);
+        // Insertion: put a single placeholder message at start
+        self.insert_messages(
+            start,
+            vec![Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text(placeholder_text.clone())],
+                tool_results: Default::default(),
+            })],
+            cx,
+        )?;
+
+        let seg = ThreadMemorySegment {
+            id,
+            start,
+            end,
+            summary: summary.clone().into(),
+            message_char_count: char_total,
+            message_count: removed.len(),
+            stored_epoch_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default(),
+            placeholder_char_count: placeholder_text.len(),
+            messages: removed,
+        };
+        self.memory_segments.push(seg);
+        Ok(id)
+    }
+
+    /// Restore a previously archived memory segment by id:
+    /// - Removes the placeholder if still present at the original start index.
+    /// - Reinserts the original messages in their prior order.
+    /// Segment remains archived (not pruned) after restore.
+    pub fn restore_memory_segment(
+        &mut self,
+        id: u64,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let seg_index = self
+            .memory_segments
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+
+        let seg_start;
+        {
+            let seg = &self.memory_segments[seg_index];
+            seg_start = seg.start;
+        }
+
+        // If placeholder still present at seg_start and matches id, remove it.
+        if seg_start < self.messages.len() {
+            let is_placeholder = match &self.messages[seg_start] {
+                Message::Agent(agent_msg) => agent_msg
+                    .content
+                    .iter()
+                    .any(|c| matches!(c, AgentMessageContent::Text(t) if t.starts_with(&format!("[memory:{}]", id)))),
+                _ => false,
+            };
+            if is_placeholder {
+                // Remove placeholder directly
+                self.messages.remove(seg_start);
+            }
+        }
+
+        // Reinsert archived messages at original start index
+        let archived = self.memory_segments[seg_index].messages.clone(); // clone to keep archive intact
+        self.insert_messages(seg_start, archived, cx)?;
+        Ok(())
+    }
+
+    /// Prune (delete) an archived memory segment by id. If the placeholder
+    /// representing the segment is still present at its original start index,
+    /// it is removed. This does not restore the archived messages.
+    pub fn prune_memory_segment(&mut self, id: u64, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let pos = self
+            .memory_segments
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+        let start_index = self.memory_segments[pos].start;
+        if start_index < self.messages.len() {
+            let placeholder_matches = match &self.messages[start_index] {
+                Message::Agent(agent_msg) => agent_msg.content.iter().any(|c| {
+                    matches!(
+                        c,
+                        AgentMessageContent::Text(t)
+                            if t.starts_with(&format!("[memory:{}]", id))
+                    )
+                }),
+                _ => false,
+            };
+            if placeholder_matches {
+                self.messages.remove(start_index);
+            }
+        }
+        self.memory_segments.remove(pos);
+        self.summary = None;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Load (inspect) an archived memory segment by id without modifying the thread.
+    /// Returns a tuple of (metadata_json, messages_markdown).
+    /// The metadata includes a token_savings_estimate computed as (archived_chars - placeholder_chars).
+    pub fn load_memory_segment(&self, id: u64) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+        let seg = self
+            .memory_segments
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+
+        let token_savings_estimate = seg
+            .message_char_count
+            .saturating_sub(seg.placeholder_char_count);
+
+        let meta = serde_json::json!({
+            "id": seg.id,
+            "start": seg.start,
+            "end": seg.end,
+            "count": seg.message_count,
+            "chars": seg.message_char_count,
+            "summary": seg.summary.as_ref(),
+            "stored_epoch_ms": seg.stored_epoch_ms,
+            "placeholder_chars": seg.placeholder_char_count,
+            "token_savings_estimate": token_savings_estimate
+        });
+
+        let messages_markdown: Vec<String> = seg.messages.iter().map(|m| m.to_markdown()).collect();
+
+        Ok((meta, messages_markdown))
+    }
+
+    /// List all archived memory segments (thread-scoped).
+    pub(crate) fn list_memory_segments(&self) -> &[ThreadMemorySegment] {
+        &self.memory_segments
+    }
+
+    /// Returns true if the inclusive range [start, end] overlaps any stored memory segment.
+    /// Overlap logic: two closed intervals [a,b] and [c,d] overlap if not (b < c || d < a).
+    pub fn memory_range_overlaps(&self, start: usize, end: usize) -> bool {
+        if start > end {
+            return false;
+        }
+        self.memory_segments
+            .iter()
+            .any(|seg| !(end < seg.start || start > seg.end))
     }
 
     /// Extract (remove) a contiguous inclusive range of messages from the thread,
@@ -934,6 +1172,8 @@ impl Thread {
             pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
+            memory_segments: Vec::new(),
+            memory_next_id: 0,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
@@ -1176,7 +1416,7 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(ListHistoryTool::new(cx.weak_entity()));
-        self.add_tool(MemoryTool::new(cx.weak_entity()));
+
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -2158,7 +2398,7 @@ impl Thread {
             thinking_allowed: true,
         };
 
-        cx.spawn({
+        let _ = cx.spawn({
             let thread = cx.weak_entity();
             async move |_, cx| {
                 let Some(model) = model else {
@@ -2209,7 +2449,11 @@ impl Thread {
                         .unwrap_or(true);
                     let per_changed = match (&this.precise_per_message_tokens, &per_message) {
                         (None, Some(_)) => true,
-                        (Some(old), Some(new)) => old.len() != new.len() || old != new,
+                        (Some(old), Some(new)) => {
+                            // Explicitly annotate the vector types to satisfy the compiler's type inference (fixes E0282).
+                            let (old, new): (&Vec<usize>, &Vec<usize>) = (old, new);
+                            old.len() != new.len() || old != new
+                        }
                         (Some(_), None) => false, // keep existing if new unavailable
                         (None, None) => false,
                     };
