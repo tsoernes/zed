@@ -66,7 +66,8 @@ impl Tool for CallContextTool {
     }
 
     fn description(&self) -> String {
-        "A unified entry point for context management tools (list_history and memory). Provides dynamic invocation of either tool using a generic schema.".into()
+        "A unified entry point for context management tools (list_history, memory) using a generic schema."
+            .into()
     }
 
     fn icon(&self) -> IconName {
@@ -119,15 +120,7 @@ impl Tool for CallContextTool {
             }
             ContextToolName::Memory => {
                 let memory_tool = Arc::new(MemoryTool);
-                let args = match input.arguments {
-                    Some(args) => args,
-                    None => {
-                        return Task::ready(Err(anyhow!(
-                            "Memory tool requires arguments including 'operation' field"
-                        )))
-                        .into();
-                    }
-                };
+                let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
                 memory_tool.run(args, request, project, action_log, model, window, cx)
             }
         }

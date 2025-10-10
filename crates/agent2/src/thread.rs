@@ -103,7 +103,7 @@ pub enum Message {
 
 // Internal thread-scoped archived memory segment.
 // Not exposed publicly; used for context compaction.
-struct ThreadMemorySegment {
+pub(crate) struct ThreadMemorySegment {
     pub(crate) id: u64,
     pub(crate) start: usize,
     pub(crate) end: usize,

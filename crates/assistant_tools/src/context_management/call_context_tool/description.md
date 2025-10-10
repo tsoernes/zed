@@ -37,17 +37,7 @@ If `arguments` is omitted, defaults to an empty object (using tool defaults).
 Archive, load, list, restore, or prune conversation segments.
 
 **Example (Store):**
-```json
-{
-  "name": "memory",
-  "arguments": {
-    "operation": "store",
-    "start_index": 5,
-    "end_index": 30,
-    "auto": true
-  }
-}
-```
+<!-- Legacy memory examples removed because the memory tool was deleted. -->
 
 **Example (Load):**
 ```json

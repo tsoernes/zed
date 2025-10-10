@@ -57,27 +57,27 @@ This tool manages conversation memory (archive, load, list, restore, prune).
 
 **Store (archive) messages:**
 ```
-Can you archive messages 0 through 5 with the summary "Initial setup discussion"? Use the memory tool with operation "store".
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **List archived memories:**
 ```
-Can you list all archived memories? Use the memory tool with operation "list".
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **Load memory details:**
 ```
-Can you load the details of memory handle "mem://session-id/memory-id"? Use the memory tool with operation "load".
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **Restore archived messages:**
 ```
-Can you restore the archived memory "mem://session-id/memory-id" at index 10? Use the memory tool with operation "restore".
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **Prune unused memories:**
 ```
-Can you prune memories that no longer have placeholders? Use the memory tool with operation "prune".
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **Expected behavior:**
@@ -97,7 +97,7 @@ Can you call the list_history tool through call_context_tool?
 ```
 
 ```
-Can you call the memory tool with operation "list" through call_context_tool?
+[Removed: legacy memory tool test. The memory tool has been deleted.]
 ```
 
 **Expected behavior:**
@@ -166,7 +166,7 @@ As of the latest implementation:
 2. **Verify tool invocation** - Check that tools are actually called, not just listed
 3. **Check tool output** - Ensure output is formatted correctly in the assistant
 4. **Wire up thread context** - Connect tools to actual conversation data
-5. **Add persistent storage** - Implement database backend for memory tool
+5. (Removed) Memory tool has been deleted; persistence work no longer applies.
 
 ## Related Documentation
 

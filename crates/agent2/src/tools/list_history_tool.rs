@@ -92,7 +92,7 @@ impl AgentTool for ListHistoryTool {
 
         // Read thread state
         let (total_messages, messages_vec) =
-            thread.read_with(cx, |t, _| (t.messages.len(), t.messages.clone()));
+            thread.read_with(cx, |t, _| (t.messages().len(), t.messages().to_vec()));
 
         if input.start >= total_messages {
             let mut out = String::new();
@@ -130,7 +130,7 @@ impl AgentTool for ListHistoryTool {
             let idx = input.start + offset;
             let role = format!("{:?}", message.role());
             let markdown = message.to_markdown();
-            let full = markdown.as_ref();
+            let full: &str = markdown.as_ref();
             let chars = full.len();
             let preview = if full.len() <= input.max_chars_per_message {
                 full

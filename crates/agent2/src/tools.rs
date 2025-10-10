@@ -8,6 +8,7 @@ mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
 mod list_directory_tool;
+mod list_history_tool;
 
 mod move_path_tool;
 mod now_tool;
@@ -29,6 +30,7 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         FindPathTool::name(),
         GrepTool::name(),
         ListDirectoryTool::name(),
+        ListHistoryTool::name(),
         MovePathTool::name(),
         NowTool::name(),
         OpenTool::name(),
@@ -50,6 +52,7 @@ pub use fetch_tool::*;
 pub use find_path_tool::*;
 pub use grep_tool::*;
 pub use list_directory_tool::*;
+pub use list_history_tool::*;
 
 pub use move_path_tool::*;
 pub use now_tool::*;

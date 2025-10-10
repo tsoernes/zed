@@ -38,6 +38,16 @@ pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
+
+    /// Current approximate or precise active token count (included only when Some)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tokens: Option<usize>,
+    /// Model max token capacity (included only when Some)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
+    /// Percentage usage (0-100, included only when Some)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_pct: Option<f64>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -79,6 +89,9 @@ mod tests {
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
+            active_tokens: Some(1200),
+            max_tokens: Some(16000),
+            usage_pct: Some(7.5),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

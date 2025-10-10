@@ -1,5 +1,6 @@
 mod agent;
 mod db;
+pub mod embedded_mcp_server;
 mod history_store;
 mod native_agent_server;
 mod templates;
@@ -7,7 +8,6 @@ mod thread;
 mod token_usage;
 mod tool_schema;
 mod tools;
-mod embedded_mcp_server;
 
 #[cfg(test)]
 mod tests;

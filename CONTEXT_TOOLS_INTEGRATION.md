@@ -2,16 +2,16 @@
 
 ## Overview
 
-This document explains how the context management tools (`list_history`, `memory`, `call_context_tool`) were implemented and integrated into Zed's LLM agent system.
+This document explains how the context management tools (`list_history`, `call_context_tool`) were implemented and integrated into Zed's LLM agent system. (The `memory` tool has been removed.)
 
 ## The Issue
 
 The tools were successfully implemented and registered in the `ToolRegistry`, but they weren't available to the LLM agent. The startup logs showed:
 
 ```
-INFO  [assistant_tools] Registering context management tools: list_history, memory, call_context_tool
+INFO  [assistant_tools] Registering context management tools: list_history, call_context_tool
 INFO  [assistant_tools] Registered ListHistoryTool
-INFO  [assistant_tools] Registered MemoryTool
+INFO  [assistant_tools] (MemoryTool removed)
 INFO  [assistant_tools] Registered CallContextTool
 ```
 
@@ -49,7 +49,7 @@ Tools must be added to the default agent profile settings in `assets/settings/de
       "write": {
         "tools": {
           "list_history": true,
-          "memory": true,
+          // "memory": true,  (removed)
           "call_context_tool": true,
           // ... other tools
         }
@@ -57,7 +57,7 @@ Tools must be added to the default agent profile settings in `assets/settings/de
       "ask": {
         "tools": {
           "list_history": true,
-          "memory": true,
+          // "memory": true,  (removed)
           "call_context_tool": true,
           // ... other tools
         }
@@ -75,7 +75,7 @@ Tools must be added to the default agent profile settings in `assets/settings/de
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     let registry = ToolRegistry::global(cx);
     registry.register_tool(ListHistoryTool);
-    registry.register_tool(MemoryTool);
+    // registry.register_tool(MemoryTool); // removed
     registry.register_tool(CallContextTool);
 }
 ```

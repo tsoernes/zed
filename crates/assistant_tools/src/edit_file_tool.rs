@@ -1443,7 +1443,7 @@ mod tests {
 
     fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
         cx.update(|cx| {
-            paths::set_custom_data_dir(data_dir.to_str().unwrap());
+            paths::set_custom_data_dir_allow_late(data_dir.to_str().unwrap());
             // Set custom data directory (config will be under data_dir/config)
 
             let settings_store = SettingsStore::test(cx);

@@ -97,6 +97,11 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         },
     )
     .detach();
+
+    // Log all registered tools after initialization for harness export verification.
+    for t in ToolRegistry::global(cx).tools() {
+        log::info!("assistant_tools registered tool: {}", t.name());
+    }
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
@@ -121,6 +126,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::Serialize;
     use settings::Settings;
+    use std::sync::Arc;
 
     #[test]
     fn test_json_schema() {
@@ -181,5 +187,25 @@ mod tests {
 
             assert_eq!(actual_schema, expected_schema, "{}", error_message)
         }
+    }
+
+    #[gpui::test]
+    fn memory_and_call_context_tool_registered(cx: &mut App) {
+        // Minimal initialization to avoid global side effects (paths, settings).
+        assistant_tool::init(cx);
+        let registry = ToolRegistry::global(cx);
+        registry.register_tool(MemoryTool);
+        registry.register_tool(CallContextTool);
+
+        let names: Vec<String> = registry.tools().iter().map(|t| t.name()).collect();
+
+        assert!(
+            names.contains(&"memory".to_string()),
+            "MemoryTool not registered"
+        );
+        assert!(
+            names.contains(&"call_context_tool".to_string()),
+            "CallContextTool not registered"
+        );
     }
 }

@@ -6,18 +6,18 @@
 
 ## Overview
 
-Three context management tools have been successfully implemented and integrated into Zed:
+Two context management tools have been successfully implemented and integrated into Zed:
 
 1. **`list_history`** - List conversation history with stable indices
-2. **`memory`** - Archive, load, list, restore, and prune conversation segments
-3. **`call_context_tool`** - Meta-tool that can dynamically invoke other context tools
+2. **`call_context_tool`** - Meta-tool that can dynamically invoke other context tools
+
 
 ## Current Status
 
 ### ✅ Completed
 
 1. **Tool Implementation**
-   - All three tools implemented in `crates/assistant_tools/src/context_management/`
+   - Both tools implemented in `crates/assistant_tools/src/context_management/`
    - Full input/output schemas with schemars support
    - Proper error handling and validation
    - Comprehensive UI text and descriptions
@@ -26,9 +26,9 @@ Three context management tools have been successfully implemented and integrated
    - Tools registered in `ToolRegistry` during `assistant_tools::init()`
    - Registration confirmed in startup logs:
      ```
-     INFO  [assistant_tools] Registering context management tools: list_history, memory, call_context_tool
+     INFO  [assistant_tools] Registering context management tools: list_history, call_context_tool
      INFO  [assistant_tools] Registered ListHistoryTool
-     INFO  [assistant_tools] Registered MemoryTool
+     INFO  [assistant_tools] (MemoryTool removed)
      INFO  [assistant_tools] Registered CallContextTool
      ```
 
@@ -42,7 +42,7 @@ Three context management tools have been successfully implemented and integrated
          "tools": {
            "call_context_tool": true,
            "list_history": true,
-           "memory": true,
+           // "memory": true, (removed)
            ...
          }
        }
@@ -75,9 +75,9 @@ Three context management tools have been successfully implemented and integrated
    - Native tools need to be tested in live assistant sessions to verify they receive context
 
 2. **Memory Storage**
-   - Currently using in-memory HashMap storage
-   - No persistence across restarts
-   - Need to implement database backend for production use
+   - (Removed feature) Memory tool and its in-memory storage have been deleted
+   - —
+   - —
 
 3. **Session Management**
    - Session IDs are generated but not consistently passed through MCP layer

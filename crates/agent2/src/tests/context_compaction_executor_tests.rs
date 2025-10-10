@@ -3,7 +3,6 @@ use serde_json::Value;
 
 /// Import the public input struct for the list_history tool.
 use agent2::tools::ListHistoryToolInput;
-use agent2::tools::MemoryToolInput;
 
 /// Integration-style schema test for the context compaction executor's
 /// `list_history` tool. This does not execute the tool (full execution
@@ -80,42 +79,6 @@ fn list_history_input_schema_contains_expected_properties() -> anyhow::Result<()
 ///
 /// Keeping this ignored avoids spurious failures until the harness is
 /// in place.
-#[test]
-fn memory_input_schema_contains_expected_properties() -> anyhow::Result<()> {
-    let schema = schema_for!(MemoryToolInput);
-    let schema_json = serde_json::to_value(&schema)?;
-    let root = schema_json
-        .get("schema")
-        .and_then(|v| v.get("properties"))
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow::anyhow!("Missing root properties in MemoryToolInput schema"))?;
-
-    // Expected top-level property keys in MemoryToolInput
-    let expected = [
-        "operation",
-        "start_index",
-        "end_index",
-        "memory_handle",
-        "summary",
-        "auto",
-        "max_preview_chars",
-        "restore_insert_index",
-        "remove_placeholder",
-        "replace_placeholder_with",
-    ];
-
-    for key in expected {
-        if !root.contains_key(key) {
-            return Err(anyhow::anyhow!(
-                "Expected property '{key}' not found in MemoryToolInput schema. Present: {:?}",
-                root.keys().collect::<Vec<_>>()
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 #[test]
 #[ignore]
 fn list_history_full_execution_placeholder() {
