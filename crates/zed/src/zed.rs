@@ -10,6 +10,7 @@ mod quick_action_bar;
 pub(crate) mod windows_only_instance;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
+use agent2::init_agent2;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -138,6 +139,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    init_agent2(cx);
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
     #[cfg(target_os = "macos")]
