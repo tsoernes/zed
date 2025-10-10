@@ -1299,7 +1299,18 @@ impl AgentDiff {
         // Update global active thread for MCP memory tools
         match &thread {
             AgentDiffThread::AcpThread(acp_thread) => {
-                agent2::embedded_mcp_server::set_active_thread(Some(acp_thread.clone()), cx);
+                // Get the internal thread from the ACP thread via the native connection
+                if let Some(connection) = acp_thread
+                    .read(cx)
+                    .connection()
+                    .clone()
+                    .downcast::<agent2::NativeAgentConnection>()
+                {
+                    let session_id = acp_thread.read(cx).session_id();
+                    if let Some(internal_thread) = connection.thread(session_id, cx) {
+                        agent2::embedded_mcp_server::set_active_thread(Some(internal_thread), cx);
+                    }
+                }
             }
         }
 
