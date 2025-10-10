@@ -8,6 +8,22 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 // Thread state lives in the agent2 crate. We only use its API surface needed for memory ops.
 use agent2::thread::Thread;
+/// Global accessor for the currently active Thread entity.
+/// Embedding layers should call GlobalActiveThread::set(Some(thread_entity), cx)
+/// when a thread becomes active, and set(None, cx) when cleared.
+pub struct GlobalActiveThread(Option<Entity<Thread>>);
+
+impl Global for GlobalActiveThread {}
+
+impl GlobalActiveThread {
+    pub fn set(thread: Option<Entity<Thread>>, cx: &mut App) {
+        cx.set_global(GlobalActiveThread(thread));
+    }
+
+    pub fn get(cx: &App) -> Option<Entity<Thread>> {
+        GlobalActiveThread::get_global(cx).and_then(|g| g.0.clone())
+    }
+}
 
 /// Global handle to the embedded MCP server that exposes context management tools
 pub struct EmbeddedMcpServer {
@@ -254,14 +270,7 @@ impl McpServerTool for MemoryMcpTool {
         // This assumes some external integration has registered an Entity<Thread>
         // in global state or provided a resolver; if unavailable we return an error.
         // (Real wiring requires the embedding layer to set this before tool execution.)
-        let maybe_thread = cx.read(|cx| {
-            // Strategy:
-            // 1. A global accessor could be introduced later; for now we look for a focused entity id
-            //    if such API exists. Placeholder returns None.
-            // 2. The caller should inject the thread context before invoking this tool.
-            let _ = cx; // suppress unused warning
-            None::<Entity<Thread>>
-        });
+        let maybe_thread = cx.read(|app| GlobalActiveThread::get(app));
 
         let op = input.operation;
         let op_name = format!("{:?}", op).to_lowercase();
