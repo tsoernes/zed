@@ -445,7 +445,7 @@ impl McpServerTool for MemoryMcpTool {
                         out.segment.as_ref().unwrap().chars,
                         out.segment.as_ref().unwrap().token_savings_estimate
                     );
-                    Ok((out, txt))
+                    (out, txt)
                 }
                 MemoryOperation::Load => {
                     let handle = input
@@ -505,7 +505,7 @@ impl McpServerTool for MemoryMcpTool {
                     if let Some(p) = &out.preview {
                         writeln!(&mut txt, "\nPreview:\n{}", p).ok();
                     }
-                    Ok((out, txt))
+                    (out, txt)
                 }
                 MemoryOperation::List => {
                     let mut metas = Vec::new();
@@ -555,7 +555,7 @@ impl McpServerTool for MemoryMcpTool {
                             }
                         }
                     }
-                    Ok((out, txt))
+                    (out, txt)
                 }
                 MemoryOperation::Restore => {
                     let handle = input
@@ -572,7 +572,7 @@ impl McpServerTool for MemoryMcpTool {
                         preview: None,
                     };
                     let txt = format!("# Memory Restore\n\nRestored segment id={}\n", id);
-                    Ok((out, txt))
+                    (out, txt)
                 }
                 MemoryOperation::Prune => {
                     let handle = input
@@ -589,11 +589,11 @@ impl McpServerTool for MemoryMcpTool {
                         preview: None,
                     };
                     let txt = format!("# Memory Prune\n\nPruned segment id={}\n", id);
-                    Ok((out, txt))
+                    (out, txt)
                 }
             }
         });
-        let (output, text) = update_result??;
+        let (output, text) = update_result?;
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
             structured_content: output,
