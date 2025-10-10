@@ -22,6 +22,7 @@ path = "src/main.rs"
 acp_tools.workspace = true
 activity_indicator.workspace = true
 agent.workspace = true
+agent2.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
