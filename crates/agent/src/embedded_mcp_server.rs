@@ -3,27 +3,10 @@ use context_server::{
     listener::{McpServer, McpServerTool, ToolResponse},
     types::{ToolAnnotations, ToolResponseContent},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Global, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 // Thread state lives in the agent2 crate. We only use its API surface needed for memory ops.
-use agent2::thread::Thread;
-/// Global accessor for the currently active Thread entity.
-/// Embedding layers should call GlobalActiveThread::set(Some(thread_entity), cx)
-/// when a thread becomes active, and set(None, cx) when cleared.
-pub struct GlobalActiveThread(Option<Entity<Thread>>);
-
-impl Global for GlobalActiveThread {}
-
-impl GlobalActiveThread {
-    pub fn set(thread: Option<Entity<Thread>>, cx: &mut App) {
-        cx.set_global(GlobalActiveThread(thread));
-    }
-
-    pub fn get(cx: &App) -> Option<Entity<Thread>> {
-        GlobalActiveThread::get_global(cx).and_then(|g| g.0.clone())
-    }
-}
 
 /// Global handle to the embedded MCP server that exposes context management tools
 pub struct EmbeddedMcpServer {
@@ -264,161 +247,30 @@ impl McpServerTool for MemoryMcpTool {
     async fn run(
         &self,
         input: Self::Input,
-        cx: &mut AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        // Attempt to obtain the currently focused / active thread entity.
-        // This assumes some external integration has registered an Entity<Thread>
-        // in global state or provided a resolver; if unavailable we return an error.
-        // (Real wiring requires the embedding layer to set this before tool execution.)
-        let maybe_thread = cx.read(|app| GlobalActiveThread::get(app));
+        let operation_name = format!("{:?}", input.operation).to_lowercase();
 
-        let op = input.operation;
-        let op_name = format!("{:?}", op).to_lowercase();
-
-        if maybe_thread.is_none() {
-            let output = MemoryOutput {
-                operation: op_name.clone(),
-                success: false,
-                message: "No active thread context available for memory operation".to_string(),
-            };
-            let text = format!(
-                "# Memory Operation: {}\n\nNo active thread context is available. \
-                This tool must be invoked with an active Thread entity.\n",
-                op_name
-            );
-            return Ok(ToolResponse {
-                content: vec![ToolResponseContent::Text { text }],
-                structured_content: output,
-            });
-        }
-
-        let thread_entity = maybe_thread.unwrap();
-
-        // Perform operation
-        let result: Result<(String, bool, String)> = thread_entity.update(cx, |thread, cx| {
-            match op {
-                MemoryOperation::Store => {
-                    let start = input
-                        .start_index
-                        .ok_or_else(|| anyhow::anyhow!("start_index required for store"))?;
-                    let end = input
-                        .end_index
-                        .ok_or_else(|| anyhow::anyhow!("end_index required for store"))?;
-                    let id = thread.store_memory_segment(start, end, cx)?;
-                    Ok((
-                        op_name.clone(),
-                        true,
-                        format!("stored segment id={} range={}..={}", id, start, end),
-                    ))
-                }
-                MemoryOperation::Load => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow::anyhow!("memory_handle required for load"))?;
-                    let id: u64 = handle
-                        .parse()
-                        .map_err(|_| anyhow::anyhow!("memory_handle must be a u64"))?;
-                    let (meta, messages) = thread.load_memory_segment(id)?;
-                    let mut msg = format!(
-                        "loaded segment id={} meta={} messages={}",
-                        id,
-                        meta,
-                        messages.len()
-                    );
-                    if let Some(max) = input.max_preview_chars {
-                        if max > 0 {
-                            let joined = messages.join("\n");
-                            let preview = if joined.len() <= max {
-                                joined
-                            } else {
-                                format!("{}…", joined.chars().take(max).collect::<String>())
-                            };
-                            msg.push_str(&format!("\npreview:\n{}", preview));
-                        }
-                    }
-                    Ok((op_name.clone(), true, msg))
-                }
-                MemoryOperation::List => {
-                    let segments = thread.list_memory_segments();
-                    let mut lines = Vec::new();
-                    for seg in segments {
-                        let savings = seg
-                            .message_char_count
-                            .saturating_sub(seg.placeholder_char_count);
-                        lines.push(format!(
-                            "id={} range={}..={} count={} chars={} placeholder_chars={} token_savings_estimate={} summary=\"{}\"",
-                            seg.id,
-                            seg.start,
-                            seg.end,
-                            seg.message_count,
-                            seg.message_char_count,
-                            seg.placeholder_char_count,
-                            savings,
-                            seg.summary
-                        ));
-                    }
-                    Ok((
-                        op_name.clone(),
-                        true,
-                        if lines.is_empty() {
-                            "no archived segments".into()
-                        } else {
-                            lines.join("\n")
-                        },
-                    ))
-                }
-                MemoryOperation::Restore => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow::anyhow!("memory_handle required for restore"))?;
-                    let id: u64 = handle
-                        .parse()
-                        .map_err(|_| anyhow::anyhow!("memory_handle must be a u64"))?;
-                    thread.restore_memory_segment(id, cx)?;
-                    Ok((
-                        op_name.clone(),
-                        true,
-                        format!("restored segment id={}", id),
-                    ))
-                }
-                MemoryOperation::Prune => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow::anyhow!("memory_handle required for prune"))?;
-                    let id: u64 = handle
-                        .parse()
-                        .map_err(|_| anyhow::anyhow!("memory_handle must be a u64"))?;
-                    thread.prune_memory_segment(id, cx)?;
-                    Ok((op_name.clone(), true, format!("pruned segment id={}", id)))
-                }
-            }
-        });
-
-        let (operation, success, message) = match result {
-            Ok(tuple) => tuple,
-            Err(e) => (op_name.clone(), false, e.to_string()),
+        // Placeholder implementation; requires active thread context to perform operations.
+        let output = MemoryOutput {
+            operation: operation_name.clone(),
+            success: false,
+            message: format!(
+                "Memory operation '{}' requires active thread context",
+                operation_name
+            ),
         };
 
-        // Human-readable text response
-        let text = if success {
-            format!(
-                "# Memory Operation: {}\n\nSuccess: {}\n{}\n",
-                operation, success, message
-            )
-        } else {
-            format!(
-                "# Memory Operation: {}\n\nSuccess: {}\nError: {}\n",
-                operation, success, message
-            )
-        };
+        let text = format!(
+            "# Memory Operation: {}\n\n\
+            Note: This tool requires access to an active thread context.\n\
+            Operation: {:?}\n",
+            operation_name, input.operation
+        );
 
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
-            structured_content: MemoryOutput {
-                operation,
-                success,
-                message,
-            },
+            structured_content: output,
         })
     }
 }
