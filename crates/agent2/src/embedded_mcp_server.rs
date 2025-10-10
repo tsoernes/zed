@@ -396,7 +396,7 @@ impl McpServerTool for MemoryMcpTool {
             }
         };
 
-        let result = thread_entity.update(cx, |thread, cx| {
+        let update_result = thread_entity.update(cx, |thread, cx| {
             let op_name = format!("{:?}", input.operation).to_lowercase();
             match input.operation {
                 MemoryOperation::Store => {
@@ -593,7 +593,7 @@ impl McpServerTool for MemoryMcpTool {
                 }
             }
         });
-        let (output, text) = result?;
+        let (output, text) = update_result?;
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
             structured_content: output,
