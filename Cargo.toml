@@ -1,6 +1,5 @@
 [workspace]
-[workspace.dependencies]
-agent2 = { path = "crates/agent2" }
+
 resolver = "2"
 members = [
     "crates/acp_tools",
