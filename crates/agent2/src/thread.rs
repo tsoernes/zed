@@ -912,6 +912,32 @@ impl Thread {
         &self.memory_segments
     }
 
+    /// Return metadata for all archived memory segments without exposing the internal
+    /// `ThreadMemorySegment` type. Each tuple contains:
+    /// (id, start, end, message_count, message_char_count, placeholder_char_count,
+    ///  token_savings_estimate, summary, stored_epoch_ms)
+    pub fn memory_segment_metas(
+        &self,
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)> {
+        self.memory_segments
+            .iter()
+            .map(|seg| {
+                (
+                    seg.id,
+                    seg.start,
+                    seg.end,
+                    seg.message_count,
+                    seg.message_char_count,
+                    seg.placeholder_char_count,
+                    seg.message_char_count
+                        .saturating_sub(seg.placeholder_char_count),
+                    seg.summary.to_string(),
+                    seg.stored_epoch_ms,
+                )
+            })
+            .collect()
+    }
+
     /// Returns true if the inclusive range [start, end] overlaps any stored memory segment.
     /// Overlap logic: two closed intervals [a,b] and [c,d] overlap if not (b < c || d < a).
     pub fn memory_range_overlaps(&self, start: usize, end: usize) -> bool {

@@ -407,23 +407,32 @@ impl McpServerTool for MemoryMcpTool {
                         .end_index
                         .ok_or_else(|| anyhow!("end_index required for store"))?;
                     let id = thread.store_memory_segment(start, end, cx)?;
-                    let seg = thread
-                        .list_memory_segments()
-                        .iter()
-                        .find(|s| s.id == id)
+                    let meta_tuple = thread
+                        .memory_segment_metas()
+                        .into_iter()
+                        .find(|(seg_id, ..)| *seg_id == id)
                         .ok_or_else(|| anyhow!("segment stored but not found"))?;
+                    let (
+                        seg_id,
+                        seg_start,
+                        seg_end,
+                        seg_count,
+                        seg_chars,
+                        seg_placeholder_chars,
+                        seg_savings,
+                        seg_summary,
+                        seg_epoch_ms,
+                    ) = meta_tuple;
                     let meta = MemorySegmentMeta {
-                        id: seg.id,
-                        start: seg.start,
-                        end: seg.end,
-                        count: seg.message_count,
-                        chars: seg.message_char_count,
-                        placeholder_chars: seg.placeholder_char_count,
-                        token_savings_estimate: seg
-                            .message_char_count
-                            .saturating_sub(seg.placeholder_char_count),
-                        summary: seg.summary.to_string(),
-                        stored_epoch_ms: seg.stored_epoch_ms,
+                        id: seg_id,
+                        start: seg_start,
+                        end: seg_end,
+                        count: seg_count,
+                        chars: seg_chars,
+                        placeholder_chars: seg_placeholder_chars,
+                        token_savings_estimate: seg_savings,
+                        summary: seg_summary,
+                        stored_epoch_ms: seg_epoch_ms,
                     };
                     let out = MemoryOutput {
                         operation: op_name.clone(),
@@ -509,19 +518,26 @@ impl McpServerTool for MemoryMcpTool {
                 }
                 MemoryOperation::List => {
                     let mut metas = Vec::new();
-                    for seg in thread.list_memory_segments() {
+                    for (seg_id,
+                         seg_start,
+                         seg_end,
+                         seg_count,
+                         seg_chars,
+                         seg_placeholder_chars,
+                         seg_savings,
+                         seg_summary,
+                         seg_epoch_ms) in thread.memory_segment_metas()
+                    {
                         metas.push(MemorySegmentMeta {
-                            id: seg.id,
-                            start: seg.start,
-                            end: seg.end,
-                            count: seg.message_count,
-                            chars: seg.message_char_count,
-                            placeholder_chars: seg.placeholder_char_count,
-                            token_savings_estimate: seg
-                                .message_char_count
-                                .saturating_sub(seg.placeholder_char_count),
-                            summary: seg.summary.to_string(),
-                            stored_epoch_ms: seg.stored_epoch_ms,
+                            id: seg_id,
+                            start: seg_start,
+                            end: seg_end,
+                            count: seg_count,
+                            chars: seg_chars,
+                            placeholder_chars: seg_placeholder_chars,
+                            token_savings_estimate: seg_savings,
+                            summary: seg_summary,
+                            stored_epoch_ms: seg_epoch_ms,
                         });
                     }
                     let out = MemoryOutput {
