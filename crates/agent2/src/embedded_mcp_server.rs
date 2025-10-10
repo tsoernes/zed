@@ -593,7 +593,7 @@ impl McpServerTool for MemoryMcpTool {
                 }
             }
         });
-        let (output, text): (MemoryOutput, String) = update_result?;
+        let (output, text) = update_result?;
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
             structured_content: output,
