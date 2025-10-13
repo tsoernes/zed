@@ -1,8 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, ListHistoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
+    ReadFileTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
+    WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1442,6 +1443,7 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(ListHistoryTool::new(cx.weak_entity()));
+        self.add_tool(MemoryAgentTool::new(cx.weak_entity()));
 
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
