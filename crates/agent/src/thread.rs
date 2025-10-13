@@ -977,23 +977,39 @@ impl Thread {
         cx: &App,
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
-        if model.supports_tools() {
-            self.profile
-                .enabled_tools(cx)
-                .into_iter()
-                .filter_map(|(name, tool)| {
-                    // Skip tools that cannot be supported
-                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                    Some(LanguageModelRequestTool {
-                        name: name.into(),
-                        description: tool.description(),
-                        input_schema,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::default()
+        if !model.supports_tools() {
+            return Vec::default();
         }
+
+        // Gather enabled tools first so we can log candidates before schema filtering.
+        let enabled = self.profile.enabled_tools(cx);
+        for (name, _tool) in &enabled {
+            log::info!("Thread::available_tools candidate tool: {}", name);
+        }
+
+        enabled
+            .into_iter()
+            .filter_map(
+                |(name, tool)| match tool.input_schema(model.tool_input_format()) {
+                    Ok(input_schema) => {
+                        log::info!("Thread::available_tools including tool: {}", name);
+                        Some(LanguageModelRequestTool {
+                            name: name.into(),
+                            description: tool.description(),
+                            input_schema,
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Thread::available_tools dropping tool '{}' due to schema error: {}",
+                            name,
+                            e
+                        );
+                        None
+                    }
+                },
+            )
+            .collect()
     }
 
     pub fn insert_user_message(

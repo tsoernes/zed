@@ -1,4 +1,4 @@
-mod context_management;
+pub mod context_management;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -83,8 +83,16 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(TestContextTool);
 
     // Context management tools
+    log::info!("Registering context management tools: list_history, memory, call_context_tool");
     registry.register_tool(ListHistoryTool);
     registry.register_tool(MemoryTool);
+    if registry.tools().iter().any(|t| t.name() == "memory") {
+        log::info!(
+            "assistant_tools registered MemoryTool (native); backend will be noop until thread integration sets a real backend"
+        );
+    } else {
+        log::warn!("MemoryTool missing after registration; memory operations will be unavailable");
+    }
     registry.register_tool(CallContextTool);
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);

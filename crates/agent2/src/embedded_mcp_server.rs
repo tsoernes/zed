@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use context_server::{
     listener::{McpServer, McpServerTool, ToolResponse},
     types::{ToolAnnotations, ToolResponseContent},
@@ -65,8 +65,11 @@ pub fn init(cx: &mut App) {
                 log::info!("agent2::embedded_mcp_server registering tools");
                 handle.server.add_tool(ListHistoryMcpTool);
                 log::info!("agent2::embedded_mcp_server registered ListHistoryMcpTool");
-                handle.server.add_tool(MemoryMcpTool);
-                log::info!("agent2::embedded_mcp_server registered MemoryMcpTool");
+                // MemoryMcpTool registration deprecated; memory operations now provided by assistant MemoryTool (thread-backed).
+                                log::info!("agent2::embedded_mcp_server MemoryMcpTool deprecated; not registered");
+                                // Register memory proxy MCP tool to expose thread-backed memory operations externally.
+                                handle.server.add_tool(MemoryProxyMcpTool);
+                                log::info!("agent2::embedded_mcp_server registered MemoryProxyMcpTool (thread-backed memory)");
                 handle.server.add_tool(CallContextMcpTool);
                 log::info!("agent2::embedded_mcp_server registered CallContextMcpTool");
 
@@ -313,72 +316,81 @@ fn escape_pipes(s: &str) -> String {
 // Memory Tool
 // ============================================================================
 
-#[derive(Clone)]
-struct MemoryMcpTool;
+// Legacy memory MCP tool definitions removed.
+// The previous MemoryInput/MemoryOperation/MemorySegmentMeta/MemoryOutput types and their duplicated
+// derive attributes caused conflicting trait implementations. They are intentionally replaced
+// by the single MemoryProxyOperation / MemoryProxyInput / MemoryProxyOutput trio below.
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-/// Input schema for the memory tool. Specifies the operation and related parameters.
-struct MemoryInput {
-    operation: MemoryOperation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    start_index: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    end_index: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_handle: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<String>,
-    #[serde(default)]
-    auto: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_preview_chars: Option<usize>,
-}
+// Removed legacy impl McpServerTool for MemoryMcpTool (tool no longer registered).
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+// const NAME removed with legacy MemoryMcpTool.
+
+// Memory MCP tool implementation removed: legacy orphaned methods deleted.
+// Memory operations are no longer exposed via agent2 embedded MCP server.
+// Reintroduced via MemoryProxyMcpTool which forwards to thread-backed assistant memory APIs.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum MemoryOperation {
-    Store,
-    Load,
-    List,
-    Restore,
-    Prune,
+enum MemoryProxyOperation {
+    List {
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    Store {
+        start: usize,
+        end: usize,
+        #[serde(default)]
+        summary: Option<String>,
+    },
+    Load {
+        id: u64,
+        #[serde(default)]
+        include_messages: bool,
+    },
+    Restore {
+        id: u64,
+    },
+    Prune {
+        id: u64,
+    },
+    Stats,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// Input schema for the `memory` MCP tool exposing thread-backed memory operations.
+/// The `operation` field selects which memory management action to perform
+/// (list, store, load, restore, prune, or stats), along with any parameters
+/// embedded in its variant.
+struct MemoryProxyInput {
+    operation: MemoryProxyOperation,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-struct MemorySegmentMeta {
-    id: u64,
-    start: usize,
-    end: usize,
-    count: usize,
-    chars: usize,
-    placeholder_chars: usize,
-    token_savings_estimate: usize,
-    summary: String,
-    stored_epoch_ms: u128,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-struct MemoryOutput {
+struct MemoryProxyOutput {
     operation: String,
     success: bool,
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    segment: Option<MemorySegmentMeta>,
+    segment: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    segments: Option<Vec<MemorySegmentMeta>>,
+    segments: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    preview: Option<String>,
+    restored_messages: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<serde_json::Value>,
 }
 
-impl McpServerTool for MemoryMcpTool {
-    type Input = MemoryInput;
-    type Output = MemoryOutput;
+#[derive(Clone)]
+struct MemoryProxyMcpTool;
+
+impl McpServerTool for MemoryProxyMcpTool {
+    type Input = MemoryProxyInput;
+    type Output = MemoryProxyOutput;
 
     const NAME: &'static str = "memory";
 
     fn annotations(&self) -> ToolAnnotations {
         ToolAnnotations {
-            title: Some("Memory Management".to_string()),
+            title: Some("Memory Management (Thread-Backed)".to_string()),
             read_only_hint: None,
             destructive_hint: Some(false),
             idempotent_hint: None,
@@ -391,19 +403,20 @@ impl McpServerTool for MemoryMcpTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
-        let thread_entity = match cx.read_global(|g: &GlobalActiveThread, _app| g.0.clone())? {
+        let thread_entity = match cx.read_global(|g: &GlobalActiveThread, _| g.0.clone())? {
             Some(t) => t,
             None => {
-                let operation = format!("{:?}", input.operation).to_lowercase();
-                let out = MemoryOutput {
-                    operation,
+                let op = format!("{:?}", input.operation).to_lowercase();
+                let out = MemoryProxyOutput {
+                    operation: op,
                     success: false,
-                    message: "No active thread context available".into(),
+                    message: "No active thread available".into(),
                     segment: None,
                     segments: None,
-                    preview: None,
+                    restored_messages: None,
+                    stats: None,
                 };
-                let text = "# Memory Operation\n\nNo active thread context available.".to_string();
+                let text = "# Memory\n\nNo active thread available.".to_string();
                 return Ok(ToolResponse {
                     content: vec![ToolResponseContent::Text { text }],
                     structured_content: out,
@@ -411,209 +424,170 @@ impl McpServerTool for MemoryMcpTool {
             }
         };
 
-        let update_result = thread_entity.update(cx, |thread, cx| -> anyhow::Result<(MemoryOutput, String)> {
-            let op_name = format!("{:?}", input.operation).to_lowercase();
-            match input.operation {
-                MemoryOperation::Store => {
-                    let start = input
-                        .start_index
-                        .ok_or_else(|| anyhow!("start_index required for store"))?;
-                    let end = input
-                        .end_index
-                        .ok_or_else(|| anyhow!("end_index required for store"))?;
-                    let id = thread.store_memory_segment(start, end, cx)?;
-                    let seg = thread
-                        .list_memory_segments()
-                        .iter()
-                        .find(|s| s.id == id)
-                        .ok_or_else(|| anyhow!("segment stored but not found"))?;
-                    let meta = MemorySegmentMeta {
-                        id: seg.id,
-                        start: seg.start,
-                        end: seg.end,
-                        count: seg.message_count,
-                        chars: seg.message_char_count,
-                        placeholder_chars: seg.placeholder_char_count,
-                        token_savings_estimate: seg.message_char_count.saturating_sub(seg.placeholder_char_count),
-                        summary: seg.summary.to_string(),
-                        stored_epoch_ms: seg.stored_epoch_ms,
-                    };
-                    let out = MemoryOutput {
-                        operation: op_name.clone(),
-                        success: true,
-                        message: format!(
-                            "Stored segment id={} range={}..{} count={}",
-                            meta.id, meta.start, meta.end, meta.count
-                        ),
-                        segment: Some(meta),
-                        segments: None,
-                        preview: None,
-                    };
-                    let txt = format!(
-                        "# Memory Store\n\nStored segment id={} range={}..{} count={} chars={} token_savings_estimate={}\n",
-                        out.segment.as_ref().unwrap().id,
-                        out.segment.as_ref().unwrap().start,
-                        out.segment.as_ref().unwrap().end,
-                        out.segment.as_ref().unwrap().count,
-                        out.segment.as_ref().unwrap().chars,
-                        out.segment.as_ref().unwrap().token_savings_estimate
-                    );
-                    Ok((out, txt))
+        let op_clone = input.operation.clone();
+        // Perform synchronous update inside thread context.
+        let result = thread_entity.update(cx, |thread, cx| match op_clone {
+            MemoryProxyOperation::List { limit } => {
+                let mut metas = thread.memory_segment_metas();
+                metas.sort_by_key(|m| m.0);
+                if let Some(l) = limit {
+                    if metas.len() > l {
+                        metas = metas
+                            .into_iter()
+                            .rev()
+                            .take(l)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                    }
                 }
-                MemoryOperation::Load => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow!("memory_handle required for load"))?;
-                    let id: u64 = handle.parse().map_err(|_| anyhow!("memory_handle must be u64"))?;
-                    let (meta_json, messages) = thread.load_memory_segment(id)?;
-                    let seg_meta = MemorySegmentMeta {
-                        id: meta_json["id"].as_u64().unwrap_or(id),
-                        start: meta_json["start"].as_u64().unwrap_or(0) as usize,
-                        end: meta_json["end"].as_u64().unwrap_or(0) as usize,
-                        count: meta_json["count"].as_u64().unwrap_or(0) as usize,
-                        chars: meta_json["chars"].as_u64().unwrap_or(0) as usize,
-                        placeholder_chars: meta_json["placeholder_chars"].as_u64().unwrap_or(0) as usize,
-                        token_savings_estimate: meta_json["token_savings_estimate"].as_u64().unwrap_or(0) as usize,
-                        summary: meta_json["summary"].as_str().unwrap_or("").to_string(),
-                        stored_epoch_ms: meta_json["stored_epoch_ms"].as_u64().unwrap_or(0) as u128,
-                    };
-                    let preview = if let Some(max) = input.max_preview_chars {
-                        if max > 0 {
-                            let joined = messages.join("\n");
-                            if joined.len() <= max {
-                                Some(joined)
-                            } else {
-                                let truncated: String = joined.chars().take(max).collect();
-                                Some(format!("{truncated}…"))
-                            }
-                        } else {
-                            None
-                        }
+                let json_list: Vec<serde_json::Value> = metas
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "id": m.0, "start": m.1, "end": m.2, "count": m.3, "chars": m.4,
+                            "placeholder_chars": m.5, "token_savings_estimate": m.6,
+                            "summary": m.7, "stored_epoch_ms": m.8
+                        })
+                    })
+                    .collect();
+                let out = MemoryProxyOutput {
+                    operation: "list".into(),
+                    success: true,
+                    message: format!("{} segments", json_list.len()),
+                    segment: None,
+                    segments: Some(json_list),
+                    restored_messages: None,
+                    stats: None,
+                };
+                let text = "# Memory Segments\n\n```json\n".to_string()
+                    + &serde_json::to_string_pretty(out.segments.as_ref().unwrap())?
+                    + "\n```\n";
+                Ok((out, text))
+            }
+            MemoryProxyOperation::Stats => {
+                let metas = thread.memory_segment_metas();
+                let stats_json = serde_json::json!({
+                    "segments": metas.len(),
+                    "messages": metas.iter().map(|m| m.3).sum::<usize>(),
+                    "chars": metas.iter().map(|m| m.4).sum::<usize>()
+                });
+                let out = MemoryProxyOutput {
+                    operation: "stats".into(),
+                    success: true,
+                    message: "stats retrieved".into(),
+                    segment: None,
+                    segments: None,
+                    restored_messages: None,
+                    stats: Some(stats_json.clone()),
+                };
+                let text = "# Memory Stats\n\n```json\n".to_string()
+                    + &serde_json::to_string_pretty(&stats_json)?
+                    + "\n```\n";
+                Ok((out, text))
+            }
+            MemoryProxyOperation::Store {
+                start,
+                end,
+                summary: _,
+            } => {
+                if start >= end {
+                    return Err(anyhow::anyhow!("start must be < end"));
+                }
+                let inclusive_end = end - 1;
+                thread.store_memory_segment(start, inclusive_end, cx)?;
+                let metas = thread.memory_segment_metas();
+                let seg = metas
+                    .last()
+                    .ok_or_else(|| anyhow::anyhow!("segment not found"))?;
+                let seg_json = serde_json::json!({
+                    "id": seg.0, "start": seg.1, "end": seg.2, "count": seg.3, "chars": seg.4,
+                    "placeholder_chars": seg.5, "token_savings_estimate": seg.6,
+                    "summary": seg.7, "stored_epoch_ms": seg.8
+                });
+                let out = MemoryProxyOutput {
+                    operation: "store".into(),
+                    success: true,
+                    message: "segment stored".into(),
+                    segment: Some(seg_json.clone()),
+                    segments: None,
+                    restored_messages: None,
+                    stats: None,
+                };
+                let text = "# Stored Memory Segment\n\n```json\n".to_string()
+                    + &serde_json::to_string_pretty(&seg_json)?
+                    + "\n```\n";
+                Ok((out, text))
+            }
+            MemoryProxyOperation::Load {
+                id,
+                include_messages,
+            } => {
+                let (meta, messages_md) = thread.load_memory_segment(id)?;
+                let out = MemoryProxyOutput {
+                    operation: "load".into(),
+                    success: true,
+                    message: "segment loaded".into(),
+                    segment: Some(meta.clone()),
+                    segments: None,
+                    restored_messages: if include_messages {
+                        Some(messages_md)
                     } else {
                         None
-                    };
-                    let out = MemoryOutput {
-                        operation: op_name.clone(),
-                        success: true,
-                        message: format!(
-                            "Loaded segment id={} chars={} messages={}",
-                            seg_meta.id, seg_meta.chars, seg_meta.count
-                        ),
-                        segment: Some(seg_meta),
-                        segments: None,
-                        preview,
-                    };
-                    let mut txt = String::from("# Memory Load\n\n");
-                    writeln!(
-                        &mut txt,
-                        "Loaded segment id={} range={}..{} count={} chars={} token_savings_estimate={}",
-                        out.segment.as_ref().unwrap().id,
-                        out.segment.as_ref().unwrap().start,
-                        out.segment.as_ref().unwrap().end,
-                        out.segment.as_ref().unwrap().count,
-                        out.segment.as_ref().unwrap().chars,
-                        out.segment.as_ref().unwrap().token_savings_estimate
-                    )
-                    .ok();
-                    if let Some(p) = &out.preview {
-                        writeln!(&mut txt, "\nPreview:\n{}", p).ok();
-                    }
-                    Ok((out, txt))
-                }
-                MemoryOperation::List => {
-                    let mut metas = Vec::new();
-                    for (seg_id,
-                         seg_start,
-                         seg_end,
-                         seg_count,
-                         seg_chars,
-                         seg_placeholder_chars,
-                         seg_savings,
-                         seg_summary,
-                         seg_epoch_ms) in thread.memory_segment_metas()
-                    {
-                        metas.push(MemorySegmentMeta {
-                            id: seg_id,
-                            start: seg_start,
-                            end: seg_end,
-                            count: seg_count,
-                            chars: seg_chars,
-                            placeholder_chars: seg_placeholder_chars,
-                            token_savings_estimate: seg_savings,
-                            summary: seg_summary,
-                            stored_epoch_ms: seg_epoch_ms,
-                        });
-                    }
-                    let out = MemoryOutput {
-                        operation: op_name.clone(),
-                        success: true,
-                        message: format!("Listed {} segments", metas.len()),
-                        segment: None,
-                        segments: Some(metas),
-                        preview: None,
-                    };
-                    let mut txt = String::from("# Memory List\n\n");
-                    if let Some(segs) = &out.segments {
-                        if segs.is_empty() {
-                            txt.push_str("No archived segments.\n");
-                        } else {
-                            txt.push_str("| id | range | count | chars | placeholder | savings | stored_epoch_ms | summary |\n");
-                            txt.push_str("|----|-------|-------|-------|-------------|---------|-----------------|---------|\n");
-                            for s in segs {
-                                let _ = writeln!(
-                                    &mut txt,
-                                    "| {} | {}..{} | {} | {} | {} | {} | {} |",
-                                    s.id,
-                                    s.start,
-                                    s.end,
-                                    s.count,
-                                    s.chars,
-                                    s.placeholder_chars,
-                                    s.token_savings_estimate,
-                                    escape_pipes(&s.summary)
-                                );
-                            }
+                    },
+                    stats: None,
+                };
+                let mut text = "# Memory Segment\n\n```json\n".to_string()
+                    + &serde_json::to_string_pretty(&meta)?
+                    + "\n```\n";
+                if include_messages {
+                    if let Some(msgs) = &out.restored_messages {
+                        text.push_str("\n## Messages\n\n");
+                        for (i, m) in msgs.iter().enumerate() {
+                            text.push_str(&format!("### Message {}\n\n{}\n\n", i, m));
                         }
                     }
-                    Ok((out, txt))
                 }
-                MemoryOperation::Restore => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow!("memory_handle required for restore"))?;
-                    let id: u64 = handle.parse().map_err(|_| anyhow!("memory_handle must be u64"))?;
-                    thread.restore_memory_segment(id, cx)?;
-                    let out = MemoryOutput {
-                        operation: op_name.clone(),
-                        success: true,
-                        message: format!("Restored segment id={}", id),
-                        segment: None,
-                        segments: None,
-                        preview: None,
-                    };
-                    let txt = format!("# Memory Restore\n\nRestored segment id={}\n", id);
-                    Ok((out, txt))
+                Ok((out, text))
+            }
+            MemoryProxyOperation::Restore { id } => {
+                thread.restore_memory_segment(id, cx)?;
+                let (meta, messages_md) = thread.load_memory_segment(id)?;
+                let out = MemoryProxyOutput {
+                    operation: "restore".into(),
+                    success: true,
+                    message: "segment restored (messages reinserted)".into(),
+                    segment: Some(meta.clone()),
+                    segments: None,
+                    restored_messages: Some(messages_md.clone()),
+                    stats: None,
+                };
+                let mut text = "# Restored Memory Segment\n\n```json\n".to_string()
+                    + &serde_json::to_string_pretty(&meta)?
+                    + "\n```\n\n## Messages\n\n";
+                for (i, m) in messages_md.iter().enumerate() {
+                    text.push_str(&format!("### Message {}\n\n{}\n\n", i, m));
                 }
-                MemoryOperation::Prune => {
-                    let handle = input
-                        .memory_handle
-                        .ok_or_else(|| anyhow!("memory_handle required for prune"))?;
-                    let id: u64 = handle.parse().map_err(|_| anyhow!("memory_handle must be u64"))?;
-                    thread.prune_memory_segment(id, cx)?;
-                    let out = MemoryOutput {
-                        operation: op_name.clone(),
-                        success: true,
-                        message: format!("Pruned segment id={}", id),
-                        segment: None,
-                        segments: None,
-                        preview: None,
-                    };
-                    let txt = format!("# Memory Prune\n\nPruned segment id={}\n", id);
-                    Ok((out, txt))
-                }
+                Ok((out, text))
+            }
+            MemoryProxyOperation::Prune { id } => {
+                thread.prune_memory_segment(id, cx)?;
+                let out = MemoryProxyOutput {
+                    operation: "prune".into(),
+                    success: true,
+                    message: format!("segment {} pruned", id),
+                    segment: None,
+                    segments: None,
+                    restored_messages: None,
+                    stats: None,
+                };
+                let text = format!("# Pruned Memory Segment\n\nRemoved {}\n", id);
+                Ok((out, text))
             }
         });
-        let (output, text) = update_result??;
+
+        let (output, text) = result??;
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text }],
             structured_content: output,

@@ -7,6 +7,7 @@ use collections::{BTreeMap, HashMap};
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
+use http_client::StatusCode;
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
@@ -317,6 +318,7 @@ impl AnthropicModel {
         };
 
         let beta_headers = self.model.beta_headers();
+        let thinking_mode = matches!(self.model.mode(), AnthropicModelMode::Thinking { .. });
 
         async move {
             let Some(api_key) = api_key else {
@@ -324,14 +326,108 @@ impl AnthropicModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request = anthropic::stream_completion(
+
+            // First attempt with original request (may include thinking)
+            let original_request = request.clone();
+            log::debug!(
+                "Anthropic stream start model={} thinking={} beta_headers={} max_tokens={} messages={} tools={}",
+                original_request.model,
+                original_request.thinking.is_some(),
+                beta_headers,
+                original_request.max_tokens,
+                original_request.messages.len(),
+                original_request.tools.len()
+            );
+
+            let first = anthropic::stream_completion(
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
                 request,
-                beta_headers,
-            );
-            request.await.map_err(Into::into)
+                beta_headers.clone(),
+            )
+            .await
+            .map_err(LanguageModelCompletionError::from);
+
+            match first {
+                Ok(stream) => {
+                    log::debug!(
+                        "Anthropic stream success model={} thinking={} tools={} (no fallback needed)",
+                        original_request.model,
+                        original_request.thinking.is_some(),
+                        original_request.tools.len()
+                    );
+                    Ok(stream)
+                }
+                Err(err) => {
+                    let is_bad_request = matches!(
+                        err,
+                        LanguageModelCompletionError::HttpResponseError { status_code, .. }
+                            if status_code == StatusCode::BAD_REQUEST
+                    );
+                    // Fallback: retry once without thinking mode on 400 Bad Request when thinking was enabled.
+                    let should_fallback = thinking_mode && is_bad_request;
+
+                    log::debug!(
+                        "Anthropic first attempt error model={} thinking={} tools={} is_bad_request={} thinking_mode={} will_fallback={} err={:?}",
+                        original_request.model,
+                        original_request.thinking.is_some(),
+                        original_request.tools.len(),
+                        is_bad_request,
+                        thinking_mode,
+                        should_fallback,
+                        err
+                    );
+
+                    if !should_fallback {
+                        return Err(err);
+                    }
+
+                    let mut fallback_request = original_request.clone();
+                    fallback_request.thinking = None;
+
+                    // Normalize model id if needed.
+                    if fallback_request.model.contains("-thinking-")
+                        || fallback_request.model.ends_with("-thinking-latest")
+                    {
+                        fallback_request.model = fallback_request
+                            .model
+                            .replace("-thinking-latest", "-latest")
+                            .replace("-thinking-", "-");
+                    }
+
+                    log::debug!(
+                        "Anthropic fallback retry removing thinking model_after={} beta_headers={}",
+                        fallback_request.model,
+                        beta_headers
+                    );
+
+                    let second = anthropic::stream_completion(
+                        http_client.as_ref(),
+                        &api_url,
+                        &api_key,
+                        fallback_request.clone(),
+                        beta_headers,
+                    )
+                    .await
+                    .map_err(LanguageModelCompletionError::from);
+
+                    match &second {
+                        Ok(_) => log::debug!(
+                            "Anthropic fallback success model={} (thinking removed)",
+                            fallback_request.model
+                        ),
+                        Err(fallback_err) => log::debug!(
+                            "Anthropic fallback failed model={} err={:?} original_err={:?}",
+                            fallback_request.model,
+                            fallback_err,
+                            err
+                        ),
+                    }
+
+                    second.or(Err(err))
+                }
+            }
         }
         .boxed()
     }
@@ -578,6 +674,40 @@ pub fn into_anthropic(
         }
     }
 
+    // Validate and sanitize tool schemas before building the request
+    let tools: Vec<anthropic::Tool> = request
+        .tools
+        .into_iter()
+        .map(|tool| {
+            // Check if the schema is valid JSON
+            let is_valid_schema = tool.input_schema.is_object();
+
+            if !is_valid_schema {
+                log::error!("Invalid tool schema JSON for tool: {}", tool.name);
+            }
+
+            // Check for common required fields
+            if !tool
+                .input_schema
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map_or(false, |t| t == "object")
+            // removed secondary string contains check; using structured JSON type inspection above
+            {
+                log::warn!(
+                    "Tool schema may be missing object type declaration: {}",
+                    tool.name
+                );
+            }
+
+            anthropic::Tool {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            }
+        })
+        .collect();
+
     anthropic::Request {
         model,
         messages: new_messages,
@@ -594,15 +724,7 @@ pub fn into_anthropic(
         } else {
             None
         },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| anthropic::Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-            })
-            .collect(),
+        tools,
         tool_choice: request.tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
             LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,

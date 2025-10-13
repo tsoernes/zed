@@ -553,6 +553,9 @@ pub fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        // Reordered: register assistant tools (including memory) before building agent UI
+        // so the tool working set captures the memory tool on fresh startup.
+        assistant_tools::init(app_state.client.http_client(), cx);
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -561,7 +564,6 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
             extension_host_proxy,

@@ -951,16 +951,24 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             .models
                             .model_from_id(&LanguageModels::model_id(&default_model.model))
                     });
-                    Ok(cx.new(|cx| {
-                        Thread::new(
-                            project.clone(),
-                            agent.project_context.clone(),
-                            agent.context_server_registry.clone(),
-                            agent.templates.clone(),
-                            default_model,
+                    Ok({
+                        let thread_entity = cx.new(|cx| {
+                            Thread::new(
+                                project.clone(),
+                                agent.project_context.clone(),
+                                agent.context_server_registry.clone(),
+                                agent.templates.clone(),
+                                default_model,
+                                cx,
+                            )
+                        });
+                        // Hook: set active thread globally so memory backend can operate.
+                        crate::embedded_mcp_server::set_active_thread(
+                            Some(thread_entity.clone()),
                             cx,
-                        )
-                    }))
+                        );
+                        thread_entity
+                    })
                 },
             )??;
             agent.update(cx, |agent, cx| agent.register_session(thread, cx))
