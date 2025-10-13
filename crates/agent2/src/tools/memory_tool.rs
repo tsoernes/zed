@@ -71,8 +71,8 @@ impl AgentTool for MemoryAgentTool {
     }
 
     fn kind() -> agent_client_protocol::ToolKind {
-        // This tool may mutate conversation state (store / restore / prune), so classify as Write.
-        agent_client_protocol::ToolKind::Write
+        // Use Read classification (Write variant not available in current ToolKind).
+        agent_client_protocol::ToolKind::Read
     }
 
     fn initial_title(
@@ -105,8 +105,8 @@ impl AgentTool for MemoryAgentTool {
             return Task::ready(Ok(String::from("# Memory\n\nThread no longer exists.\n")));
         };
 
-        // Execute synchronously on foreground (Thread APIs require &mut Context<Thread> for mutations).
-        let result: Result<String> = match input.operation {
+        // Build the result without using the ? operator (run returns Task<Result<...>>).
+        let output = match input.operation {
             MemoryAction::List { limit } => {
                 let metas = thread.read_with(cx, |t, _| t.memory_segment_metas());
                 let mut metas_sorted = metas;
@@ -143,11 +143,16 @@ impl AgentTool for MemoryAgentTool {
                         })
                     })
                     .collect();
-                let mut md = String::new();
-                md.push_str("# Stored Memory Segments\n\n```json\n");
-                md.push_str(&serde_json::to_string_pretty(&list_json)?);
-                md.push_str("\n```\n");
-                Ok(md)
+                match serde_json::to_string_pretty(&list_json) {
+                    Ok(pretty) => {
+                        let mut md = String::new();
+                        md.push_str("# Stored Memory Segments\n\n```json\n");
+                        md.push_str(&pretty);
+                        md.push_str("\n```\n");
+                        Ok(md)
+                    }
+                    Err(e) => Err(anyhow!(e)),
+                }
             }
             MemoryAction::Stats => {
                 let metas = thread.read_with(cx, |t, _| t.memory_segment_metas());
@@ -158,11 +163,16 @@ impl AgentTool for MemoryAgentTool {
                     "placeholder_chars": metas.iter().map(|m| m.5).sum::<usize>(),
                     "aggregate_token_savings_estimate": metas.iter().map(|m| m.6).sum::<usize>()
                 });
-                let mut md = String::new();
-                md.push_str("# Memory Stats\n\n```json\n");
-                md.push_str(&serde_json::to_string_pretty(&stats)?);
-                md.push_str("\n```\n");
-                Ok(md)
+                match serde_json::to_string_pretty(&stats) {
+                    Ok(pretty) => {
+                        let mut md = String::new();
+                        md.push_str("# Memory Stats\n\n```json\n");
+                        md.push_str(&pretty);
+                        md.push_str("\n```\n");
+                        Ok(md)
+                    }
+                    Err(e) => Err(anyhow!(e)),
+                }
             }
             MemoryAction::Store { start, end } => {
                 if start >= end {
@@ -173,15 +183,23 @@ impl AgentTool for MemoryAgentTool {
                     )));
                 }
                 let inclusive_end = end - 1;
-                let seg_id = thread.update(cx, |thread, thread_cx| {
+                let seg_id_res = thread.update(cx, |thread, thread_cx| {
                     thread.store_memory_segment(start, inclusive_end, thread_cx)
-                })?;
-                // Read back meta
+                });
+                let seg_id = match seg_id_res {
+                    Ok(id) => id,
+                    Err(e) => return Task::ready(Err(e)),
+                };
                 let metas = thread.read_with(cx, |t, _| t.memory_segment_metas());
-                let meta = metas
-                    .into_iter()
-                    .find(|m| m.0 == seg_id)
-                    .ok_or_else(|| anyhow!("segment {} not found after store", seg_id))?;
+                let meta = match metas.into_iter().find(|m| m.0 == seg_id) {
+                    Some(m) => m,
+                    None => {
+                        return Task::ready(Err(anyhow!(
+                            "segment {} not found after store",
+                            seg_id
+                        )));
+                    }
+                };
                 let meta_json = serde_json::json!({
                     "id": meta.0,
                     "start": meta.1,
@@ -193,22 +211,37 @@ impl AgentTool for MemoryAgentTool {
                     "summary": meta.7,
                     "stored_epoch_ms": meta.8
                 });
-                let mut md = String::new();
-                md.push_str("# Stored Memory Segment\n\n```json\n");
-                md.push_str(&serde_json::to_string_pretty(&meta_json)?);
-                md.push_str("\n```\n");
-                Ok(md)
+                match serde_json::to_string_pretty(&meta_json) {
+                    Ok(pretty) => {
+                        let mut md = String::new();
+                        md.push_str("# Stored Memory Segment\n\n```json\n");
+                        md.push_str(&pretty);
+                        md.push_str("\n```\n");
+                        Ok(md)
+                    }
+                    Err(e) => Err(anyhow!(e)),
+                }
             }
             MemoryAction::Load {
                 id,
                 include_messages,
             } => {
-                let (meta_json, msgs) =
-                    thread.read_with(cx, |t, _| t.load_memory_segment(id))??;
-                let mut md = String::new();
-                md.push_str("# Memory Segment\n\n```json\n");
-                md.push_str(&serde_json::to_string_pretty(&meta_json)?);
-                md.push_str("\n```\n");
+                let loaded = thread.read_with(cx, |t, _| t.load_memory_segment(id));
+                let (meta_json, msgs) = match loaded {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(err)) => return Task::ready(Err(err)),
+                    Err(e) => return Task::ready(Err(e)),
+                };
+                let mut md = match serde_json::to_string_pretty(&meta_json) {
+                    Ok(pretty) => {
+                        let mut md = String::new();
+                        md.push_str("# Memory Segment\n\n```json\n");
+                        md.push_str(&pretty);
+                        md.push_str("\n```\n");
+                        md
+                    }
+                    Err(e) => return Task::ready(Err(anyhow!(e))),
+                };
                 if include_messages {
                     md.push_str("\n## Messages\n\n");
                     for (i, m) in msgs.iter().enumerate() {
@@ -218,31 +251,46 @@ impl AgentTool for MemoryAgentTool {
                 Ok(md)
             }
             MemoryAction::Restore { id } => {
-                thread.update(cx, |thread, thread_cx| {
+                if let Err(e) = thread.update(cx, |thread, thread_cx| {
                     thread.restore_memory_segment(id, thread_cx)
-                })?;
-                let (meta_json, msgs) =
-                    thread.read_with(cx, |t, _| t.load_memory_segment(id))??;
-                let mut md = String::new();
-                md.push_str("# Restored Memory Segment\n\n```json\n");
-                md.push_str(&serde_json::to_string_pretty(&meta_json)?);
-                md.push_str("\n```\n\n## Messages\n\n");
+                }) {
+                    return Task::ready(Err(e));
+                }
+                let loaded = thread.read_with(cx, |t, _| t.load_memory_segment(id));
+                let (meta_json, msgs) = match loaded {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(err)) => return Task::ready(Err(err)),
+                    Err(e) => return Task::ready(Err(e)),
+                };
+                let mut md = match serde_json::to_string_pretty(&meta_json) {
+                    Ok(pretty) => {
+                        let mut md = String::new();
+                        md.push_str("# Restored Memory Segment\n\n```json\n");
+                        md.push_str(&pretty);
+                        md.push_str("\n```\n\n## Messages\n\n");
+                        md
+                    }
+                    Err(e) => return Task::ready(Err(anyhow!(e))),
+                };
                 for (i, m) in msgs.iter().enumerate() {
                     md.push_str(&format!("### Message {}\n\n{}\n\n", i, m));
                 }
                 Ok(md)
             }
             MemoryAction::Prune { id } => {
-                thread.update(cx, |thread, thread_cx| {
+                if let Err(e) = thread.update(cx, |thread, thread_cx| {
                     thread.prune_memory_segment(id, thread_cx)
-                })?;
+                }) {
+                    return Task::ready(Err(e));
+                }
                 let mut md = String::new();
-                md.push_str("# Pruned Memory Segment\n\n");
-                md.push_str(&format!("Removed segment {}\n", id));
+                md.push_str("# Pruned Memory Segment\n\nRemoved segment ");
+                md.push_str(&id.to_string());
+                md.push('\n');
                 Ok(md)
             }
         };
 
-        Task::ready(result)
+        Task::ready(output)
     }
 }
