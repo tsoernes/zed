@@ -228,9 +228,8 @@ impl AgentTool for MemoryAgentTool {
             } => {
                 let loaded = thread.read_with(cx, |t, _| t.load_memory_segment(id));
                 let (meta_json, msgs) = match loaded {
-                    Ok(Ok(pair)) => pair,
-                    Ok(Err(err)) => return Task::ready(Err(err)),
-                    Err(e) => return Task::ready(Err(e)),
+                    Ok(pair) => pair,
+                    Err(err) => return Task::ready(Err(err)),
                 };
                 let mut md = match serde_json::to_string_pretty(&meta_json) {
                     Ok(pretty) => {
@@ -258,9 +257,8 @@ impl AgentTool for MemoryAgentTool {
                 }
                 let loaded = thread.read_with(cx, |t, _| t.load_memory_segment(id));
                 let (meta_json, msgs) = match loaded {
-                    Ok(Ok(pair)) => pair,
-                    Ok(Err(err)) => return Task::ready(Err(err)),
-                    Err(e) => return Task::ready(Err(e)),
+                    Ok(pair) => pair,
+                    Err(err) => return Task::ready(Err(err)),
                 };
                 let mut md = match serde_json::to_string_pretty(&meta_json) {
                     Ok(pretty) => {
