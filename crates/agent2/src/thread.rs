@@ -2487,46 +2487,20 @@ impl Thread {
             self.messages.len()
         );
 
-        // Token usage (centralized):
-        // - If precise values are already cached on the thread (`precise_active_tokens` / `precise_max_tokens`),
-        //   use them directly.
-        // - Otherwise compute a quick heuristic using the token_usage helper.
-        // A separate async updater should populate the precise fields after an initial request build.
-        let (active_tokens, max_tokens, usage_pct) = {
-            if let (Some(precise), Some(max)) =
-                (self.precise_active_tokens, self.precise_max_tokens)
-            {
-                let pct = if max > 0 {
-                    (precise as f64 / max as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (precise as usize, max as usize, pct)
+        // Token usage (precise only):
+        // Expose usage in system prompt only when precise values have been computed; do not surface heuristic estimates.
+        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
+            (self.precise_active_tokens, self.precise_max_tokens)
+        {
+            let pct = if max > 0 {
+                (precise as f64 / max as f64) * 100.0
             } else {
-                // Heuristic fallback
-                let est = crate::token_usage::heuristic_token_count(
-                    &self
-                        .messages
-                        .iter()
-                        .flat_map(|m| m.to_request())
-                        .collect::<Vec<_>>(),
-                );
-                let max_tokens = self.precise_max_tokens.unwrap_or(128_000) as usize;
-                let pct = if max_tokens > 0 {
-                    (est as f64 / max_tokens as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (est, max_tokens, pct)
-            }
-        };
-
-        // Only surface usage in the system prompt when above 70% to reduce noise.
-        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if usage_pct > 70.0 {
+                0.0
+            };
             (
-                Some(active_tokens),
-                Some(max_tokens),
-                Some((usage_pct * 100.0).round() / 100.0),
+                Some(precise as usize),
+                Some(max as usize),
+                Some((pct * 100.0).round() / 100.0),
             )
         } else {
             (None, None, None)
