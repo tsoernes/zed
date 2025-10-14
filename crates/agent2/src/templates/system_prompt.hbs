@@ -23,6 +23,11 @@ You are a highly skilled software engineer with extensive knowledge in many prog
 ## Token Usage
 
 Active tokens: {{active_tokens}}{{#if max_tokens}} / {{max_tokens}}{{/if}}{{#if usage_pct}} ({{usage_pct}}%){{/if}}
+{{#if usage_pct}}
+{{#if (gt usage_pct 70)}}
+Recommendation: Usage exceeds 70% of model capacity. Archive or summarize earlier resolved conversation segments using the memory tool until usage drops below 70%. Prioritize large, self‑contained segments with high (message_token_count - placeholder_token_count) deltas, and avoid archiving mid‑problem context you still need immediately.
+{{/if}}
+{{/if}}
 {{/if}}
 
 {{#if (or memory_segment_count memory_saved_tokens)}}
