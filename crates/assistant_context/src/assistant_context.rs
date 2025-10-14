@@ -1268,6 +1268,26 @@ impl AssistantContext {
         let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
+
+        // Instrumentation: compute a heuristic message-only token estimate (chars / 4) excluding any
+        // provider/system prompt overhead so we can compare with agent2's message-only counts.
+        let buffer = self.buffer.read(cx);
+        let mut message_chars = 0usize;
+        for message in self.messages(cx) {
+            if message.status != MessageStatus::Done {
+                continue;
+            }
+            for chunk in buffer.text_for_range(message.offset_range.clone()) {
+                message_chars += chunk.len();
+            }
+        }
+        let message_tokens_heuristic = (message_chars / 4).max(1);
+        log::debug!(
+            "assistant_context token instrumentation: message_chars={} heuristic_message_tokens={}",
+            message_chars,
+            message_tokens_heuristic
+        );
+
         let request = self.to_completion_request(Some(&model.model), cx);
         let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(async move |this, cx| {

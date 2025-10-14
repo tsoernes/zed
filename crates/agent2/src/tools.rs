@@ -34,6 +34,7 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         ListDirectoryTool::name(),
         ListHistoryTool::name(),
         MemoryAgentTool::name(),
+        TokenUsageTool::name(),
         MovePathTool::name(),
         NowTool::name(),
         OpenTool::name(),

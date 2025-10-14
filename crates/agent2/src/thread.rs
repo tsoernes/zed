@@ -2561,14 +2561,12 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
-        log::trace!(
-            "Building request messages from {} thread messages",
-            self.messages.len()
-        );
-
-        // Token usage (precise only):
-        // Expose usage in system prompt only when precise values have been computed; do not surface heuristic estimates.
+    /// Build the current system prompt string (excluding any pending user input).
+    /// This is factored out so that other components (e.g. token usage tooling) can
+    /// separately account for "overhead" tokens contributed by the static / rule /
+    /// guidance material vs the dynamic conversation messages.
+    pub fn build_system_prompt(&self, cx: &App) -> String {
+        // Token usage (precise only): only surface when available; otherwise omit.
         let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
             (self.precise_active_tokens, self.precise_max_tokens)
         {
@@ -2586,15 +2584,13 @@ impl Thread {
             (None, None, None)
         };
 
-        // Derive memory tool telemetry (only when segments exist and we have at least some recorded token counts).
+        // Memory telemetry (only when we have recorded token counts for segments).
         let (memory_segment_count_opt, memory_saved_tokens_opt) = if self.memory_segments.is_empty()
         {
             (None, None)
         } else {
             let mut saved: u64 = 0;
             for seg in &self.memory_segments {
-                // Only add when precise token counts were captured (message_token_count > 0).
-                // We treat missing/zero token counts as unknown and skip them.
                 if seg.message_token_count > 0
                     && seg.message_token_count >= seg.placeholder_token_count
                 {
@@ -2605,7 +2601,7 @@ impl Thread {
             (Some(count), if saved > 0 { Some(saved) } else { None })
         };
 
-        let system_prompt = SystemPromptTemplate {
+        SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
             active_tokens: active_tokens_opt,
@@ -2616,12 +2612,34 @@ impl Thread {
         }
         .render(&self.templates)
         .context("failed to build system prompt")
-        .expect("Invalid template");
+        .expect("Invalid template")
+    }
+
+    /// Heuristic token count for the system prompt alone (no conversation messages).
+    /// This lets UIs distinguish between user/assistant exchange tokens and fixed overhead.
+    pub fn system_prompt_token_count_heuristic(&self, cx: &App) -> usize {
+        let prompt = self.build_system_prompt(cx);
+        let msg = LanguageModelRequestMessage {
+            role: Role::System,
+            content: vec![prompt.into()],
+            cache: false,
+        };
+        crate::token_usage::heuristic_token_count(std::slice::from_ref(&msg))
+    }
+
+    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+        log::trace!(
+            "Building request messages from {} thread messages",
+            self.messages.len()
+        );
+
+        let system_prompt = self.build_system_prompt(cx);
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
             content: vec![system_prompt.into()],
             cache: false,
         }];
+
         for message in &self.messages {
             messages.extend(message.to_request());
         }

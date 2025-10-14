@@ -108,7 +108,7 @@ impl AgentTool for TokenUsageTool {
         // Active vs full tokens (prefer precise for active if available).
         let (active_used, active_max, active_precise) =
             match (active_usage_opt.as_ref(), precise_opt, precise_max_opt) {
-                (Some(active_usage), Some(precise_used), Some(precise_max)) => {
+                (Some(_active_usage), Some(precise_used), Some(precise_max)) => {
                     (precise_used, precise_max, true)
                 }
                 (Some(active_usage), _, _) => {
@@ -123,12 +123,23 @@ impl AgentTool for TokenUsageTool {
         };
 
         let active_pct = if active_max > 0 {
-            (active_used as f64 / active_max as f64 * 100.0)
+            active_used as f64 / active_max as f64 * 100.0
         } else {
             0.0
         };
         let full_pct = if full_max > 0 {
-            (full_used as f64 / full_max as f64 * 100.0)
+            full_used as f64 / full_max as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        // Heuristic system prompt tokens (overhead not included in active_used above).
+        let system_prompt_tokens =
+            thread.read_with(cx, |t, app| t.system_prompt_token_count_heuristic(app));
+
+        let combined_active_used = active_used + system_prompt_tokens as u64;
+        let combined_active_pct = if active_max > 0 {
+            combined_active_used as f64 / active_max as f64 * 100.0
         } else {
             0.0
         };
@@ -154,6 +165,9 @@ impl AgentTool for TokenUsageTool {
             "active_tokens_max": active_max,
             "active_usage_pct": (active_pct * 100.0).round() / 100.0,
             "active_is_precise": active_precise,
+            "system_prompt_tokens": system_prompt_tokens,
+            "active_tokens_used_including_system_prompt": combined_active_used,
+            "active_usage_pct_including_system_prompt": (combined_active_pct * 100.0).round() / 100.0,
             "full_tokens_used": full_used,
             "full_tokens_max": full_max,
             "full_usage_pct": (full_pct * 100.0).round() / 100.0,
