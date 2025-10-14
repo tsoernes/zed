@@ -1,6 +1,6 @@
+mod active_thread;
 mod agent;
 mod db;
-pub mod embedded_mcp_server;
 mod history_store;
 mod native_agent_server;
 mod templates;
@@ -22,7 +22,8 @@ pub use thread::*;
 pub use token_usage::*;
 pub use tools::*;
 pub fn init_agent2(cx: &mut gpui::App) {
-    embedded_mcp_server::init(cx);
+    // Initialize active thread global (replaces embedded_mcp_server::init).
+    crate::active_thread::init_active_thread(cx);
     log::info!("agent2::init_agent2 installing thread memory backend");
     crate::thread_memory_backend::install_thread_memory_backend(cx);
     log::info!("agent2::init_agent2 thread memory backend installed");

@@ -326,6 +326,9 @@ impl NativeAgent {
             }),
         ];
 
+        // Clone before moving into the sessions map so we can set the global active thread.
+        let thread_entity_for_global = thread_handle.clone();
+
         self.sessions.insert(
             session_id,
             Session {
@@ -335,6 +338,11 @@ impl NativeAgent {
                 pending_save: Task::ready(()),
             },
         );
+
+        // Safety hook: ensure GlobalActiveThread is always set when a session is registered.
+        // This covers code paths (e.g. restored sessions) that may bypass NativeAgentConnection::new_thread.
+        crate::active_thread::set_active_thread(Some(thread_entity_for_global), cx);
+
         acp_thread
     }
 
@@ -963,10 +971,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             )
                         });
                         // Hook: set active thread globally so memory backend can operate.
-                        crate::embedded_mcp_server::set_active_thread(
-                            Some(thread_entity.clone()),
-                            cx,
-                        );
+                        crate::active_thread::set_active_thread(Some(thread_entity.clone()), cx);
                         thread_entity
                     })
                 },

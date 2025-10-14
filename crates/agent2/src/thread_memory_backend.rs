@@ -7,7 +7,7 @@ use assistant_tools::context_management::{
     GlobalMemoryBackend, MemoryBackend, MemorySegmentDetail, MemorySegmentMeta, MemoryStats,
 };
 
-use crate::embedded_mcp_server::GlobalActiveThread;
+use crate::active_thread::GlobalActiveThread;
 use crate::thread::Thread;
 
 /// ThreadMemoryBackend bridges the assistant memory tool to the active `agent2::Thread`.
