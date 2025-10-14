@@ -550,3 +550,23 @@
 {"ts":1760436299.4276826,"tag":"recv_parsed","id":2,"method":"tools/list"}
 {"ts":1760436299.4278955,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
 {"ts":1760436310.8775322,"tag":"stdin_eof"}
+{"ts":1760439890.9645123,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1760439890.9647021,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1760439890.964776,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1760439890.964847,"tag":"initialize","client_msg_id":0}
+{"ts":1760439891.3104658,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"Zed\",\"version\":\"0.1.0\"}}}"}
+{"ts":1760439891.3106973,"tag":"recv_parsed","id":0,"method":"initialize"}
+{"ts":1760439891.310774,"tag":"send","preview":"{'id': 0, 'result': {'protocolVersion': '2024-11-05', 'serverInfo': {'name': 'repo-summary-mcp', 'version': '0.3.0'}, 'capabilities': {'tools': {'list': True, 'call': True}, 'logging': {'levels': ['debug'], 'alwaysOn': True}, 'experimental': {}}, 'content': [{'type': 'text', 'text': 'repo-summary-mcp initialized (protocol 2024-11-05)'}]}}"}
+{"ts":1760439891.3108544,"tag":"initialize","client_msg_id":0}
+{"ts":1760439892.3235426,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1760439892.3238301,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1760439892.323679,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":null}"}
+{"ts":1760439892.3239512,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1760439892.3240836,"tag":"recv_parsed","id":null,"method":"notifications/initialized"}
+{"ts":1760439892.3242762,"tag":"send","preview":"{'id': None, 'error': {'code': 400, 'message': 'Unsupported method: notifications/initialized'}}"}
+{"ts":1760439892.3252048,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"}
+{"ts":1760439892.326115,"tag":"recv_parsed","id":1,"method":"tools/list"}
+{"ts":1760439892.3264964,"tag":"send","preview":"{'id': 1, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}
+{"ts":1760439895.700805,"tag":"recv_raw","raw":"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}"}
+{"ts":1760439895.7011685,"tag":"recv_parsed","id":2,"method":"tools/list"}
+{"ts":1760439895.7014878,"tag":"send","preview":"{'id': 2, 'result': {'tools': [{'name': 'summarize_repo_async', 'description': 'Summarize an entire repository into hierarchical markdown.', 'schemaVersion': 1, 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string'}, 'max_tokens': {'type': 'integer', 'default': 270000}, 'include_low_relevance': {'type': 'boolean', 'default': False}, 'model': {'type': 'string', 'default': 'gpt-5'}, 'async': {'type': 'boolean', 'description': 'Run in background (return job_id immediately)'}}, "}

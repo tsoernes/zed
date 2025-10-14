@@ -349,3 +349,11 @@
 1760436297.586437 RECV method=initialize id=0
 1760436298.877955 RECV method=tools/list id=1
 1760436298.879065 RECV method=tools/list id=2
+1760439889.278215 SERVER_START main_loop_entered
+1760439889.278700 RECV method=initialize id=0
+1760439889.339832 SERVER_START main_loop_entered
+1760439889.340325 RECV method=initialize id=0
+1760439892.301004 RECV method=notifications/initialized id=None
+1760439892.301004 RECV method=notifications/initialized id=None
+1760439892.325272 RECV method=tools/list id=1
+1760439895.700467 RECV method=tools/list id=2

@@ -338,3 +338,15 @@
 [DEBUG 2025-10-14T10:04:59] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
 [DEBUG 2025-10-14T10:05:10] __main__ completed cli_main exit_code=0
 [DEBUG 2025-10-14T10:05:10] SystemExit encountered in __main__: code=0
+[DEBUG 2025-10-14T11:04:50] cli_main invoked argv=['serve']
+[DEBUG 2025-10-14T11:04:50] parsed command=serve args=Namespace(command='serve', path='.', model='gpt-5', max_tokens=270000)
+[DEBUG 2025-10-14T11:04:50] eager_env_snapshot={'AZURE_ENDPOINT': True, 'AZURE_API_KEY': True, 'AZURE_GPT5_API_VERSION': True, 'AZURE_GPT5_CHAT_DEPLOYMENT': True, 'AZURE_LLM_DEPLOYMENT': True, 'AZURE_OPENAI_API_VERSION': True}
+[DEBUG 2025-10-14T11:04:50] CLI dispatch to serve: path=. model=gpt-5 max_tokens=270000
+[DEBUG 2025-10-14T11:04:50] server starting model=gpt-5
+[DEBUG 2025-10-14T11:04:50] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
+[DEBUG 2025-10-14T11:04:51] cli_main invoked argv=['serve']
+[DEBUG 2025-10-14T11:04:51] parsed command=serve args=Namespace(command='serve', path='.', model='gpt-5', max_tokens=270000)
+[DEBUG 2025-10-14T11:04:51] eager_env_snapshot={'AZURE_ENDPOINT': True, 'AZURE_API_KEY': True, 'AZURE_GPT5_API_VERSION': True, 'AZURE_GPT5_CHAT_DEPLOYMENT': True, 'AZURE_LLM_DEPLOYMENT': True, 'AZURE_OPENAI_API_VERSION': True}
+[DEBUG 2025-10-14T11:04:51] CLI dispatch to serve: path=. model=gpt-5 max_tokens=270000
+[DEBUG 2025-10-14T11:04:51] server starting model=gpt-5
+[DEBUG 2025-10-14T11:04:51] [instrument] startup_env_snapshot={'REPO_SUMMARY_LOG_DIR': 'unset', 'AZURE_ENDPOINT': 'SET', 'AZURE_API_KEY': 'SET', 'AZURE_GPT5_API_VERSION': 'SET', 'AZURE_GPT5_CHAT_DEPLOYMENT': 'SET', 'AZURE_LLM_DEPLOYMENT': 'SET', 'AZURE_OPENAI_API_VERSION': 'SET'}
