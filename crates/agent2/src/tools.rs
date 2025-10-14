@@ -11,7 +11,10 @@ mod grep_tool;
 mod list_directory_tool;
 mod list_history_tool;
 mod memory_tool;
+<<<<<<< HEAD
 mod shell_detector_tool;
+=======
+>>>>>>> 866b8e5d35 (feat(token_usage_tool): add token usage reporting tool with per-message and memory breakdown options)
 mod token_usage_tool;
 
 mod move_path_tool;
@@ -63,7 +66,10 @@ pub use grep_tool::*;
 pub use list_directory_tool::*;
 pub use list_history_tool::*;
 pub use memory_tool::*;
+<<<<<<< HEAD
 pub use shell_detector_tool::*;
+=======
+>>>>>>> 866b8e5d35 (feat(token_usage_tool): add token usage reporting tool with per-message and memory breakdown options)
 pub use token_usage_tool::*;
 
 pub use move_path_tool::*;
