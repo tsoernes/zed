@@ -3,7 +3,7 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
     ReadFileTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
-    WebSearchTool,
+    TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -131,11 +131,10 @@ struct PersistedMemorySegments {
 // These are separated to keep core logic above uncluttered.
 impl Thread {
     fn memory_segments_file_path(&self) -> std::path::PathBuf {
-        // Use contexts_dir()/memory_segments/<thread_id>.json
-        let mut path = paths::contexts_dir();
-        path.push("memory_segments");
-        path.push(format!("{}.json", self.id));
-        path
+        // contexts_dir()/memory_segments/<thread_id>.json
+        paths::contexts_dir()
+            .join("memory_segments")
+            .join(format!("{}.json", self.id))
     }
 
     fn ensure_memory_dir(path: &std::path::Path) -> anyhow::Result<()> {
@@ -867,7 +866,7 @@ impl Thread {
             .filter(|s| !s.is_empty())
             .map(|s| {
                 // Replace internal newlines / tabs with single spaces and collapse runs of whitespace.
-                let mut cleaned = s
+                let cleaned = s
                     .chars()
                     .map(|c| {
                         if c == '\n' || c == '\r' || c == '\t' {
