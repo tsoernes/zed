@@ -222,6 +222,18 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
+impl strum::VariantArray for NotifyWhenAgentWaiting {
+    const VARIANTS: &'static [Self] = &[
+        NotifyWhenAgentWaiting::PrimaryScreen,
+        NotifyWhenAgentWaiting::AllScreens,
+        NotifyWhenAgentWaiting::Never,
+    ];
+}
+
+impl strum::VariantNames for NotifyWhenAgentWaiting {
+    const VARIANTS: &'static [&'static str] = &["PrimaryScreen", "AllScreens", "Never"];
+}
+
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
