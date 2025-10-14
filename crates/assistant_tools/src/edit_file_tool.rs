@@ -19,7 +19,7 @@ use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
     TextStyleRefinement, WeakEntity, pulsating_between,
 };
-use indoc::formatdoc;
+
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
     TextBuffer,
