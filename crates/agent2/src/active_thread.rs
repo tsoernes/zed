@@ -59,7 +59,8 @@ pub fn set_active_thread(thread: Option<Entity<crate::thread::Thread>>, cx: &mut
 
 /// Return the currently active thread entity, if one is set.
 pub fn active_thread(cx: &App) -> Option<Entity<crate::thread::Thread>> {
-    GlobalActiveThread::active_thread(cx)
+    cx.try_global::<GlobalActiveThread>()
+        .and_then(|g| g.0.clone())
 }
 
 /// Initialize the active thread global to `None`.
@@ -67,8 +68,8 @@ pub fn active_thread(cx: &App) -> Option<Entity<crate::thread::Thread>> {
 /// This should be invoked early during agent initialization (before any
 /// component that might query the active thread).
 pub fn init_active_thread(cx: &mut App) {
-    // Avoid overwriting if already initialized (idempotent).
-    if GlobalActiveThread::active_thread(cx).is_none() {
+    // Install the global only if it does not yet exist (idempotent and non‑panicking).
+    if !cx.has_global::<GlobalActiveThread>() {
         log::info!("active_thread: initializing global with None");
         GlobalActiveThread::replace(None, cx);
     }

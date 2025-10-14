@@ -7,7 +7,7 @@ use assistant_tools::context_management::{
     GlobalMemoryBackend, MemoryBackend, MemorySegmentDetail, MemorySegmentMeta, MemoryStats,
 };
 
-use crate::active_thread::GlobalActiveThread;
+use crate::active_thread;
 use crate::thread::Thread;
 
 /// ThreadMemoryBackend bridges the assistant memory tool to the active `agent2::Thread`.
@@ -18,7 +18,7 @@ pub struct ThreadMemoryBackend;
 impl ThreadMemoryBackend {
     /// Retrieve the active thread entity or return an error.
     fn active_thread(app: &App) -> Result<gpui::Entity<Thread>> {
-        GlobalActiveThread::active_thread(app).ok_or_else(|| anyhow!("No active thread available"))
+        active_thread::active_thread(app).ok_or_else(|| anyhow!("No active thread available"))
     }
 
     /// Convert a tuple returned by `Thread::memory_segment_metas()` into `MemorySegmentMeta`.
