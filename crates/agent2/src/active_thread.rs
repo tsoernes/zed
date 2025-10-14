@@ -24,7 +24,7 @@ Behavior:
 No persistence is performed here; this is an in‑memory global only.
 */
 
-use gpui::{App, Entity, Global, ReadGlobal};
+use gpui::{App, Entity, Global, ReadGlobal, UpdateGlobal};
 use log;
 
 /// Wrapper global containing the active `Thread` entity (or none).
