@@ -1,0 +1,351 @@
+1759753419.783704 RECV method=notifications/initialized id=None
+1759753419.783690 RECV method=notifications/initialized id=None
+1759753419.803962 RECV method=tools/list id=1
+1759753420.232407 RECV method=tools/list id=2
+1759753492.829614 SERVER_START main_loop_entered
+1759753492.829885 RECV method=initialize id=0
+1759753492.927903 RECV method=notifications/initialized id=None
+1759753493.049042 RECV method=tools/list id=1
+1759753493.992860 RECV method=tools/list id=2
+1759753515.374844 SERVER_START main_loop_entered
+1759753515.375046 RECV method=initialize id=0
+1759753516.510449 RECV method=notifications/initialized id=None
+1759753516.601863 RECV method=tools/list id=1
+1759753517.351865 RECV method=tools/list id=2
+1759755346.920939 RECV method=tools/call id=3
+1759756043.990388 SERVER_START main_loop_entered
+1759756043.990906 RECV method=initialize id=0
+1759756043.992865 SERVER_START main_loop_entered
+1759756043.993231 RECV method=initialize id=0
+1759756046.179308 RECV method=notifications/initialized id=None
+1759756046.179862 RECV method=notifications/initialized id=None
+1759756046.264271 RECV method=tools/list id=1
+1759756047.046826 RECV method=tools/list id=2
+1759756053.576847 RECV method=tools/list id=3
+1759756183.210173 RECV method=tools/call id=4
+1759756266.810898 SERVER_START main_loop_entered
+1759756266.811211 RECV method=initialize id=0
+1759756266.815082 SERVER_START main_loop_entered
+1759756266.815300 RECV method=initialize id=0
+1759756268.511325 RECV method=notifications/initialized id=None
+1759756268.511722 RECV method=notifications/initialized id=None
+1759756268.531886 RECV method=tools/list id=1
+1759756269.595976 RECV method=tools/list id=2
+1759756791.128064 SERVER_START main_loop_entered
+1759756791.128488 RECV method=initialize id=0
+1759756791.148731 SERVER_START main_loop_entered
+1759756791.149083 RECV method=initialize id=0
+1759756793.353998 RECV method=notifications/initialized id=None
+1759756793.353999 RECV method=notifications/initialized id=None
+1759756793.538686 RECV method=tools/list id=1
+1759756794.654834 RECV method=tools/list id=2
+1759758783.662541 SERVER_START main_loop_entered
+1759758783.663227 RECV method=initialize id=0
+1759758783.797360 RECV method=notifications/initialized id=None
+1759758783.797796 RECV method=tools/list id=1
+1759758783.798440 RECV method=tools/list id=2
+1759758881.876973 RECV method=tools/call id=3
+1759758884.122793 RECV method=tools/call id=4
+1759758891.191651 RECV method=tools/call id=5
+1759758906.228776 RECV method=tools/call id=6
+1759758926.286828 RECV method=tools/call id=7
+1759759210.943948 RECV method=tools/call id=8
+1759759213.301415 RECV method=tools/call id=9
+1759759232.916341 RECV method=tools/call id=10
+1759759639.896371 RECV method=tools/call id=11
+1759759676.827460 RECV method=tools/call id=12
+1759759684.907410 RECV method=tools/call id=13
+1759759692.451189 RECV method=tools/call id=14
+1759759695.329385 RECV method=tools/call id=15
+1759759713.479067 RECV method=tools/call id=16
+1759759716.428975 RECV method=tools/call id=17
+1759759725.050519 RECV method=tools/call id=18
+1759759790.053809 RECV method=tools/call id=19
+1759759799.530721 RECV method=tools/call id=20
+1759759802.105094 RECV method=tools/call id=21
+1759759804.351890 RECV method=tools/call id=22
+1759759810.357085 RECV method=tools/call id=23
+1759759817.552784 RECV method=tools/call id=24
+1759759820.735394 RECV method=tools/call id=25
+1759759823.979536 RECV method=tools/call id=26
+1759759830.397473 RECV method=tools/call id=27
+1759822004.406777 SERVER_START main_loop_entered
+1759822004.407735 RECV method=initialize id=0
+1759822004.411801 SERVER_START main_loop_entered
+1759822004.413457 RECV method=initialize id=0
+1759822008.546214 RECV method=notifications/initialized id=None
+1759822008.547234 RECV method=notifications/initialized id=None
+1759822009.094219 RECV method=tools/list id=1
+1759822011.049383 RECV method=tools/list id=2
+1759834828.580335 SERVER_START main_loop_entered
+1759834828.580578 RECV method=initialize id=0
+1759834828.593835 RECV method=notifications/initialized id=None
+1759834828.593980 RECV method=tools/list id=1
+1759834842.730393 SERVER_START main_loop_entered
+1759834842.730583 RECV method=initialize id=0
+1759834842.732608 RECV method=notifications/initialized id=None
+1759834842.732740 RECV method=tools/list id=1
+1759834850.282081 SERVER_START main_loop_entered
+1759834850.282496 RECV method=initialize id=0
+1759834850.297017 RECV method=notifications/initialized id=None
+1759834850.297176 RECV method=tools/list id=1
+1759842386.928731 SERVER_START main_loop_entered
+1759842386.930556 RECV method=initialize id=0
+1759842387.054264 RECV method=notifications/initialized id=None
+1759842387.070734 RECV method=tools/list id=1
+1759842387.076314 RECV method=tools/list id=2
+1759842549.366705 RECV method=tools/call id=3
+1759842553.508390 RECV method=tools/call id=4
+1759842555.941550 RECV method=tools/call id=5
+1759842559.033665 RECV method=tools/call id=6
+1759842589.133285 RECV method=tools/call id=7
+1759842610.123058 RECV method=tools/call id=8
+1759842616.763485 RECV method=tools/call id=9
+1759842716.813804 RECV method=tools/call id=10
+1759842719.481509 RECV method=tools/call id=11
+1759842749.579259 RECV method=tools/call id=12
+1759842776.925189 RECV method=tools/call id=13
+1759842786.843306 RECV method=tools/call id=14
+1759842789.388705 RECV method=tools/call id=15
+1759842791.136274 RECV method=tools/call id=16
+1759842793.409370 RECV method=tools/call id=17
+1759842823.502888 RECV method=tools/call id=18
+1759842851.163227 RECV method=tools/call id=19
+1759842851.166395 RECV method=tools/call id=20
+1759842857.370918 RECV method=tools/call id=21
+1759843195.612907 SERVER_START main_loop_entered
+1759843195.615355 RECV method=initialize id=0
+1759843195.665283 RECV method=notifications/initialized id=None
+1759843195.665606 RECV method=tools/list id=1
+1759843195.666126 RECV method=tools/list id=2
+1759843339.067809 RECV method=tools/call id=3
+1759843349.821015 RECV method=tools/call id=4
+1759843352.534487 RECV method=tools/call id=5
+1759843355.969895 RECV method=tools/call id=6
+1759843359.391775 RECV method=tools/call id=7
+1759843362.270612 RECV method=tools/call id=8
+1759843364.650778 RECV method=tools/call id=9
+1759843368.642686 RECV method=tools/call id=10
+1759843398.779667 RECV method=tools/call id=11
+1759843398.847970 RECV method=tools/call id=12
+1759843401.247130 RECV method=tools/call id=13
+1759843892.591629 SERVER_START main_loop_entered
+1759843892.596183 RECV method=initialize id=0
+1759843892.641889 SERVER_START main_loop_entered
+1759843892.642148 RECV method=initialize id=0
+1759843894.674906 RECV method=notifications/initialized id=None
+1759843894.675687 RECV method=notifications/initialized id=None
+1759843894.911251 RECV method=tools/list id=1
+1759843896.918666 RECV method=tools/list id=2
+1759844152.462128 SERVER_START main_loop_entered
+1759844152.463223 RECV method=initialize id=0
+1759844152.568368 RECV method=notifications/initialized id=None
+1759844152.572914 RECV method=tools/list id=1
+1759844152.574108 RECV method=tools/list id=2
+1759846630.256602 SERVER_START main_loop_entered
+1759846630.256582 SERVER_START main_loop_entered
+1759846630.257153 RECV method=initialize id=0
+1759846630.257188 RECV method=initialize id=0
+1759846631.670920 RECV method=notifications/initialized id=None
+1759846631.672723 RECV method=notifications/initialized id=None
+1759846631.917477 RECV method=tools/list id=1
+1759846632.528159 RECV method=tools/list id=2
+1759846640.101247 SERVER_START main_loop_entered
+1759846640.101639 RECV method=initialize id=0
+1759846640.117304 RECV method=notifications/initialized id=None
+1759846640.117841 RECV method=tools/list id=1
+1759846640.118746 RECV method=tools/list id=2
+1759848556.898995 SERVER_START main_loop_entered
+1759848556.902368 RECV method=initialize id=0
+1759848556.920648 SERVER_START main_loop_entered
+1759848556.925742 RECV method=initialize id=0
+1759848560.447228 RECV method=notifications/initialized id=None
+1759848560.451299 RECV method=notifications/initialized id=None
+1759848560.478381 RECV method=tools/list id=1
+1759848564.424671 RECV method=tools/list id=2
+1759906946.992674 RECV method=tools/call id=3
+1759906951.695374 RECV method=tools/call id=4
+1759908385.269281 SERVER_START main_loop_entered
+1759908385.269898 RECV method=initialize id=0
+1759908385.308766 SERVER_START main_loop_entered
+1759908385.312290 RECV method=initialize id=0
+1759908388.619704 RECV method=notifications/initialized id=None
+1759908388.621065 RECV method=notifications/initialized id=None
+1759908389.297557 RECV method=tools/list id=1
+1759908390.623991 RECV method=tools/list id=2
+1759908483.069638 RECV method=tools/list id=3
+1759908591.793779 RECV method=tools/list id=4
+1759908643.191767 RECV method=tools/list id=5
+1759909760.375193 RECV method=tools/list id=6
+1759909760.382154 RECV method=tools/list id=7
+1759910352.613212 RECV method=tools/call id=8
+1759911450.505939 RECV method=tools/call id=9
+1759911450.514024 RECV method=tools/call id=10
+1759911450.519007 RECV method=tools/call id=11
+1759911450.524613 RECV method=tools/call id=12
+1759911450.527763 RECV method=tools/call id=13
+1759911450.534255 RECV method=tools/call id=14
+1759911450.539778 RECV method=tools/call id=15
+1759911450.544134 RECV method=tools/call id=16
+1759911450.548449 RECV method=tools/call id=17
+1759911450.563662 RECV method=tools/call id=18
+1759911450.567386 RECV method=tools/call id=19
+1759911450.573783 RECV method=tools/call id=20
+1759911450.578839 RECV method=tools/call id=21
+1759911825.445373 RECV method=tools/call id=22
+1759911832.240640 RECV method=tools/call id=23
+1759911836.481684 RECV method=tools/call id=24
+1759911893.791597 SERVER_START main_loop_entered
+1759911893.805869 RECV method=initialize id=0
+1759912273.781100 SERVER_START main_loop_entered
+1759912273.786468 RECV method=initialize id=0
+1759912273.783793 SERVER_START main_loop_entered
+1759912273.790304 RECV method=initialize id=0
+1759912285.836547 RECV method=notifications/initialized id=None
+1759912285.837555 RECV method=tools/list id=1
+1759912285.835507 RECV method=notifications/initialized id=None
+1759912303.792310 RECV method=tools/list id=2
+1760427576.124241 SERVER_START main_loop_entered
+1760427576.125244 RECV method=initialize id=0
+1760427576.135684 SERVER_START main_loop_entered
+1760427576.136136 RECV method=initialize id=0
+1760427578.994400 RECV method=notifications/initialized id=None
+1760427578.994400 RECV method=notifications/initialized id=None
+1760427580.219299 RECV method=tools/list id=1
+1760427582.216395 RECV method=tools/list id=2
+1760427622.756652 SERVER_START main_loop_entered
+1760427623.188365 RECV method=initialize id=0
+1760427624.070547 RECV method=notifications/initialized id=None
+1760427624.283339 RECV method=tools/list id=1
+1760427626.683940 RECV method=tools/list id=2
+1760427627.709216 RECV method=tools/list id=3
+1760427637.238810 RECV method=tools/call id=4
+1760427638.736211 RECV method=tools/call id=5
+1760427650.645543 RECV method=tools/call id=6
+1760427651.921931 RECV method=tools/call id=7
+1760427835.430327 SERVER_START main_loop_entered
+1760427835.430853 RECV method=initialize id=0
+1760427835.434244 SERVER_START main_loop_entered
+1760427835.434718 RECV method=initialize id=0
+1760427838.225776 RECV method=notifications/initialized id=None
+1760427838.226172 RECV method=notifications/initialized id=None
+1760427838.411263 RECV method=tools/list id=1
+1760427840.715845 RECV method=tools/list id=2
+1760427953.406408 RECV method=tools/call id=3
+1760427959.830495 RECV method=tools/call id=4
+1760427961.605107 RECV method=tools/call id=5
+1760427965.594792 RECV method=tools/call id=6
+1760427967.307229 RECV method=tools/call id=7
+1760428150.592510 RECV method=tools/call id=8
+1760428152.331759 RECV method=tools/call id=9
+1760428168.630592 RECV method=tools/call id=10
+1760428170.194196 RECV method=tools/call id=11
+1760428310.528275 RECV method=tools/call id=12
+1760428313.183298 RECV method=tools/call id=13
+1760428342.259206 RECV method=tools/call id=14
+1760428345.898805 RECV method=tools/call id=15
+1760428348.219651 RECV method=tools/call id=16
+1760428407.012753 RECV method=tools/call id=17
+1760428408.767373 RECV method=tools/call id=18
+1760428410.708647 RECV method=tools/call id=19
+1760428412.815918 RECV method=tools/call id=20
+1760428469.729486 RECV method=tools/call id=21
+1760428474.608102 RECV method=tools/call id=22
+1760428476.376624 RECV method=tools/call id=23
+1760428538.371438 RECV method=tools/call id=24
+1760428541.699380 RECV method=tools/call id=25
+1760428543.696292 RECV method=tools/call id=26
+1760428603.080962 RECV method=tools/call id=27
+1760428614.482494 RECV method=tools/call id=28
+1760428620.312951 RECV method=tools/call id=29
+1760428678.781325 RECV method=tools/call id=30
+1760428683.420016 RECV method=tools/call id=31
+1760428686.864906 RECV method=tools/call id=32
+1760428696.435352 RECV method=tools/call id=33
+1760428700.881852 RECV method=tools/call id=34
+1760429434.859674 SERVER_START main_loop_entered
+1760429435.174931 RECV method=initialize id=0
+1760430701.913361 SERVER_START main_loop_entered
+1760430701.914589 RECV method=initialize id=0
+1760430702.618340 RECV method=tools/list id=1
+1760430709.449606 RECV method=tools/list id=2
+1760430947.663092 RECV method=tools/call id=3
+1760430950.266836 RECV method=tools/call id=4
+1760431066.819495 RECV method=tools/call id=5
+1760431072.372452 RECV method=tools/call id=6
+1760431085.411801 RECV method=tools/call id=7
+1760431099.761434 RECV method=tools/call id=8
+1760431114.381287 RECV method=tools/call id=9
+1760431130.998517 RECV method=tools/call id=10
+1760431133.059344 RECV method=tools/call id=11
+1760431136.234746 RECV method=tools/call id=12
+1760431154.212355 RECV method=tools/call id=13
+1760431176.097029 RECV method=tools/call id=14
+1760431197.127408 RECV method=tools/call id=15
+1760431200.641372 RECV method=tools/call id=16
+1760431234.309821 RECV method=tools/call id=17
+1760431264.817523 RECV method=tools/call id=18
+1760431266.886142 RECV method=tools/call id=19
+1760431551.161861 RECV method=tools/call id=20
+1760431553.513966 RECV method=tools/call id=21
+1760431577.118532 RECV method=tools/call id=22
+1760431599.326699 RECV method=tools/call id=23
+1760431616.203185 RECV method=tools/call id=24
+1760431618.943494 RECV method=tools/call id=25
+1760432149.639321 SERVER_START main_loop_entered
+1760432149.639724 RECV method=initialize id=0
+1760432149.654501 SERVER_START main_loop_entered
+1760432149.654981 RECV method=initialize id=0
+1760432152.658177 RECV method=notifications/initialized id=None
+1760432152.658027 RECV method=notifications/initialized id=None
+1760432152.993361 RECV method=tools/list id=1
+1760432156.500665 RECV method=tools/list id=2
+1760432288.041093 RECV method=tools/call id=3
+1760432295.426756 RECV method=tools/call id=4
+1760432297.186625 RECV method=tools/call id=5
+1760435288.366928 RECV method=tools/call id=6
+1760435290.095996 RECV method=tools/call id=7
+1760435297.888855 RECV method=tools/call id=8
+1760435301.549696 RECV method=tools/call id=9
+1760435317.637880 RECV method=tools/call id=10
+1760435325.367651 RECV method=tools/call id=11
+1760435334.847453 RECV method=tools/call id=12
+1760435337.583563 RECV method=tools/call id=13
+1760435387.760465 RECV method=tools/call id=14
+1760435390.303564 RECV method=tools/call id=15
+1760435393.260105 RECV method=tools/call id=16
+1760435395.215848 RECV method=tools/call id=17
+1760435408.995386 RECV method=tools/call id=18
+1760435415.943591 RECV method=tools/call id=19
+1760435420.125534 RECV method=tools/call id=20
+1760435423.689946 RECV method=tools/call id=21
+1760435480.289667 RECV method=tools/call id=22
+1760435483.554622 RECV method=tools/call id=23
+1760435746.561658 RECV method=tools/call id=24
+1760435749.498837 RECV method=tools/call id=25
+1760435796.226982 SERVER_START main_loop_entered
+1760435796.229876 RECV method=initialize id=0
+1760435796.231548 SERVER_START main_loop_entered
+1760435796.231953 RECV method=initialize id=0
+1760435799.027003 RECV method=notifications/initialized id=None
+1760435799.034351 RECV method=notifications/initialized id=None
+1760435799.062501 RECV method=tools/list id=1
+1760435802.386969 RECV method=tools/list id=2
+1760435805.818132 RECV method=tools/list id=3
+1760435933.590753 RECV method=tools/call id=4
+1760435936.548823 RECV method=tools/call id=5
+1760436003.915194 RECV method=tools/call id=6
+1760436006.498185 RECV method=tools/call id=7
+1760436037.725155 SERVER_START main_loop_entered
+1760436037.725854 RECV method=initialize id=0
+1760436037.731684 SERVER_START main_loop_entered
+1760436037.732281 RECV method=initialize id=0
+1760436040.162777 RECV method=notifications/initialized id=None
+1760436040.162838 RECV method=notifications/initialized id=None
+1760436040.189607 RECV method=tools/list id=1
+1760436042.919711 RECV method=tools/list id=2
+1760436056.949439 RECV method=tools/list id=3
+1760436297.585682 SERVER_START main_loop_entered
+1760436297.586437 RECV method=initialize id=0
+1760436298.877955 RECV method=tools/list id=1
+1760436298.879065 RECV method=tools/list id=2
