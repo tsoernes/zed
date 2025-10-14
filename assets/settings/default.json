@@ -908,6 +908,7 @@
           "read_file": true,
           "grep": true,
           "terminal": true,
+          "enhanced_terminal": true,
           "thinking": true,
           "web_search": true
         }
@@ -927,6 +928,7 @@
           "read_file": true,
           "open": true,
           "grep": true,
+          "enhanced_terminal": true,
           "thinking": true,
           "web_search": true
         }
