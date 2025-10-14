@@ -104,6 +104,7 @@ pub enum Message {
 
 // Internal thread-scoped archived memory segment.
 // Not exposed publicly; used for context compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ThreadMemorySegment {
     pub(crate) id: u64,
     pub(crate) start: usize,
@@ -117,6 +118,70 @@ pub(crate) struct ThreadMemorySegment {
     pub(crate) message_token_count: usize,
     pub(crate) placeholder_token_count: usize,
     pub(crate) messages: Vec<Message>,
+}
+
+// On-disk persisted representation of thread memory segments.
+// Stored as JSON: { "segments": [ ThreadMemorySegment, ... ] }
+#[derive(Serialize, Deserialize)]
+struct PersistedMemorySegments {
+    segments: Vec<ThreadMemorySegment>,
+}
+
+// Auxiliary impl block providing persistence helpers.
+// These are separated to keep core logic above uncluttered.
+impl Thread {
+    fn memory_segments_file_path(&self) -> std::path::PathBuf {
+        // Use contexts_dir()/memory_segments/<thread_id>.json
+        let mut path = paths::contexts_dir();
+        path.push("memory_segments");
+        path.push(format!("{}.json", self.id));
+        path
+    }
+
+    fn ensure_memory_dir(path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn persist_memory_segments(&self) -> anyhow::Result<()> {
+        // Do not write empty (avoid churn); if none exist and file present, remove it.
+        let path = self.memory_segments_file_path();
+        if self.memory_segments.is_empty() {
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+            return Ok(());
+        }
+        Self::ensure_memory_dir(&path)?;
+        let data = PersistedMemorySegments {
+            segments: self.memory_segments.clone(),
+        };
+        let json = serde_json::to_vec_pretty(&data)?;
+        // Atomic write: write to temp then rename.
+        let mut tmp = path.clone();
+        tmp.set_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    fn load_memory_segments_from_disk(&mut self) -> anyhow::Result<()> {
+        let path = self.memory_segments_file_path();
+        if !path.exists() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(&path)?;
+        let persisted: PersistedMemorySegments = serde_json::from_slice(&bytes)?;
+        // Assign and recompute next id
+        let max_id = persisted.segments.iter().map(|s| s.id).max().unwrap_or(0);
+        self.memory_segments = persisted.segments;
+        self.memory_next_id = max_id.saturating_add(1);
+        Ok(())
+    }
 }
 
 impl Message {
@@ -878,6 +943,8 @@ impl Thread {
             messages: removed,
         };
         self.memory_segments.push(seg);
+        // Persist archive state (log errors, do not abort user-facing operation).
+        self.persist_memory_segments().log_err();
 
         // Invalidate cached precise token usage & schedule recompute for updated “active” usage
         self.invalidate_and_schedule_token_recount(cx);
@@ -927,6 +994,8 @@ impl Thread {
 
         // Restoring changes active context size
         self.invalidate_and_schedule_token_recount(cx);
+        // Persist after restore to capture removal of placeholder and maintain archive continuity on disk.
+        self.persist_memory_segments().log_err();
         Ok(())
     }
 
@@ -958,6 +1027,8 @@ impl Thread {
         self.memory_segments.remove(pos);
         self.summary = None;
         cx.notify();
+        // Persist after pruning.
+        self.persist_memory_segments().log_err();
 
         // Pruning changes “full” context projection
         self.invalidate_and_schedule_token_recount(cx);
@@ -1319,7 +1390,7 @@ impl Thread {
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
-        Self {
+        let mut thread = Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -1355,7 +1426,16 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+        };
+
+        if let Err(err) = thread.load_memory_segments_from_disk() {
+            log::warn!(
+                "failed to load memory segments for thread {}: {err:#}",
+                thread.id
+            );
         }
+
+        thread
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
