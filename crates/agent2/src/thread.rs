@@ -1,8 +1,8 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool,
+    GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, ShellDetectorTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -15,11 +15,10 @@ use agent_settings::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use chrono::{DateTime, Utc};
-use client::{ModelRequestUsage, RequestUsage, UserStore};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
+use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
-use futures::stream;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
@@ -35,7 +34,7 @@ use language_model::{
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
 };
 use project::{
     Project,
@@ -586,7 +585,6 @@ pub struct Thread {
     pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
-    user_store: Entity<UserStore>,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -643,7 +641,6 @@ impl Thread {
             pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
-            user_store: project.read(cx).user_store(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
@@ -823,7 +820,6 @@ impl Thread {
             pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
-            user_store: project.read(cx).user_store(),
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
@@ -1068,9 +1064,28 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(EnhancedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
+        // removed EnhancedTerminalHyphenTool alias registration
+        self.add_tool(ShellDetectorTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+
+        let registered_tools = self.tools.keys().cloned().collect::<Vec<_>>();
+        log::info!(
+            "About to expose {} tools via MCP (pre-serialization): {:?}",
+            registered_tools.len(),
+            registered_tools
+        );
+        let has_enhanced = registered_tools.iter().any(|n| n == "enhanced_terminal");
+        log::info!("Registered tools: {:?}", registered_tools);
+        log::info!(
+            "Registration check: enhanced_terminal present: {}",
+            has_enhanced
+        );
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1253,12 +1268,12 @@ impl Thread {
             );
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
-
-            let (mut events, mut error) = match model.stream_completion(request, cx).await {
-                Ok(events) => (events, None),
-                Err(err) => (stream::empty().boxed(), Some(err)),
-            };
+            let mut events = model
+                .stream_completion(request, cx)
+                .await
+                .map_err(|error| anyhow!(error))?;
             let mut tool_results = FuturesUnordered::new();
+            let mut error = None;
             while let Some(event) = events.next().await {
                 log::trace!("Received completion event: {:?}", event);
                 match event {
@@ -1306,10 +1321,8 @@ impl Thread {
 
             if let Some(error) = error {
                 attempt += 1;
-                let retry = this.update(cx, |this, cx| {
-                    let user_store = this.user_store.read(cx);
-                    this.handle_completion_error(error, attempt, user_store.plan())
-                })??;
+                let retry =
+                    this.update(cx, |this, _| this.handle_completion_error(error, attempt))??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
                 timer.await;
@@ -1336,23 +1349,8 @@ impl Thread {
         &mut self,
         error: LanguageModelCompletionError,
         attempt: u8,
-        plan: Option<Plan>,
     ) -> Result<acp_thread::RetryStatus> {
-        let Some(model) = self.model.as_ref() else {
-            return Err(anyhow!(error));
-        };
-
-        let auto_retry = if model.provider_id() == ZED_CLOUD_PROVIDER_ID {
-            match plan {
-                Some(Plan::V2(_)) => true,
-                Some(Plan::V1(_)) => self.completion_mode == CompletionMode::Burn,
-                None => false,
-            }
-        } else {
-            true
-        };
-
-        if !auto_retry {
+        if self.completion_mode == CompletionMode::Normal {
             return Err(anyhow!(error));
         }
 
@@ -1873,6 +1871,20 @@ impl Thread {
         };
 
         log::debug!("Completion request built successfully");
+        {
+            let tool_names: Vec<_> = request.tools.iter().map(|t| t.name.clone()).collect();
+            log::info!(
+                "MCP serialization: final tool list ({} tools): {:?}",
+                tool_names.len(),
+                tool_names
+            );
+            // Presence check for single enhanced_terminal tool name
+            let has_enhanced = tool_names.iter().any(|n| n == "enhanced_terminal");
+            log::info!(
+                "MCP serialization: enhanced_terminal present: {}",
+                has_enhanced
+            );
+        }
         Ok(request)
     }
 
@@ -1896,9 +1908,17 @@ impl Thread {
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                if tool.supported_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
-                {
+                let supported = tool.supported_provider(&model.provider_id());
+                let enabled = profile.is_tool_enabled(tool_name);
+                let include = supported && enabled;
+                log::debug!(
+                    "enabled_tools: tool='{}' supported={} enabled={} include={}",
+                    tool_name,
+                    supported,
+                    enabled,
+                    include
+                );
+                if include {
                     Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
