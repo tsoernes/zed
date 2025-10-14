@@ -48,6 +48,13 @@ pub struct SystemPromptTemplate<'a> {
     /// Percentage usage (0-100, included only when Some)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_pct: Option<f64>,
+
+    /// Number of archived memory segments (included only when Some)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_segment_count: Option<usize>,
+    /// Total precise token savings from archived segments (sum of per-segment (message_token_count - placeholder_token_count)); included only when Some
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_saved_tokens: Option<u64>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -92,6 +99,8 @@ mod tests {
             active_tokens: Some(1200),
             max_tokens: Some(16000),
             usage_pct: Some(7.5),
+            memory_segment_count: Some(2),
+            memory_saved_tokens: Some(1234),
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

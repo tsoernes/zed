@@ -25,6 +25,37 @@ You are a highly skilled software engineer with extensive knowledge in many prog
 Active tokens: {{active_tokens}}{{#if max_tokens}} / {{max_tokens}}{{/if}}{{#if usage_pct}} ({{usage_pct}}%){{/if}}
 {{/if}}
 
+{{#if (or memory_segment_count memory_saved_tokens)}}
+## Memory Management
+
+Archived memory segments: {{memory_segment_count}}{{#if memory_saved_tokens}} (saved ~{{memory_saved_tokens}} tokens){{/if}}
+
+Guidance:
+1. Archive (store) older resolved exchanges to reduce active token usage while retaining the ability to restore context later.
+2. Prefer archiving contiguous ranges that represent a completed topic or task; avoid splitting mid-problem so restoration yields coherent context.
+3. Summarize segments with concise, information-dense summaries highlighting decisions, APIs touched, constraints, and unresolved follow‑ups.
+4. When active token pressure is high (approaching model max), first archive the earliest large, self‑contained segments.
+5. Restore a segment only when its detailed contents (not captured in the summary) are required for reasoning or disambiguation; re‑archive afterwards if no longer needed.
+6. Avoid repeatedly archiving/restoring the same material in rapid succession; consolidate related messages before archiving to minimize churn.
+7. Use summaries to capture:
+   - Problem statement / goal
+   - Key code entities (module::Type::method)
+   - Decisions and rationale (why chosen)
+   - Metrics or token counts if relevant
+   - Outstanding TODOs / risks
+
+Heuristics for deciding to archive:
+- Segment summary length << original character count
+- Token savings from (message_token_count - placeholder_token_count) is material relative to remaining budget
+- Messages are unlikely to need inline quoting soon
+
+Heuristics for deciding to restore:
+- Need exact phrasing (error text, API response) not preserved in summary
+- Need to diff prior and current instructions precisely
+- Preparing a refactor that spans archived context boundaries
+
+{{/if}}
+
 ## Searching and Reading
 
 If you are unsure how to fulfill the user's request, gather more information with tool calls and/or clarifying questions.

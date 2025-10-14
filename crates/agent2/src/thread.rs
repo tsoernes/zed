@@ -2506,12 +2506,33 @@ impl Thread {
             (None, None, None)
         };
 
+        // Derive memory tool telemetry (only when segments exist and we have at least some recorded token counts).
+        let (memory_segment_count_opt, memory_saved_tokens_opt) = if self.memory_segments.is_empty()
+        {
+            (None, None)
+        } else {
+            let mut saved: u64 = 0;
+            for seg in &self.memory_segments {
+                // Only add when precise token counts were captured (message_token_count > 0).
+                // We treat missing/zero token counts as unknown and skip them.
+                if seg.message_token_count > 0
+                    && seg.message_token_count >= seg.placeholder_token_count
+                {
+                    saved += (seg.message_token_count - seg.placeholder_token_count) as u64;
+                }
+            }
+            let count = self.memory_segments.len();
+            (Some(count), if saved > 0 { Some(saved) } else { None })
+        };
+
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
             active_tokens: active_tokens_opt,
             max_tokens: max_tokens_opt,
             usage_pct: usage_pct_opt,
+            memory_segment_count: memory_segment_count_opt,
+            memory_saved_tokens: memory_saved_tokens_opt,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
