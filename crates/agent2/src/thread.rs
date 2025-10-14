@@ -1655,6 +1655,7 @@ impl Thread {
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(ListHistoryTool::new(cx.weak_entity()));
         self.add_tool(MemoryAgentTool::new(cx.weak_entity()));
+        self.add_tool(TokenUsageTool::new(cx.weak_entity()));
 
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);

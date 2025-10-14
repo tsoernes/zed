@@ -10,6 +10,7 @@ mod grep_tool;
 mod list_directory_tool;
 mod list_history_tool;
 mod memory_tool;
+mod token_usage_tool;
 
 mod move_path_tool;
 mod now_tool;
@@ -56,6 +57,7 @@ pub use grep_tool::*;
 pub use list_directory_tool::*;
 pub use list_history_tool::*;
 pub use memory_tool::*;
+pub use token_usage_tool::*;
 
 pub use move_path_tool::*;
 pub use now_tool::*;
