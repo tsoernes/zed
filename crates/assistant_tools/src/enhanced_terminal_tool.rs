@@ -313,9 +313,20 @@ impl Tool for EnhancedTerminalTool {
                             let snippet = rec.output.chars().take(400).collect::<String>();
                             serde_json::to_string(&snippet).unwrap_or("\"<encoding error>\"".into())
                         };
+                        // Include previously unused fields to surface them and avoid dead_code warnings.
+                        let command_json = serde_json::to_string(&rec.command)
+                            .unwrap_or("\"<encoding error>\"".into());
+                        let started = rec
+                            .started_at
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let used_sudo = rec.used_sudo;
+                        let dangerous = rec.dangerous;
                         format!(
-                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{}}}",
-                            success, truncated, rec.canceled, preview
+                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{},\"command\":{command_json},\"started_at\":{started},\"used_sudo\":{},\"dangerous\":{}}}",
+                            success, truncated, rec.canceled, preview, used_sudo, dangerous
                         )
                     }
                 };
