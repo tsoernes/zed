@@ -1308,7 +1308,7 @@ impl AgentDiff {
                 {
                     let session_id = acp_thread.read(cx).session_id();
                     if let Some(internal_thread) = connection.thread(session_id, cx) {
-                        agent2::embedded_mcp_server::set_active_thread(Some(internal_thread), cx);
+                        agent2::active_thread::set_active_thread(Some(internal_thread), cx);
                     }
                 }
             }
