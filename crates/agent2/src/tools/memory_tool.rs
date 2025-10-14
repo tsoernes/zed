@@ -24,8 +24,14 @@ pub enum MemoryAction {
     /// Aggregate statistics across all archived segments.
     Stats,
     /// Archive (store) a contiguous range of messages [start, end) (end exclusive).
-    /// Replaces them with a single placeholder summary message.
-    Store { start: usize, end: usize },
+    /// Replaces them with a single placeholder summary message by default.
+    /// If a custom `summary` is provided it is used (subject to sanitization and length limits).
+    Store {
+        start: usize,
+        end: usize,
+        #[serde(default)]
+        summary: Option<String>,
+    },
     /// Load a segment's metadata, optionally including original messages' markdown.
     Load {
         id: u64,
@@ -84,7 +90,7 @@ impl AgentTool for MemoryAgentTool {
             Ok(i) => match i.operation {
                 MemoryAction::List { .. } => "List memories".into(),
                 MemoryAction::Stats => "Memory stats".into(),
-                MemoryAction::Store { start, end } => {
+                MemoryAction::Store { start, end, .. } => {
                     format!("Archive [{}..{})", start, end).into()
                 }
                 MemoryAction::Load { id, .. } => format!("Load memory {}", id).into(),
@@ -174,7 +180,11 @@ impl AgentTool for MemoryAgentTool {
                     Err(e) => Err(anyhow!(e)),
                 }
             }
-            MemoryAction::Store { start, end } => {
+            MemoryAction::Store {
+                start,
+                end,
+                summary,
+            } => {
                 if start >= end {
                     return Task::ready(Err(anyhow!(
                         "invalid range: start ({}) must be < end ({})",
@@ -184,7 +194,12 @@ impl AgentTool for MemoryAgentTool {
                 }
                 let inclusive_end = end - 1;
                 let seg_id_res = thread.update(cx, |thread, thread_cx| {
-                    thread.store_memory_segment(start, inclusive_end, thread_cx)
+                    thread.store_memory_segment_with_summary(
+                        start,
+                        inclusive_end,
+                        summary.as_deref(),
+                        thread_cx,
+                    )
                 });
                 let seg_id = match seg_id_res {
                     Ok(id) => id,

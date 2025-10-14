@@ -27,7 +27,7 @@ pub enum MemoryOperation {
         start: usize,
         end: usize,
         #[serde(default)]
-        summary: Option<String>, // optional user summary (currently ignored; Thread synthesizes)
+        summary: Option<String>, // optional custom summary; if None or empty the thread auto-synthesizes and sanitizes
     },
     /// Load (show) a specific stored memory segment by id.
     Load {
