@@ -1,11 +1,10 @@
+pub mod context_management;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
-mod detect_binaries_tool;
 mod diagnostics_tool;
 pub mod edit_agent;
 mod edit_file_tool;
-mod enhanced_terminal_tool; // EnhancedTerminalTool registered under tool name "enhanced_terminal"
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
@@ -18,6 +17,7 @@ mod read_file_tool;
 mod schema;
 pub mod templates;
 mod terminal_tool;
+mod test_context_tool;
 mod thinking_tool;
 mod ui;
 mod web_search_tool;
@@ -27,6 +27,7 @@ use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
+use log;
 use move_path_tool::MovePathTool;
 use std::sync::Arc;
 use web_search_tool::WebSearchTool;
@@ -37,15 +38,17 @@ use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_file_tool::EditFileTool;
-
 use crate::fetch_tool::FetchTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
+use crate::test_context_tool::TestContextTool;
 use crate::thinking_tool::ThinkingTool;
 
-pub use detect_binaries_tool::DetectBinariesTool;
+pub use context_management::{
+    CallContextTool, CallContextToolInput, ContextToolName, ListHistoryTool, ListHistoryToolInput,
+    MemoryOperation, MemoryTool, MemoryToolInput,
+};
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
-pub use enhanced_terminal_tool::EnhancedTerminalTool;
 pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
 pub use open_tool::OpenTool;
@@ -56,10 +59,10 @@ pub use terminal_tool::TerminalTool;
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
+    log::info!("Initializing assistant_tools");
+
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
-    registry.register_tool(EnhancedTerminalTool);
-    registry.register_tool(DetectBinariesTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
@@ -76,6 +79,22 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
 
+    // Test tool to verify registration mechanism
+    registry.register_tool(TestContextTool);
+
+    // Context management tools
+    log::info!("Registering context management tools: list_history, memory, call_context_tool");
+    registry.register_tool(ListHistoryTool);
+    registry.register_tool(MemoryTool);
+    if registry.tools().iter().any(|t| t.name() == "memory") {
+        log::info!(
+            "assistant_tools registered MemoryTool (native); backend will be noop until thread integration sets a real backend"
+        );
+    } else {
+        log::warn!("MemoryTool missing after registration; memory operations will be unavailable");
+    }
+    registry.register_tool(CallContextTool);
+
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
@@ -86,6 +105,11 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         },
     )
     .detach();
+
+    // Log all registered tools after initialization for harness export verification.
+    for t in ToolRegistry::global(cx).tools() {
+        log::info!("assistant_tools registered tool: {}", t.name());
+    }
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
@@ -110,6 +134,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::Serialize;
     use settings::Settings;
+    use std::sync::Arc;
 
     #[test]
     fn test_json_schema() {
@@ -170,5 +195,25 @@ mod tests {
 
             assert_eq!(actual_schema, expected_schema, "{}", error_message)
         }
+    }
+
+    #[gpui::test]
+    fn memory_and_call_context_tool_registered(cx: &mut App) {
+        // Minimal initialization to avoid global side effects (paths, settings).
+        assistant_tool::init(cx);
+        let registry = ToolRegistry::global(cx);
+        registry.register_tool(MemoryTool);
+        registry.register_tool(CallContextTool);
+
+        let names: Vec<String> = registry.tools().iter().map(|t| t.name()).collect();
+
+        assert!(
+            names.contains(&"memory".to_string()),
+            "MemoryTool not registered"
+        );
+        assert!(
+            names.contains(&"call_context_tool".to_string()),
+            "CallContextTool not registered"
+        );
     }
 }
