@@ -1,4 +1,4 @@
-mod active_thread;
+pub mod active_thread;
 mod agent;
 mod db;
 mod history_store;
