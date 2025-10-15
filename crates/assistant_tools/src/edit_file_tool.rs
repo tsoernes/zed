@@ -48,6 +48,7 @@ use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
+use indoc::formatdoc;
 
 pub struct EditFileTool;
 
