@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::BTreeMap;
 use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
@@ -7,10 +7,11 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, Role, TokenUsage,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use open_ai::ResponseStreamEvent;
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::sync::{Arc, LazyLock};
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
@@ -47,9 +48,22 @@ static API_URL_ENV_VAR: LazyLock<EnvVar> = env_var!(API_URL_ENV_VAR_NAME);
 const MODEL_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_MODEL";
 static MODEL_ENV_VAR: LazyLock<EnvVar> = env_var!(MODEL_ENV_VAR_NAME);
 
+/// Optional environment variable to specify a deployment name for Azure OpenAI-style endpoints.
+const DEPLOYMENT_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_DEPLOYMENT";
+static DEPLOYMENT_ENV_VAR: LazyLock<EnvVar> = env_var!(DEPLOYMENT_ENV_VAR_NAME);
+
+/// Optional environment variable to specify an API version for Azure OpenAI-style endpoints.
+const API_VERSION_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_API_VERSION";
+static API_VERSION_ENV_VAR: LazyLock<EnvVar> = env_var!(API_VERSION_ENV_VAR_NAME);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AzureFoundrySettings {
     pub api_url: String,
+    /// Optional deployment name for Azure OpenAI-style endpoints:
+    /// {api_url}/openai/deployments/{deployment}/chat/completions?api-version={api_version}
+    pub deployment_name: Option<String>,
+    /// Optional API version for Azure OpenAI-style endpoints.
+    pub api_version: Option<String>,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -139,6 +153,16 @@ impl AzureFoundryLanguageModelProvider {
 
         let settings = AzureFoundrySettings {
             api_url: api_url.clone(),
+            deployment_name: DEPLOYMENT_ENV_VAR
+                .value
+                .as_deref()
+                .filter(|v| !v.is_empty())
+                .map(|s| s.to_string()),
+            api_version: API_VERSION_ENV_VAR
+                .value
+                .as_deref()
+                .filter(|v| !v.is_empty())
+                .map(|s| s.to_string()),
             available_models: vec![AvailableModel {
                 name: default_model_name,
                 display_name: None,
@@ -149,9 +173,28 @@ impl AzureFoundryLanguageModelProvider {
             }],
         };
 
-        let state = cx.new(|_cx| State {
-            api_key_state: ApiKeyState::new(SharedString::new(api_url)),
-            settings,
+        let state = cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let new_settings = crate::AllLanguageModelSettings::get_global(cx)
+                    .azure_foundry
+                    .clone();
+                if this.settings != new_settings {
+                    let api_url_ss = SharedString::new(new_settings.api_url.as_str());
+                    this.api_key_state.handle_url_change(
+                        api_url_ss,
+                        &API_KEY_ENV_VAR,
+                        |this| &mut this.api_key_state,
+                        cx,
+                    );
+                    this.settings = new_settings;
+                    cx.notify();
+                }
+            })
+            .detach();
+            State {
+                api_key_state: ApiKeyState::new(SharedString::new(api_url)),
+                settings,
+            }
         });
 
         Self { http_client, state }
@@ -265,12 +308,16 @@ impl AzureFoundryLanguageModel {
         let http_client = self.http_client.clone();
 
         // Read key and API URL atomically from state.
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
-            (
-                state.api_key_state.key(&state.settings.api_url),
-                state.settings.api_url.clone(),
-            )
-        }) else {
+        let Ok((api_key, api_url, deployment_name, api_version)) =
+            self.state.read_with(cx, |state, _cx| {
+                (
+                    state.api_key_state.key(&state.settings.api_url),
+                    state.settings.api_url.clone(),
+                    state.settings.deployment_name.clone(),
+                    state.settings.api_version.clone(),
+                )
+            })
+        else {
             return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
@@ -279,8 +326,15 @@ impl AzureFoundryLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let response =
-                stream_completion_azure(http_client.as_ref(), &api_url, &api_key, request).await?;
+            let response = stream_completion_azure(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                deployment_name,
+                api_version,
+                request,
+            )
+            .await?;
             Ok(response)
         });
 
@@ -480,7 +534,7 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's agent with Azure AI Foundry, you need to add an API key."))
+                .child(Label::new("To use Zed's agent with Azure AI Foundry, you need to add an API key. You can configure the API URL, deployment name, and API version in Settings (Language Models → Azure Foundry) or via environment variables: AZURE_FOUNDRY_API_URL, AZURE_FOUNDRY_DEPLOYMENT, AZURE_FOUNDRY_API_VERSION."))
                 .child(
                     div()
                         .pt(DynamicSpacing::Base04.rems(cx))
@@ -488,7 +542,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(format!(
-                        "You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                        "You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed. The default API URL is {DEFAULT_API_URL}. Optionally set AZURE_FOUNDRY_DEPLOYMENT and AZURE_FOUNDRY_API_VERSION for Azure OpenAI deployment-style endpoints."
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -549,13 +603,25 @@ async fn stream_completion_azure(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    deployment_name: Option<String>,
+    api_version: Option<String>,
     request: open_ai::Request,
 ) -> Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>> {
     use futures::{AsyncBufReadExt, io::BufReader};
     use serde::Deserialize;
 
-    // Compose the endpoint path; request is compatible with OpenAI.
-    let uri = format!("{}/chat/completions", api_url.trim_end_matches('/'));
+    // Compose the endpoint path; support base and Azure OpenAI deployment-style endpoints.
+    let base = api_url.trim_end_matches('/');
+    let uri = if let Some(deployment) = deployment_name.filter(|d| !d.is_empty()) {
+        let ver = api_version.as_deref().unwrap_or("2024-06-01");
+        format!(
+            "{}/openai/deployments/{}/chat/completions?api-version={}",
+            base, deployment, ver
+        )
+    } else {
+        format!("{}/chat/completions", base)
+    };
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -596,8 +662,9 @@ async fn stream_completion_azure(
             })
             .boxed())
     } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
+        let mut body_bytes = Vec::new();
+        futures::io::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes).await?;
+        let body = String::from_utf8(body_bytes).unwrap_or_default();
         #[derive(Deserialize)]
         struct ErrorWrapper {
             error: OpenAiError,
@@ -628,23 +695,4 @@ enum ResponseStreamResult {
 #[derive(Serialize, Deserialize, Debug)]
 struct OpenAiError {
     message: String,
-}
-
-// Token usage mapping is handled by OpenAiEventMapper; we also implement a
-// lightweight telemetry update hook in case future Azure responses add usage.
-impl From<&ResponseStreamEvent> for TokenUsage {
-    fn from(event: &ResponseStreamEvent) -> Self {
-        let usage = event.usage.as_ref().map(|u| TokenUsage {
-            input_tokens: u.prompt_tokens,
-            output_tokens: u.completion_tokens,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-        });
-        usage.unwrap_or(TokenUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-        })
-    }
 }

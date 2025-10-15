@@ -5,11 +5,11 @@ use gpui::App;
 use settings::Settings;
 
 use crate::provider::{
-    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    anthropic::AnthropicSettings, azure_foundry::AzureFoundrySettings,
+    bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
+    google::GoogleSettings, lmstudio::LmStudioSettings, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -27,6 +27,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
+    pub azure_foundry: AzureFoundrySettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel: VercelSettings,
     pub x_ai: XAiSettings,
@@ -47,6 +48,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let ollama = language_models.ollama.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
+        let azure_foundry = language_models.azure_foundry.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel = language_models.vercel.unwrap();
         let x_ai = language_models.x_ai.unwrap();
@@ -91,6 +93,29 @@ impl settings::Settings for AllLanguageModelSettings {
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),
                 available_models: openai.available_models.unwrap_or_default(),
+            },
+            azure_foundry: AzureFoundrySettings {
+                api_url: azure_foundry.api_url.unwrap(),
+                deployment_name: azure_foundry.deployment_name,
+                api_version: azure_foundry.api_version,
+                available_models: azure_foundry
+                    .available_models
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| crate::provider::azure_foundry::AvailableModel {
+                        name: m.name,
+                        display_name: m.display_name,
+                        max_tokens: m.max_tokens,
+                        max_output_tokens: m.max_output_tokens,
+                        max_completion_tokens: m.max_completion_tokens,
+                        capabilities: crate::provider::azure_foundry::ModelCapabilities {
+                            tools: m.capabilities.tools,
+                            images: m.capabilities.images,
+                            parallel_tool_calls: m.capabilities.parallel_tool_calls,
+                            prompt_cache_key: m.capabilities.prompt_cache_key,
+                        },
+                    })
+                    .collect(),
             },
             openai_compatible: openai_compatible
                 .into_iter()

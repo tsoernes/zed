@@ -18,6 +18,7 @@ pub struct AllLanguageModelSettingsContent {
     pub ollama: Option<OllamaSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub azure_foundry: Option<AzureFoundrySettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel: Option<VercelSettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
@@ -251,6 +252,27 @@ impl Default for OpenAiCompatibleModelCapabilities {
             prompt_cache_key: false,
         }
     }
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AzureFoundrySettingsContent {
+    pub api_url: Option<String>,
+    pub deployment_name: Option<String>,
+    pub api_version: Option<String>,
+    pub available_models: Option<Vec<AzureFoundryAvailableModel>>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AzureFoundryAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    #[serde(default)]
+    pub capabilities: OpenAiCompatibleModelCapabilities,
 }
 
 #[skip_serializing_none]

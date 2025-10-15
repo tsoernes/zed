@@ -137,6 +137,7 @@ Examples (conceptual, not literal JSON):
     * echo "data" | env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A tee /tmp/file
     * env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A bash -lc 'echo "data" > /tmp/file'
   - Pass SUDO_ASKPASS via env to ensure sudo sees it in the same invocation.
+  - Be aware: sudo -A -v may block in some environments. Prefer pre-authorization and use a cached sudo fallback-only flow where possible: sudo -n <cmd> || env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A <cmd>.
 
 Streaming behavior:
 - While a detached job runs, output is read incrementally and a truncated preview (up to output_limit) is updated in memory.

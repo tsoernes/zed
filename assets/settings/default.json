@@ -1880,6 +1880,9 @@
     "x_ai": {
       "api_url": "https://api.x.ai/v1"
     },
+    "azure_foundry": {
+      "api_url": "https://models.inference.azure.com/v1"
+    },
     "zed.dev": {}
   },
   "session": {
