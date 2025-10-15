@@ -608,6 +608,19 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+
+    // --- Stub memory / token usage fields (added for tools compatibility) ---
+    /// Precise active token usage (if computed).
+    precise_active_tokens: Option<u64>,
+    /// Precise max token capacity (if known).
+    precise_max_tokens: Option<u64>,
+    /// Precise per-message token counts (parallel to `messages`).
+    precise_per_message_tokens: Vec<usize>,
+    /// Stored memory segment metadata tuples:
+    /// (id, start, end, count, chars, placeholder_chars, token_savings_estimate, summary, stored_epoch_ms)
+    memory_segments: Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)>,
+    /// Next memory segment id counter.
+    next_memory_segment_id: u64,
 }
 
 impl Thread {
@@ -664,6 +677,12 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            // stub field initialization
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: Vec::new(),
+            memory_segments: Vec::new(),
+            next_memory_segment_id: 1,
         }
     }
 
@@ -839,6 +858,12 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            // stub field initialization
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: Vec::new(),
+            memory_segments: Vec::new(),
+            next_memory_segment_id: 1,
         }
     }
 
@@ -1069,7 +1094,6 @@ impl Thread {
             self.project.clone(),
             environment.clone(),
         ));
-        // removed EnhancedTerminalHyphenTool alias registration
         self.add_tool(ShellDetectorTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
@@ -1677,7 +1701,7 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             // Helper to stream a summary for a given request, returning the single-line summary.
             async fn run_summary_request(
-                this: &Entity<Thread>,
+                this: &WeakEntity<Thread>,
                 model: &Arc<dyn LanguageModel>,
                 mut request: LanguageModelRequest,
                 cx: &mut gpui::AsyncApp,
@@ -1733,7 +1757,7 @@ impl Thread {
                     if let Some(p) = prompt_msg.clone() {
                         req.messages.push(p);
                     }
-                    run_summary_request(this, &model, req, cx).await?
+                    run_summary_request(&this, &model, req, cx).await?
                 } else {
                     let n = all.len();
                     let overlap = (n / 10).clamp(1, 4); // small overlap window
@@ -1766,12 +1790,9 @@ impl Thread {
                     let req1 = build_part_request(part1_msgs);
                     let req2 = build_part_request(part2_msgs);
 
-                    // First two passes in parallel.
-                    let (s1, s2) = futures::join!(
-                        run_summary_request(this, &model, req1, cx),
-                        run_summary_request(this, &model, req2, cx)
-                    );
-                    let (s1, s2) = (s1.unwrap_or_default(), s2.unwrap_or_default());
+                    // First two passes sequentially (avoid simultaneous mutable borrow of cx).
+                    let s1 = run_summary_request(&this, &model, req1, cx).await.unwrap_or_default();
+                    let s2 = run_summary_request(&this, &model, req2, cx).await.unwrap_or_default();
 
                     // Third pass: merge summaries.
                     let merge_prompt = format!(
@@ -1788,11 +1809,11 @@ impl Thread {
                         content: vec![merge_prompt.into()],
                         cache: false,
                     });
-                    run_summary_request(this, &model, merge_req, cx).await?
+                    run_summary_request(&this, &model, merge_req, cx).await?
                 }
             } else {
                 // Single pass as before.
-                run_summary_request(this, &model, full_request.clone(), cx).await?
+                run_summary_request(&this, &model, full_request.clone(), cx).await?
             };
 
             log::debug!("Setting summary: {}", final_summary);
@@ -2225,6 +2246,120 @@ impl Thread {
                 max_attempts: 2,
             }),
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Stub accessors & placeholder implementations for memory / token tools
+    // ---------------------------------------------------------------------
+
+    /// Expose read-only slice of messages for tools that previously accessed a private field.
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
+    /// Return (active, full) token usage pair if available (stub uses latest).
+    pub fn active_and_full_token_usage(
+        &self,
+    ) -> Option<(acp_thread::TokenUsage, acp_thread::TokenUsage)> {
+        self.latest_token_usage()
+            .map(|usage| (usage.clone(), usage))
+    }
+
+    /// Heuristic system prompt token count (stubbed as zero).
+    pub fn system_prompt_token_count_heuristic(&self, _app: &App) -> u64 {
+        0
+    }
+
+    /// Return stored memory segment metadata tuples.
+    pub fn memory_segment_metas(
+        &self,
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)> {
+        self.memory_segments.clone()
+    }
+
+    /// Store a memory segment with an optional summary; replaces messages with a placeholder summary message.
+    pub fn store_memory_segment_with_summary(
+        &mut self,
+        start: usize,
+        end_inclusive: usize,
+        summary: Option<&str>,
+        _cx: &mut Context<Self>,
+    ) -> Result<u64> {
+        use anyhow::anyhow;
+        if start > end_inclusive || end_inclusive >= self.messages.len() {
+            return Err(anyhow!("invalid range"));
+        }
+        let id = self.next_memory_segment_id;
+        self.next_memory_segment_id += 1;
+
+        // Collect stats
+        let count = end_inclusive - start + 1;
+        let mut chars = 0usize;
+        for m in &self.messages[start..=end_inclusive] {
+            chars += m.to_markdown().len();
+        }
+        let placeholder_summary =
+            summary.unwrap_or("Conversation segment archived (summary unavailable)");
+        let placeholder_text = format!("## Assistant\n\n{placeholder_summary}\n");
+        let placeholder_chars = placeholder_text.len();
+        let token_savings_estimate = chars.saturating_sub(placeholder_chars) / 4;
+
+        // Replace range with single summary message.
+        self.messages.splice(
+            start..=end_inclusive,
+            [Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text(placeholder_summary.to_string())],
+                tool_results: IndexMap::default(),
+            })],
+        );
+
+        self.memory_segments.push((
+            id,
+            start,
+            start, // end now equals start after replacement
+            count,
+            chars,
+            placeholder_chars,
+            token_savings_estimate,
+            placeholder_summary.to_string(),
+            (Utc::now().timestamp_millis()) as u128,
+        ));
+
+        Ok(id)
+    }
+
+    /// Load memory segment returning (meta_json, original_messages_markdown_vec) if found.
+    pub fn load_memory_segment(&self, id: u64) -> Result<(serde_json::Value, Vec<String>)> {
+        use anyhow::anyhow;
+        let meta = self
+            .memory_segments
+            .iter()
+            .find(|m| m.0 == id)
+            .ok_or_else(|| anyhow!("segment not found"))?;
+        let meta_json = serde_json::json!({
+            "id": meta.0,
+            "start": meta.1,
+            "end": meta.2,
+            "count": meta.3,
+            "chars": meta.4,
+            "placeholder_chars": meta.5,
+            "token_savings_estimate": meta.6,
+            "summary": meta.7,
+            "stored_epoch_ms": meta.8
+        });
+        // Original messages are not preserved in stub.
+        Ok((meta_json, Vec::new()))
+    }
+
+    /// Restore memory segment (no-op in stub).
+    pub fn restore_memory_segment(&mut self, _id: u64, _cx: &mut Context<Self>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Prune (delete) a stored memory segment.
+    pub fn prune_memory_segment(&mut self, id: u64, _cx: &mut Context<Self>) -> Result<()> {
+        self.memory_segments.retain(|m| m.0 != id);
+        Ok(())
     }
 }
 

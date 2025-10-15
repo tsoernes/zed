@@ -4,6 +4,7 @@ mod history_store;
 mod native_agent_server;
 mod templates;
 mod thread;
+mod token_usage;
 mod tool_schema;
 mod tools;
 
@@ -16,4 +17,5 @@ pub use history_store::*;
 pub use native_agent_server::NativeAgentServer;
 pub use templates::*;
 pub use thread::*;
+pub use token_usage::*;
 pub use tools::*;
