@@ -38,6 +38,11 @@ pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
+    pub active_tokens: Option<usize>,
+    pub max_tokens: Option<usize>,
+    pub usage_pct: Option<f64>,
+    pub memory_segment_count: Option<usize>,
+    pub memory_saved_tokens: Option<u64>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -79,6 +84,11 @@ mod tests {
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
+            active_tokens: None,
+            max_tokens: None,
+            usage_pct: None,
+            memory_segment_count: None,
+            memory_saved_tokens: None,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
