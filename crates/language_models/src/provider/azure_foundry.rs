@@ -461,11 +461,10 @@ struct ConfigurationView {
     api_version_editor: Entity<SingleLineInput>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
-    // Used by Clear Filters button to reset UI state (now referenced in render)
-    discovered_models: Option<Vec<AvailableModel>>,
+
     discovery_task: Option<Task<()>>,
 
-    only_show_deployed: bool,
+
 }
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -531,10 +530,10 @@ impl ConfigurationView {
             api_version_editor,
             state,
             load_credentials_task,
-            discovered_models: None,
+
             discovery_task: None,
 
-            only_show_deployed: false,
+
         }
     }
 
@@ -776,11 +775,7 @@ impl ConfigurationView {
 
 
 
-    /// Clear any stored discovered models (UI control).
-    fn clear_discovered_models(&mut self, cx: &mut Context<Self>) {
-        self.discovered_models = None;
-        cx.notify();
-    }
+
 }
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -939,26 +934,11 @@ impl Render for ConfigurationView {
                                     this.run_discovery(window, cx)
                                 })),
                         )
+
                         .child(
-                            Button::new("clear-filters", "Clear Filters")
-                                .icon(IconName::Undo)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::XSmall)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.clear_discovered_models(cx);
-                                })),
-                        )
-                        .child(
-                            Checkbox::new(
-                                "only-show-deployed",
-                                if self.only_show_deployed { ToggleState::Selected } else { ToggleState::Unselected },
-                            )
-                            .label("Only show deployed")
-                            .on_click(cx.listener(|this, checked, _window, cx| {
-                                this.only_show_deployed = *checked == ToggleState::Selected;
-                                cx.notify();
-                            })),
+                            Label::new("Note: Some deployed models may not appear in this list due to permissions, region, or preview restrictions.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
                         )
                         .when(self.discovery_task.is_some(), |this| {
                             this.child(
@@ -970,29 +950,7 @@ impl Render for ConfigurationView {
                 .child({
                     // Models table
                     let mut models = state.settings.available_models.clone();
-                    // Optionally filter to only deployed models based on latest probe results.
-                    if self.only_show_deployed {
-                        if let Some(results) = state.deployment_probe_results.as_ref() {
-                            let deployed: Vec<String> = results
-                                .iter()
-                                .filter(|(_, res)| {
-                                    matches!(
-                                        res,
-                                        crate::provider::azure_foundry::DeploymentProbeResult::Found
-                                            | crate::provider::azure_foundry::DeploymentProbeResult::AccessDenied
-                                    )
-                                })
-                                .map(|(name, _)| name.clone())
-                                .collect();
-                            models = models
-                                .into_iter()
-                                .filter(|m| deployed.iter().any(|n| n == &m.name))
-                                .collect();
-                        } else {
-                            // No probe results yet; show nothing when only_show_deployed is enabled.
-                            models.clear();
-                        }
-                    }
+
                     let mut rows: Vec<AnyElement> = Vec::new();
                     rows.push(
                         h_flex()
@@ -1704,11 +1662,12 @@ pub async fn probe_deployments_existence(
     let base = api_url.trim_end_matches('/').to_string();
     let ver = api_version.unwrap_or("2024-06-01");
 
-    // Bounded concurrency limit (env override AZURE_FOUNDRY_PROBE_CONCURRENCY)
+    // Bounded concurrency limit (env override AZURE_FOUNDRY_PROBE_CONCURRENCY; default 64).
+    // Note: HTTP client uses short connect/request timeouts via its reqwest builder to keep discovery/probing snappy.
     let concurrency_limit = std::env::var("AZURE_FOUNDRY_PROBE_CONCURRENCY")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(16)
+        .unwrap_or(64)
         .max(1);
 
     // Probe a single candidate (helper closure)
@@ -1719,16 +1678,28 @@ pub async fn probe_deployments_existence(
 
         async move {
             let mut found_state: Option<DeploymentProbeResult> = None;
-            let paths = [
-                format!(
-                    "{}/openai/deployments/{}/responses?api-version={}",
-                    base, candidate, ver
-                ),
-                format!(
+            let fast = std::env::var("AZURE_FOUNDRY_FAST_PROBE")
+                .ok()
+                .map(|v| v.to_lowercase())
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false);
+            let paths: Vec<String> = if fast {
+                vec![format!(
                     "{}/openai/deployments/{}/chat/completions?api-version={}",
                     base, candidate, ver
-                ),
-            ];
+                )]
+            } else {
+                vec![
+                    format!(
+                        "{}/openai/deployments/{}/responses?api-version={}",
+                        base, candidate, ver
+                    ),
+                    format!(
+                        "{}/openai/deployments/{}/chat/completions?api-version={}",
+                        base, candidate, ver
+                    ),
+                ]
+            };
 
             for uri in &paths {
                 let body = if uri.contains("responses") {
