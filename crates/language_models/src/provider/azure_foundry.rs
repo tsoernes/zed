@@ -614,7 +614,7 @@ impl ConfigurationView {
 
         // Spawn an async task tied to the window context. It will update the view
         // with discovered models or print errors.
-        let task = cx.spawn_in(window, async move |_, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             // Read atomic copy of API URL / deployment / api_version and api key
             let result = state.read_with(cx, |state, _cx| {
                 (
@@ -767,6 +767,11 @@ impl ConfigurationView {
                                     deployment_name: None,
                                     api_version: None,
                                     available_models: None,
+                                    // Clear spinner when discovery/probe completes
+                                    this.update(cx, |this, cx| {
+                                        this.discovery_task = None;
+                                        cx.notify();
+                                    }).log_err();
                                 });
                             }
                             let az = lm.azure_foundry.as_mut().unwrap();
@@ -803,19 +808,8 @@ impl ConfigurationView {
             }
         });
 
-        // Attach task to the view so we can show loading status; store handle locally,
-        // and clear it when the task completes so the spinner disappears.
+        // Attach task to the view so we can show loading status; store handle locally.
         self.discovery_task = Some(task);
-        cx.spawn_in(window, async move |this, cx| {
-            // Await completion of the discovery/probe task, then clear the spinner.
-            if let Some(t) = this.update(cx, |this, _cx| this.discovery_task.take()).ok().flatten() {
-                let _ = t.await;
-            }
-            this.update(cx, |this, cx| {
-                this.discovery_task = None;
-                cx.notify();
-            }).log_err();
-        }).detach();
     }
 
 
