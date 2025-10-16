@@ -8,7 +8,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, TokenUsage,
 };
 use open_ai::ResponseStreamEvent;
 use serde::{Deserialize, Serialize};
@@ -437,6 +437,14 @@ impl LanguageModel for AzureFoundryLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        // Preserve the original request for token counting before converting to OpenAI shape.
+        let original_request = request.clone();
+
+        // Prepare an initial token count future using the foreground App context.
+        let initial_token_count_future = cx
+            .update(|app| self.count_tokens(original_request.clone(), app))
+            .ok();
+
         let request = into_open_ai(
             request,
             &self.model.name,
@@ -447,8 +455,30 @@ impl LanguageModel for AzureFoundryLanguageModel {
         );
         let completions = self.stream_completion_inner(request, cx);
         async move {
+            // Map provider stream into LanguageModelCompletionEvent stream.
             let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            let mapped = mapper.map_stream(completions.await?).boxed();
+
+            // Compute initial prompt token usage, if available, and inject a UsageUpdate before other events.
+            if let Some(fut) = initial_token_count_future {
+                match fut.await {
+                    Ok(tokens) => {
+                        let usage = TokenUsage {
+                            input_tokens: tokens,
+                            output_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        };
+                        let head = futures::stream::iter(vec![Ok(
+                            LanguageModelCompletionEvent::UsageUpdate(usage),
+                        )]);
+                        Ok(head.chain(mapped).boxed())
+                    }
+                    Err(_) => Ok(mapped),
+                }
+            } else {
+                Ok(mapped)
+            }
         }
         .boxed()
     }
