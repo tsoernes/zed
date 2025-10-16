@@ -608,7 +608,11 @@ impl ConfigurationView {
 
             // Build a local HTTP client and call the discover_models helper.
             let http_client =
-                match reqwest_client::ReqwestClient::user_agent("azure-foundry-discovery-ui") {
+                match reqwest_client::ReqwestClient::user_agent_with_timeouts(
+                    "azure-foundry-discovery-ui",
+                    std::time::Duration::from_secs(2),
+                    std::time::Duration::from_secs(5),
+                ) {
                     Ok(c) => c,
                     Err(e) => {
                         log::error!("Failed to create HTTP client for discovery: {}", e);
@@ -2201,8 +2205,12 @@ mod tests {
 
         // Create an HTTP client backed by reqwest (ReqwestClient implements http_client::HttpClient)
         let http_client = Arc::new(
-            ReqwestClient::user_agent("azure-foundry-discovery-test")
-                .expect("failed to create http client"),
+            ReqwestClient::user_agent_with_timeouts(
+                "azure-foundry-discovery-test",
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(5),
+            )
+            .expect("failed to create http client"),
         );
 
         // Run discovery synchronously for the test harness

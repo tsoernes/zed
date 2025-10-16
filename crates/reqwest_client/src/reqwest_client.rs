@@ -37,10 +37,36 @@ impl ReqwestClient {
             .into()
     }
 
+    /// Construct a client with explicit connect and request timeouts.
+    pub fn new_with_timeouts(connect_timeout: Duration, request_timeout: Duration) -> Self {
+        Self::builder()
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
+            .build()
+            .expect("Failed to initialize HTTP client")
+            .into()
+    }
+
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
         let mut map = HeaderMap::new();
         map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
         let client = Self::builder().default_headers(map).build()?;
+        Ok(client.into())
+    }
+
+    /// Construct a client with a custom User-Agent and explicit connect/request timeouts.
+    pub fn user_agent_with_timeouts(
+        agent: &str,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let mut map = HeaderMap::new();
+        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        let client = Self::builder()
+            .default_headers(map)
+            .connect_timeout(connect_timeout)
+            .timeout(request_timeout)
+            .build()?;
         Ok(client.into())
     }
 
