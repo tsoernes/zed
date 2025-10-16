@@ -1108,39 +1108,65 @@ async fn stream_completion_azure(
 ) -> Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>> {
     use futures::{AsyncBufReadExt, io::BufReader};
 
-    // Helper to build a deployment-style URI for a given path (responses or chat/completions).
-    let base = api_url.trim_end_matches('/').to_string();
-    let build_deployment_uri = |path: &str| {
-        // If a deployment name is provided, use the Azure OpenAI deployment-style path
-        // unless the provided deployment string is empty, in which case treat it as
-        // "no deployment" and fall back to the simple base path.
-        if let Some(deployment) = deployment_name.as_ref() {
-            if deployment.is_empty() {
-                // Explicit empty deployment name => treat as no-deployment
-                format!("{}/{}", base, path)
+    /// Helpers to build OpenAI URIs with per-endpoint default versions.
+        let base = api_url.trim_end_matches('/').to_string();
+        let responses_ver = api_version.as_deref().unwrap_or("2025-04-01-preview");
+        let chat_ver = api_version.as_deref().unwrap_or("2024-06-01");
+
+        let build_base_openai_uri = |path: &str, ver: &str| {
+            format!("{}/openai/{}?api-version={}", base, path, ver)
+        };
+
+        let build_deployment_uri = |path: &str, ver: &str| {
+            // If a deployment name is provided, use the Azure OpenAI deployment-style path
+            // unless the provided deployment string is empty, in which case treat it as
+            // "no deployment" and fall back to the base OpenAI path.
+            if let Some(deployment) = deployment_name.as_ref() {
+                if deployment.is_empty() {
+                    format!("{}/openai/{}?api-version={}", base, path, ver)
+                } else {
+                    format!(
+                        "{}/openai/deployments/{}/{}?api-version={}",
+                        base, deployment, path, ver
+                    )
+                }
             } else {
-                let ver = api_version.as_deref().unwrap_or("2024-06-01");
-                // Azure OpenAI-style deployment path, e.g. /openai/deployments/{deployment}/{path}?api-version={ver}
-                format!(
-                    "{}/openai/deployments/{}/{}?api-version={}",
-                    base, deployment, path, ver
-                )
+                format!("{}/openai/{}?api-version={}", base, path, ver)
             }
+        };
+
+    // Build candidate URIs:
+    // Foundry (models.inference.azure.com/v1) uses base /responses and /chat/completions
+    // without /openai and without api-version; ignore deployment_name in this case.
+    // Otherwise, use Azure OpenAI-style endpoints with /openai paths and api-version.
+    let is_foundry = base.contains("models.inference.azure.com");
+    let candidates: Vec<String> = if is_foundry {
+        vec![
+            format!("{}/responses", base),
+            format!("{}/chat/completions", base),
+        ]
+    } else if let Some(deployment) = deployment_name.as_ref() {
+        if deployment.is_empty() {
+            vec![
+                build_base_openai_uri("responses", responses_ver),
+                build_base_openai_uri("chat/completions", chat_ver),
+            ]
         } else {
-            // Non-deployment base endpoint path
-            format!("{}/{}", base, path)
+            vec![
+                build_base_openai_uri("responses", responses_ver),
+                build_deployment_uri("responses", responses_ver),
+                build_deployment_uri("chat/completions", chat_ver),
+            ]
         }
+    } else {
+        vec![
+            build_base_openai_uri("responses", responses_ver),
+            build_base_openai_uri("chat/completions", chat_ver),
+        ]
     };
 
-    // Attempt Responses API first (prefer modern Responses API), fall back to chat/completions
-    let try_endpoints = [
-        /* 0 */ ("responses", true), // try Responses streaming endpoint first
-        /* 1 */ ("chat/completions", false), // then fallback to chat/completions
-    ];
-
-    // We'll attempt both in order. On first success, return its streamed events.
-    for (path, _is_responses) in try_endpoints {
-        let uri = build_deployment_uri(path);
+    // We'll attempt each candidate in order. On first success, return its streamed events.
+    for uri in candidates {
 
         let request_builder = HttpRequest::builder()
             .method(Method::POST)
@@ -1150,7 +1176,33 @@ async fn stream_completion_azure(
 
         // For Responses API some providers expect a slightly different body shape.
         // Here we reuse the same OpenAI-compatible request as best-effort; Foundry often accepts it.
-        let req_body = AsyncBody::from(serde_json::to_string(&request)?);
+        // Build request body: use OpenAI chat body for chat/completions; shape Foundry/OpenAI v1 responses body when calling /responses.
+        let body_string = if uri.contains("/responses") {
+            // Foundry/OpenAI v1 Responses body shape: {"model": "...", "input": "...", "stream": true}
+            // Extract a simple user input from the first user message; fall back to "ping" if unavailable.
+            let input_text = request
+                .messages
+                .iter()
+                .filter_map(|m| match m {
+                    open_ai::RequestMessage::User { content } => match content {
+                        open_ai::MessageContent::Plain(s) => Some(s.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .next()
+                .unwrap_or_else(|| "ping".to_string());
+            serde_json::json!({
+                "model": request.model.clone(),
+                "input": input_text,
+                "stream": true
+            })
+            .to_string()
+        } else {
+            // Standard OpenAI-compatible chat/completions body
+            serde_json::to_string(&request)?
+        };
+        let req_body = AsyncBody::from(body_string);
         let request = match request_builder.body(req_body) {
             Ok(r) => r,
             Err(e) => {
@@ -1168,38 +1220,67 @@ async fn stream_completion_azure(
         };
 
         if response.status().is_success() {
-            // Stream the body as SSE-like lines; both Responses and chat/completions
-            // often stream newline-delimited "data: ..." events. We handle that form.
-            let reader = BufReader::new(response.into_body());
-            return Ok(reader
-                .lines()
-                .filter_map(|line| async move {
-                    match line {
-                        Ok(line) => {
-                            let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
-                            if line == "[DONE]" {
-                                None
-                            } else {
-                                match serde_json::from_str::<ResponseStreamResult>(&line) {
-                                    Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                    Ok(ResponseStreamResult::Err { error }) => {
-                                        Some(Err(anyhow!(error.message)))
-                                    }
-                                    Err(error) => {
-                                        log::error!(
-                                            "Failed to parse Azure Foundry response into ResponseStreamResult: `{}`\nResponse: `{}`",
-                                            error,
-                                            line,
-                                        );
-                                        Some(Err(anyhow!(error)))
+            // If invoking Foundry/OpenAI v1 Responses, parse the non-streaming body and map to an OpenAI-style event.
+            if uri.contains("/responses") {
+                let mut body_bytes = Vec::new();
+                futures::io::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes).await?;
+                let value: serde_json::Value =
+                    serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
+                let text = value
+                    .get("output_text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                // Construct a synthetic OpenAI-style delta event with the assistant text.
+                let event = open_ai::ResponseStreamEvent {
+                    choices: vec![open_ai::ChoiceDelta {
+                        index: 0,
+                        delta: open_ai::ResponseMessageDelta {
+                            role: None,
+                            content: Some(text),
+                            tool_calls: None,
+                        },
+                        finish_reason: Some("stop".to_string()),
+                    }],
+                    usage: None,
+                };
+                return Ok(futures::stream::iter(vec![Ok(event)]).boxed());
+            } else {
+                // Stream the body as SSE-like lines; OpenAI chat/completions often stream newline-delimited "data: ..." events.
+                let reader = BufReader::new(response.into_body());
+                return Ok(reader
+                    .lines()
+                    .filter_map(|line| async move {
+                        match line {
+                            Ok(line) => {
+                                let line = line
+                                    .strip_prefix("data: ")
+                                    .or_else(|| line.strip_prefix("data:"))?;
+                                if line == "[DONE]" {
+                                    None
+                                } else {
+                                    match serde_json::from_str::<ResponseStreamResult>(&line) {
+                                        Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                        Ok(ResponseStreamResult::Err { error }) => {
+                                            Some(Err(anyhow!(error.message)))
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "Failed to parse Azure Foundry response into ResponseStreamResult: `{}`\nResponse: `{}`",
+                                                error,
+                                                line,
+                                            );
+                                            Some(Err(anyhow!(error)))
+                                        }
                                     }
                                 }
                             }
+                            Err(error) => Some(Err(anyhow!(error))),
                         }
-                        Err(error) => Some(Err(anyhow!(error))),
-                    }
-                })
-                .boxed());
+                    })
+                    .boxed());
+            }
         } else {
             // Read body to log diagnostic and then continue to next candidate
             let mut body_bytes = Vec::new();
