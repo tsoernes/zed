@@ -327,36 +327,38 @@ impl AzureFoundryLanguageModel {
             return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
+        // Compute and persist effective deployment before spawning request to avoid capturing cx in async future
+        let effective_deployment = deployment_name
+            .clone()
+            .and_then(|d| if d.is_empty() { None } else { Some(d) })
+            .unwrap_or_else(|| self.model.name.clone());
+        // Persist selected deployment to settings so future requests use this path.
+        let _ = cx.update(|app| {
+            let fs = <dyn Fs>::global(app);
+            let deployment_to_persist = effective_deployment.clone();
+            update_settings_file(fs, app, move |settings, _| {
+                let lm = settings.language_models.get_or_insert_default();
+                if lm.azure_foundry.is_none() {
+                    lm.azure_foundry = Some(settings::AzureFoundrySettingsContent {
+                        api_url: None,
+                        deployment_name: None,
+                        api_version: None,
+                        available_models: None,
+                    });
+                }
+                let az = lm.azure_foundry.as_mut().unwrap();
+                az.deployment_name = Some(deployment_to_persist);
+            });
+        });
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            // Use selected deployment (from dropdown) as HTTP path when present; fall back to settings or selected model name
-            let effective_deployment = deployment_name
-                .clone()
-                .and_then(|d| if d.is_empty() { Some(self.model.name.clone()) } else { Some(d) })
-                .or_else(|| Some(self.model.name.clone()));
+            // Use precomputed deployment
+            let effective_deployment = Some(effective_deployment);
 
-            // Persist selected deployment (from dropdown) to settings so future requests use this path.
-            if let Some(deployment_to_persist) = effective_deployment.clone() {
-                let _ = cx.update(|app| {
-                    let fs = &*<dyn Fs>::global(app);
-                    update_settings_file(fs, app, move |settings, _| {
-                        let lm = settings.language_models.get_or_insert_default();
-                        if lm.azure_foundry.is_none() {
-                            lm.azure_foundry = Some(settings::AzureFoundrySettingsContent {
-                                api_url: None,
-                                deployment_name: None,
-                                api_version: None,
-                                available_models: None,
-                            });
-                        }
-                        let az = lm.azure_foundry.as_mut().unwrap();
-                        az.deployment_name = Some(deployment_to_persist.clone());
-                    });
-                });
-            }
+            // Deployment already persisted above.
 
             let response = stream_completion_azure(
                 http_client.as_ref(),
@@ -644,6 +646,13 @@ impl ConfigurationView {
         // Spawn an async task tied to the window context. It will update the view
         // with discovered models or print errors.
         let task = cx.spawn_in(window, async move |this, cx| {
+            let start = std::time::Instant::now();
+            let overall_timeout = std::time::Duration::from_secs(60);
+            log::debug!(
+                "Azure Foundry: starting Discover & Probe (api_url={}, api_version={:?})",
+                api_url,
+                api_version
+            );
             // Read atomic copy of API URL / deployment / api_version and api key
             let result = state.read_with(cx, |state, _cx| {
                 (
@@ -679,43 +688,19 @@ impl ConfigurationView {
                     }
                 };
 
-            match discover_models(&http_client, &api_url, &api_key, api_version.as_deref()).await {
+            log::debug!("Azure Foundry: discover_models call initiated");
+            match tokio::time::timeout(
+                overall_timeout,
+                discover_models(&http_client, &api_url, &api_key, api_version.as_deref())
+            )
+            .await
+            {
+                Ok(Ok(mut models)) => {
                 Ok(mut models) => {
                     // If a deployment is configured, verify which model IDs actually work against it
                     // and filter to only those before persisting.
-                    if let Some(deployment) = state
-                        .read_with(cx, |s, _| s.settings.deployment_name.clone())
-                        .ok()
-                        .flatten()
-                    {
-                        if !deployment.is_empty() {
-                            let name_refs: Vec<String> =
-                                models.iter().map(|m| m.name.clone()).collect();
-                            let cand_refs: Vec<&str> =
-                                name_refs.iter().map(|s| s.as_str()).collect();
-                            match probe_models_via_deployment(
-                                &http_client,
-                                &api_url,
-                                &api_key,
-                                &deployment,
-                                api_version.as_deref(),
-                                &cand_refs,
-                            )
-                            .await
-                            {
-                                Ok(results) => {
-                                    let allowed: std::collections::HashSet<String> = results
-                                        .into_iter()
-                                        .filter_map(|(name, ok)| if ok { Some(name) } else { None })
-                                        .collect();
-                                    models.retain(|m| allowed.contains(&m.name));
-                                }
-                                Err(e) => {
-                                    log::debug!("Model-by-deployment probe failed: {}", e);
-                                }
-                            }
-                        }
-                    }
+                    // Removed per-model probe via deployment (sequential O(N)).
+                    // Rely on base-name deployment existence probe (concurrent) below for speed.
 
                     // Derive base deployment names by stripping trailing -YYYY-MM-DD if present,
                     // then probe which base deployments exist, and filter models accordingly.
@@ -797,11 +782,7 @@ impl ConfigurationView {
                                     deployment_name: None,
                                     api_version: None,
                                     available_models: None,
-                                    // Clear spinner when discovery/probe completes
-                                    this.update(cx, |this, cx| {
-                                        this.discovery_task = None;
-                                        cx.notify();
-                                    }).log_err();
+
                                 });
                             }
                             let az = lm.azure_foundry.as_mut().unwrap();
@@ -838,6 +819,16 @@ impl ConfigurationView {
                     log::warn!("Model discovery failed: {}", err);
                 }
             }
+            this.update(cx, |this, cx| {
+                this.discovery_task = None;
+                let elapsed = start.elapsed();
+                log::debug!(
+                    "Azure Foundry: Discover & Probe completed in {:?} ({} models persisted)",
+                    elapsed,
+                    this.settings.available_models.len()
+                );
+                cx.notify();
+            }).log_err();
         });
 
         // Attach task to the view so we can show loading status; store handle locally.
@@ -1746,6 +1737,12 @@ pub async fn probe_deployments_existence(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(64)
         .max(1);
+    log::debug!(
+        "Azure Foundry: starting deployment existence probe for {} candidates with concurrency {} (api_version={})",
+        candidates.len(),
+        concurrency_limit,
+        ver
+    );
 
     // Probe a single candidate (helper closure)
     let probe_one = |candidate: String| {
@@ -1759,7 +1756,7 @@ pub async fn probe_deployments_existence(
                 .ok()
                 .map(|v| v.to_lowercase())
                 .map(|v| v == "1" || v == "true")
-                .unwrap_or(false);
+                .unwrap_or(true);
             let paths: Vec<String> = if fast {
                 vec![format!(
                     "{}/openai/deployments/{}/chat/completions?api-version={}",
@@ -1867,6 +1864,10 @@ pub async fn probe_deployments_existence(
         }
     }
 
+    log::debug!(
+        "Azure Foundry: deployment existence probe completed ({} results)",
+        ordered.len()
+    );
     Ok(ordered)
 }
 pub async fn probe_models_via_deployment(
