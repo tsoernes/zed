@@ -1188,12 +1188,21 @@ async fn stream_completion_azure(
             let mut body_bytes = Vec::new();
             futures::io::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes).await?;
             let body = String::from_utf8(body_bytes).unwrap_or_default();
-            log::warn!(
-                "Azure Foundry endpoint {} returned HTTP {}: {}",
-                uri,
-                response.status(),
-                truncate_and_trailoff(&body, 512)
-            );
+            if response.status() == http_client::http::StatusCode::NOT_FOUND {
+                log::debug!(
+                    "Azure Foundry endpoint {} returned HTTP {}: {}",
+                    uri,
+                    response.status(),
+                    truncate_and_trailoff(&body, 512)
+                );
+            } else {
+                log::warn!(
+                    "Azure Foundry endpoint {} returned HTTP {}: {}",
+                    uri,
+                    response.status(),
+                    truncate_and_trailoff(&body, 512)
+                );
+            }
             // If it's a non-404 or non-auth error, we still continue to try the fallback.
             // Continue to next candidate.
         }
