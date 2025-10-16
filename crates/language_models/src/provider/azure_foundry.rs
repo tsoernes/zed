@@ -17,7 +17,7 @@ use settings::{
     update_settings_file,
 };
 use std::sync::{Arc, LazyLock};
-use ui::{Checkbox, ElevationIndex, ToggleState, Tooltip, prelude::*};
+use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
@@ -815,7 +815,7 @@ impl ConfigurationView {
                 this.discovery_task = None;
                 cx.notify();
             }).log_err();
-        }).detach_and_log_err(cx);
+        }).detach();
     }
 
 
@@ -994,7 +994,7 @@ impl Render for ConfigurationView {
                 )
                 .child({
                     // Models table
-                    let mut models = state.settings.available_models.clone();
+                    let models = state.settings.available_models.clone();
 
                     let mut rows: Vec<AnyElement> = Vec::new();
                     rows.push(
