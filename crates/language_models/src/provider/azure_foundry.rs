@@ -803,8 +803,19 @@ impl ConfigurationView {
             }
         });
 
-        // Attach task to the view so we can show loading status; store handle locally.
+        // Attach task to the view so we can show loading status; store handle locally,
+        // and clear it when the task completes so the spinner disappears.
         self.discovery_task = Some(task);
+        cx.spawn_in(window, async move |this, cx| {
+            // Await completion of the discovery/probe task, then clear the spinner.
+            if let Some(t) = this.update(cx, |this, _cx| this.discovery_task.take()).ok().flatten() {
+                let _ = t.await;
+            }
+            this.update(cx, |this, cx| {
+                this.discovery_task = None;
+                cx.notify();
+            }).log_err();
+        }).detach_and_log_err(cx);
     }
 
 
@@ -992,7 +1003,7 @@ impl Render for ConfigurationView {
                             .py_1()
                             .child(Label::new("Model").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Base Deployment").weight(gpui::FontWeight::BOLD))
-                            .child(Label::new("Display").weight(gpui::FontWeight::BOLD))
+
                             .child(Label::new("Tools").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Images").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Max Tokens").weight(gpui::FontWeight::BOLD))
@@ -1008,10 +1019,7 @@ impl Render for ConfigurationView {
                                     Label::new(base_model_name(&m.name))
                                         .size(LabelSize::Small),
                                 )
-                                .child(
-                                    Label::new(m.display_name.clone().unwrap_or_default())
-                                        .size(LabelSize::Small),
-                                )
+
                                 .child(
                                     Label::new(if m.capabilities.tools { "yes" } else { "no" })
                                         .size(LabelSize::Small),
