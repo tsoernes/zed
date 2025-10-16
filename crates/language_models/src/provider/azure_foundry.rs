@@ -332,11 +332,37 @@ impl AzureFoundryLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
+            // Use selected deployment (from dropdown) as HTTP path when present; fall back to settings or selected model name
+            let effective_deployment = deployment_name
+                .clone()
+                .and_then(|d| if d.is_empty() { Some(self.model.name.clone()) } else { Some(d) })
+                .or_else(|| Some(self.model.name.clone()));
+
+            // Persist selected deployment (from dropdown) to settings so future requests use this path.
+            if let Some(deployment_to_persist) = effective_deployment.clone() {
+                let _ = cx.update(|app| {
+                    let fs = &*<dyn Fs>::global(app);
+                    update_settings_file(fs, app, move |settings, _| {
+                        let lm = settings.language_models.get_or_insert_default();
+                        if lm.azure_foundry.is_none() {
+                            lm.azure_foundry = Some(settings::AzureFoundrySettingsContent {
+                                api_url: None,
+                                deployment_name: None,
+                                api_version: None,
+                                available_models: None,
+                            });
+                        }
+                        let az = lm.azure_foundry.as_mut().unwrap();
+                        az.deployment_name = Some(deployment_to_persist.clone());
+                    });
+                });
+            }
+
             let response = stream_completion_azure(
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
-                deployment_name,
+                effective_deployment,
                 api_version,
                 request,
             )
@@ -354,12 +380,8 @@ impl LanguageModel for AzureFoundryLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(
-            self.model
-                .display_name
-                .clone()
-                .unwrap_or_else(|| self.model.name.clone()),
-        )
+        // Show deployment name in dropdown
+        LanguageModelName::from(self.model.name.clone())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -445,9 +467,16 @@ impl LanguageModel for AzureFoundryLanguageModel {
             .update(|app| self.count_tokens(original_request.clone(), app))
             .ok();
 
+        // Use the original model id (from display_name if present) for the request body
+        let body_model_id = self
+            .model
+            .display_name
+            .clone()
+            .unwrap_or_else(|| self.model.name.clone());
+
         let request = into_open_ai(
             request,
-            &self.model.name,
+            &body_model_id,
             self.model.capabilities.parallel_tool_calls,
             self.model.capabilities.prompt_cache_key,
             self.max_output_tokens(),
@@ -738,12 +767,13 @@ impl ConfigurationView {
 
                     // Update state on main thread with filtered models.
                     let _ = state.update(cx, |this, cx| {
+                        // Store deployment name for dropdown (AvailableModel.name) and model id in display_name
                         this.settings.available_models = filtered
                             .clone()
                             .into_iter()
                             .map(|m| crate::provider::azure_foundry::AvailableModel {
-                                name: m.name,
-                                display_name: m.display_name,
+                                name: base_model_name(&m.name),
+                                display_name: Some(m.name),
                                 max_tokens: m.max_tokens,
                                 max_output_tokens: m.max_output_tokens,
                                 max_completion_tokens: m.max_completion_tokens,
@@ -783,8 +813,10 @@ impl ConfigurationView {
                                     .iter()
                                     .cloned()
                                     .map(|m| AzureFoundryAvailableModel {
-                                        name: m.name,
-                                        display_name: m.display_name,
+                                        // Persist deployment name
+                                        name: base_model_name(&m.name),
+                                        // Persist original model id for request body
+                                        display_name: Some(m.name),
                                         max_tokens: m.max_tokens,
                                         max_output_tokens: m.max_output_tokens,
                                         max_completion_tokens: m.max_completion_tokens,
