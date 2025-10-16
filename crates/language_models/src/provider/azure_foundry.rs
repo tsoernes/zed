@@ -461,9 +461,10 @@ struct ConfigurationView {
     api_version_editor: Entity<SingleLineInput>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    // Used by Clear Filters button to reset UI state (now referenced in render)
     discovered_models: Option<Vec<AvailableModel>>,
     discovery_task: Option<Task<()>>,
-    deployment_probe_task: Option<Task<()>>,
+
     only_show_deployed: bool,
 }
 impl ConfigurationView {
@@ -532,7 +533,7 @@ impl ConfigurationView {
             load_credentials_task,
             discovered_models: None,
             discovery_task: None,
-            deployment_probe_task: None,
+
             only_show_deployed: false,
         }
     }
@@ -688,6 +689,18 @@ impl ConfigurationView {
                     let filtered = models
                         .into_iter()
                         .filter(|m| allowed_bases.contains(&base_model_name(&m.name)))
+                        // Filter out unsuitable models (embeddings, image/audio-only, router, transcribe/tts)
+                        .filter(|m| {
+                            let name = m.name.to_lowercase();
+                            !(name.contains("embedding")
+                                || name.contains("embed")
+                                || name.contains("image")
+                                || name.contains("whisper")
+                                || name.contains("dall-e")
+                                || name.contains("router")
+                                || name.contains("transcribe")
+                                || name.contains("tts"))
+                        })
                         .collect::<Vec<_>>();
 
                     // Update state on main thread with filtered models.
@@ -761,63 +774,7 @@ impl ConfigurationView {
         self.discovery_task = Some(task);
     }
 
-    fn run_probe_deployments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.deployment_probe_task.is_some() {
-            return;
-        }
-        let state = self.state.clone();
-        let task = cx.spawn_in(window, async move |_, cx| {
-            let result = state.read_with(cx, |s, _cx| {
-                (
-                    s.api_key_state.key(&s.settings.api_url),
-                    s.settings.api_url.clone(),
-                    s.settings.api_version.clone(),
-                    s.settings.available_models.clone(),
-                )
-            });
-            let Ok((api_key_opt, api_url, api_version, available_models)) = result else {
-                return;
-            };
-            let Some(api_key) = api_key_opt else { return };
 
-            let base_candidates: Vec<String> = available_models
-                .iter()
-                .map(|m| base_model_name(&m.name))
-                .collect();
-            if base_candidates.is_empty() {
-                return;
-            }
-            let base_refs: Vec<&str> = base_candidates.iter().map(|s| s.as_str()).collect();
-
-            let http_client =
-                match reqwest_client::ReqwestClient::user_agent("azure-foundry-probe-ui") {
-                    Ok(c) => c,
-                    Err(_) => return,
-                };
-
-            match crate::provider::azure_foundry::probe_deployments_existence(
-                &http_client,
-                &api_url,
-                &api_key,
-                &base_refs,
-                api_version.as_deref(),
-            )
-            .await
-            {
-                Ok(results) => {
-                    let _ = state.update(cx, |this, cx| {
-                        this.deployment_probe_results = Some(results);
-                        cx.notify();
-                        Ok::<(), anyhow::Error>(())
-                    });
-                }
-                Err(e) => {
-                    log::debug!("Deployment probe failed: {}", e);
-                }
-            }
-        });
-        self.deployment_probe_task = Some(task);
-    }
 
     /// Clear any stored discovered models (UI control).
     fn clear_discovered_models(&mut self, cx: &mut Context<Self>) {
@@ -894,26 +851,102 @@ impl Render for ConfigurationView {
                 .size_full()
                 .child(api_key_section)
                 .child(
+                    v_flex()
+                        .mt_2()
+                        .gap_1()
+                        .child(Label::new("Azure Foundry Endpoint").size(LabelSize::Small).color(Color::Muted))
+                        .child(self.api_url_editor.clone())
+                        .child(Label::new("Deployment Name (optional)").size(LabelSize::Small).color(Color::Muted))
+                        .child(self.deployment_editor.clone())
+                        .child(Label::new("API Version (optional)").size(LabelSize::Small).color(Color::Muted))
+                        .child(self.api_version_editor.clone())
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("save-azure-foundry-settings", "Save Settings")
+                                        .icon(IconName::Download)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .label_size(LabelSize::Small)
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            let api_url = this.api_url_editor.read(cx).text(cx).trim().to_string();
+                                            let deployment_name = this.deployment_editor.read(cx).text(cx).trim().to_string();
+                                            let api_version = this.api_version_editor.read(cx).text(cx).trim().to_string();
+                                            if api_url.is_empty() {
+                                                return;
+                                            }
+                                            let fs = <dyn Fs>::global(cx);
+                                            // Clone values for the settings closure to avoid moving originals
+                                            let api_url_c = api_url.clone();
+                                            let deployment_name_c = deployment_name.clone();
+                                            let api_version_c = api_version.clone();
+                                            update_settings_file(fs, cx, move |settings, _| {
+                                                let lm = settings.language_models.get_or_insert_default();
+                                                if lm.azure_foundry.is_none() {
+                                                    lm.azure_foundry = Some(settings::AzureFoundrySettingsContent {
+                                                        api_url: None,
+                                                        deployment_name: None,
+                                                        api_version: None,
+                                                        available_models: None,
+                                                    });
+                                                }
+                                                let az = lm.azure_foundry.as_mut().unwrap();
+                                                az.api_url = Some(api_url_c);
+                                                az.deployment_name = if deployment_name_c.is_empty() { None } else { Some(deployment_name_c.clone()) };
+                                                az.api_version = if api_version_c.is_empty() { None } else { Some(api_version_c.clone()) };
+                                            });
+                                            // Update provider state immediately using originals
+                                            this.state.update(cx, |state, cx| {
+                                                state.settings.api_url = api_url;
+                                                state.settings.deployment_name = if deployment_name.is_empty() { None } else { Some(deployment_name) };
+                                                state.settings.api_version = if api_version.is_empty() { None } else { Some(api_version) };
+                                                cx.notify();
+                                            });
+                                        })),
+                                )
+                                .child(
+                                    Button::new("clear-azure-foundry-settings", "Clear")
+                                        .icon(IconName::Undo)
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .label_size(LabelSize::Small)
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            // Clear the editors and reset the local state to defaults
+                                            this.api_url_editor.update(cx, |ed, cx| ed.set_text("", _window, cx));
+                                            this.deployment_editor.update(cx, |ed, cx| ed.set_text("", _window, cx));
+                                            this.api_version_editor.update(cx, |ed, cx| ed.set_text("", _window, cx));
+                                            this.state.update(cx, |state, cx| {
+                                                state.settings.deployment_name = None;
+                                                state.settings.api_version = None;
+                                                cx.notify();
+                                            });
+                                        })),
+                                ),
+                        ),
+                )
+                .child(
                     h_flex()
                         .gap_2()
                         .child(
-                            Button::new("discover-models", "Discover Models")
+                            Button::new("discover-and-probe", "Discover & Probe")
                                 .icon(IconName::ArrowCircle)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
+                                    // Discovery already performs probing and filtering.
                                     this.run_discovery(window, cx)
                                 })),
                         )
                         .child(
-                            Button::new("probe-deployments", "Probe Deployments")
-                                .icon(IconName::LoadCircle)
+                            Button::new("clear-filters", "Clear Filters")
+                                .icon(IconName::Undo)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .label_size(LabelSize::Small)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.run_probe_deployments(window, cx)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.clear_discovered_models(cx);
                                 })),
                         )
                         .child(
@@ -932,11 +965,7 @@ impl Render for ConfigurationView {
                                 ui::SpinnerLabel::new().size(LabelSize::Small)
                             )
                         })
-                        .when(self.deployment_probe_task.is_some(), |this| {
-                            this.child(
-                                ui::SpinnerLabel::new().size(LabelSize::Small)
-                            )
-                        }),
+
                 )
                 .child({
                     // Models table
@@ -970,6 +999,7 @@ impl Render for ConfigurationView {
                             .gap_3()
                             .py_1()
                             .child(Label::new("Model").weight(gpui::FontWeight::BOLD))
+                            .child(Label::new("Base Deployment").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Display").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Tools").weight(gpui::FontWeight::BOLD))
                             .child(Label::new("Images").weight(gpui::FontWeight::BOLD))
@@ -982,6 +1012,10 @@ impl Render for ConfigurationView {
                                 .gap_3()
                                 .py_1()
                                 .child(Label::new(m.name.clone()).size(LabelSize::Small))
+                                .child(
+                                    Label::new(base_model_name(&m.name))
+                                        .size(LabelSize::Small),
+                                )
                                 .child(
                                     Label::new(m.display_name.clone().unwrap_or_default())
                                         .size(LabelSize::Small),
@@ -1304,14 +1338,20 @@ fn map_model_to_max_tokens(model_name: &str) -> u64 {
 
 // Helper: strip trailing -YYYY-MM-DD from model names to derive base deployment names
 fn base_model_name(name: &str) -> String {
-    if let Some((prefix, suffix)) = name.rsplit_once('-') {
-        let is_date = suffix.len() == 10
-            && suffix.chars().enumerate().all(|(i, c)| match i {
-                4 | 7 => c == '-',
-                _ => c.is_ascii_digit(),
-            });
-        if is_date {
-            return prefix.to_string();
+    // Strip a trailing "-YYYY-MM-DD" across multiple hyphens.
+    // Rather than splitting on the last hyphen only, match the full suffix.
+    let bytes = name.as_bytes();
+    if bytes.len() >= 11 {
+        let idx = bytes.len() - 11;
+        // Pattern: '-' + 4 digits + '-' + 2 digits + '-' + 2 digits
+        let is_date_suffix = bytes[idx] == b'-'
+            && bytes[idx + 1..idx + 5].iter().all(|b| b.is_ascii_digit())
+            && bytes[idx + 5] == b'-'
+            && bytes[idx + 6..idx + 8].iter().all(|b| b.is_ascii_digit())
+            && bytes[idx + 8] == b'-'
+            && bytes[idx + 9..idx + 11].iter().all(|b| b.is_ascii_digit());
+        if is_date_suffix {
+            return name[..idx].to_string();
         }
     }
     name.to_string()
