@@ -126,12 +126,15 @@ impl Tool for SaveContextTool {
             path.clone()
         } else {
             // derive root name and conversation title
-            let root_name = project
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .map(|w| w.read(cx).root_name().to_string())
-                .unwrap_or_else(|| "repo".to_string());
+            // Use `read_with` to safely access project/worktree data and produce a `String`
+            // so we avoid relying on `Display` for `RelPath`.
+            let root_name = project.read_with(cx, |project, cx| {
+                project
+                    .worktrees(cx)
+                    .next()
+                    .map(|w| w.read(cx).root_name_str().to_string())
+                    .unwrap_or_else(|| "repo".to_string())
+            });
             // Prefer a prompt or thread identifier as a human title, fall back to generic name.
             let title = request
                 .prompt_id
@@ -265,7 +268,7 @@ impl Tool for SaveContextTool {
             let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
                 return Task::ready(Err(anyhow!(
                     "No worktree for destination path {}",
-                    input.path
+                    desired_path
                 )));
             };
 
