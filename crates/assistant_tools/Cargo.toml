@@ -65,6 +65,7 @@ watch.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+text.workspace = true
 
 [dev-dependencies]
 lsp = { workspace = true, features = ["test-support"] }
