@@ -6,6 +6,7 @@ use chrono::Utc;
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -22,10 +23,13 @@ use util::markdown::MarkdownInlineCode;
 ///   JSON output will be a single object with `metadata` and `messages`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SaveContextToolInput {
-    /// The destination path (project-relative) where the history should be written.
+    /// Optional destination path (project-relative) where the history should be written.
     ///
-    /// WARNING: The path MUST start with one of the project's root directories.
-    pub path: String,
+    /// If omitted, a default path of `<worktree_root>/<sanitized_conversation_title>.md`
+    /// will be used. If provided, the path MUST start with one of the project's root
+    /// directories.
+    #[serde(default)]
+    pub path: Option<String>,
 
     /// Output format: "markdown" or "json". Defaults to "markdown".
     #[serde(default = "default_format")]
@@ -34,6 +38,29 @@ pub struct SaveContextToolInput {
 
 fn default_format() -> String {
     "markdown".to_string()
+}
+
+/// Sanitize a string to be used as a filename. This:
+/// - replaces whitespace with underscores,
+/// - removes characters that are not alphanumeric, dot, underscore or hyphen,
+/// - trims leading/trailing `.` and `_`
+/// - clamps the length to a reasonable maximum.
+fn sanitize_filename(s: &str) -> String {
+    let s = s.trim();
+    // Replace whitespace with underscores
+    let s = s.replace(|c: char| c.is_whitespace(), "_");
+    // Remove disallowed characters
+    let re = Regex::new(r"[^A-Za-z0-9._-]").unwrap();
+    let mut s = re.replace_all(&s, "").to_string();
+    // Trim stray dots/underscores from ends
+    s = s.trim_matches('.').trim_matches('_').to_string();
+    if s.is_empty() {
+        "conversation".to_string()
+    } else if s.len() > 120 {
+        s[..120].to_string()
+    } else {
+        s
+    }
 }
 
 pub struct SaveContextTool;
@@ -67,11 +94,14 @@ impl Tool for SaveContextTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<SaveContextToolInput>(input.clone()) {
-            Ok(input) => format!(
-                "Save conversation to {} ({})",
-                MarkdownInlineCode(&input.path),
-                input.format
-            ),
+            Ok(input) => {
+                let path_display = input.path.as_deref().unwrap_or("<default>");
+                format!(
+                    "Save conversation to {} ({})",
+                    MarkdownInlineCode(path_display),
+                    input.format
+                )
+            }
             Err(_) => "Save conversation".to_string(),
         }
     }
@@ -91,11 +121,32 @@ impl Tool for SaveContextTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
+        // Determine destination path (use provided path or default: <root>/<sanitized_title>.md)
+        let desired_path = if let Some(path) = &input.path {
+            path.clone()
+        } else {
+            // derive root name and conversation title
+            let root_name = project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .map(|w| w.read(cx).root_name().to_string())
+                .unwrap_or_else(|| "repo".to_string());
+            // Prefer a prompt or thread identifier as a human title, fall back to generic name.
+            let title = request
+                .prompt_id
+                .clone()
+                .or(request.thread_id.clone())
+                .unwrap_or_else(|| "conversation".to_string());
+            let filename = format!("{}.md", sanitize_filename(&title));
+            format!("{}/{}", root_name, filename)
+        };
+
         // Resolve the project path; fail if outside the project.
-        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+        let Some(project_path) = project.read(cx).find_project_path(&desired_path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Destination path {} was outside the project",
-                input.path
+                desired_path
             )))
             .into();
         };
@@ -223,11 +274,12 @@ impl Tool for SaveContextTool {
             })
         });
 
+        let desired_path_clone = desired_path.clone();
         cx.background_spawn(async move {
             write_task
                 .await
-                .with_context(|| format!("Writing conversation to {}", input.path))?;
-            Ok(format!("Saved conversation to {}", input.path).into())
+                .with_context(|| format!("Writing conversation to {}", desired_path_clone))?;
+            Ok(format!("Saved conversation to {}", desired_path_clone).into())
         })
         .into()
     }
