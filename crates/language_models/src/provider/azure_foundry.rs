@@ -647,12 +647,8 @@ impl ConfigurationView {
         // with discovered models or print errors.
         let task = cx.spawn_in(window, async move |this, cx| {
             let start = std::time::Instant::now();
-            let overall_timeout = std::time::Duration::from_secs(60);
-            log::debug!(
-                "Azure Foundry: starting Discover & Probe (api_url={}, api_version={:?})",
-                api_url,
-                api_version
-            );
+
+            // Begin discovery
             // Read atomic copy of API URL / deployment / api_version and api key
             let result = state.read_with(cx, |state, _cx| {
                 (
@@ -689,14 +685,8 @@ impl ConfigurationView {
                 };
 
             log::debug!("Azure Foundry: discover_models call initiated");
-            match tokio::time::timeout(
-                overall_timeout,
-                discover_models(&http_client, &api_url, &api_key, api_version.as_deref())
-            )
-            .await
-            {
-                Ok(Ok(mut models)) => {
-                Ok(mut models) => {
+            match discover_models(&http_client, &api_url, &api_key, api_version.as_deref()).await {
+                Ok(models) => {
                     // If a deployment is configured, verify which model IDs actually work against it
                     // and filter to only those before persisting.
                     // Removed per-model probe via deployment (sequential O(N)).
@@ -825,7 +815,7 @@ impl ConfigurationView {
                 log::debug!(
                     "Azure Foundry: Discover & Probe completed in {:?} ({} models persisted)",
                     elapsed,
-                    this.settings.available_models.len()
+                    this.state.read(cx).settings.available_models.len()
                 );
                 cx.notify();
             }).log_err();
@@ -1108,7 +1098,7 @@ async fn stream_completion_azure(
 ) -> Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>> {
     use futures::{AsyncBufReadExt, io::BufReader};
 
-    /// Helpers to build OpenAI URIs with per-endpoint default versions.
+    // Helpers to build OpenAI URIs with per-endpoint default versions.
         let base = api_url.trim_end_matches('/').to_string();
         let responses_ver = api_version.as_deref().unwrap_or("2025-04-01-preview");
         let chat_ver = api_version.as_deref().unwrap_or("2024-06-01");
