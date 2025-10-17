@@ -469,7 +469,8 @@ impl LanguageModel for AzureFoundryLanguageModel {
             .update(|app| self.count_tokens(original_request.clone(), app))
             .ok();
 
-        // Use the original model id (from display_name if present) for the request body
+        // Use the original model id (from display_name if present) for the request body.
+        // Do not normalize here; normalization is applied only for Foundry v1 Responses in stream_completion_azure.
         let body_model_id = self
             .model
             .display_name
@@ -1129,11 +1130,25 @@ async fn stream_completion_azure(
     // Foundry (models.inference.azure.com/v1) uses base /responses and /chat/completions
     // without /openai and without api-version; ignore deployment_name in this case.
     // Otherwise, use Azure OpenAI-style endpoints with /openai paths and api-version.
+    // Broaden v1 routing: treat cognitiveservices.azure.com base as supporting /openai/v1 endpoints.
     let is_foundry = base.contains("models.inference.azure.com");
+    let is_cogsvc = base.contains("cognitiveservices.azure.com");
+
     let candidates: Vec<String> = if is_foundry {
+        // Foundry v1 base: no /openai prefix and no api-version
         vec![
             format!("{}/responses", base),
             format!("{}/chat/completions", base),
+        ]
+    } else if is_cogsvc {
+        // Cognitive Services base supports /openai/v1; try v1 routes first, then fall back to deployment paths.
+        let base_v1 = format!("{}/openai/v1", base);
+        vec![
+            format!("{}/responses", base_v1),
+            format!("{}/chat/completions", base_v1),
+            // Fallbacks with deployment + api-version if v1 endpoints are unavailable
+            build_deployment_uri("responses", responses_ver),
+            build_deployment_uri("chat/completions", chat_ver),
         ]
     } else if let Some(deployment) = deployment_name.as_ref() {
         if deployment.is_empty() {
@@ -1183,7 +1198,8 @@ async fn stream_completion_azure(
                 .next()
                 .unwrap_or_else(|| "ping".to_string());
             serde_json::json!({
-                "model": request.model.clone(),
+                // Normalize model id for Foundry v1 Responses: strip date suffixes from discovered display names.
+                "model": base_model_name(&request.model),
                 "input": input_text,
                 "stream": true
             })
