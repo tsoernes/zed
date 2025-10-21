@@ -40,13 +40,17 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 /// to customize for their project/region.
 const DEFAULT_API_URL: &str = "https://models.inference.azure.com/v1";
 
-/// Environment variable for the API key.
+/// Environment variable for the API key (preferred) and a legacy fallback.
 const API_KEY_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_API_KEY";
+const LEGACY_API_KEY_ENV_VAR_NAME: &str = "AZURE_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+static LEGACY_API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(LEGACY_API_KEY_ENV_VAR_NAME);
 
-/// Optional environment variable to override the API base URL.
+/// Optional environment variable to override the API base URL (preferred) and a legacy fallback.
 const API_URL_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_API_URL";
+const LEGACY_API_URL_ENV_VAR_NAME: &str = "AZURE_ENDPOINT";
 static API_URL_ENV_VAR: LazyLock<EnvVar> = env_var!(API_URL_ENV_VAR_NAME);
+static LEGACY_API_URL_ENV_VAR: LazyLock<EnvVar> = env_var!(LEGACY_API_URL_ENV_VAR_NAME);
 
 /// Optional environment variable to set the default model id (e.g. "gpt-4o-mini").
 const MODEL_ENV_VAR_NAME: &str = "AZURE_FOUNDRY_MODEL";
@@ -141,12 +145,22 @@ impl AzureFoundryLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         // Resolve API URL defaults and available models from environment vars,
         // so users can get started without adding settings entries.
-        let api_url = API_URL_ENV_VAR
+        // Prefer the dedicated AZURE_FOUNDRY_API_URL but fall back to legacy AZURE_ENDPOINT.
+        let api_url = if let Some(v) = API_URL_ENV_VAR
             .value
             .as_deref()
             .filter(|v| !v.is_empty())
-            .unwrap_or(DEFAULT_API_URL)
-            .to_string();
+        {
+            v.to_string()
+        } else if let Some(legacy) = LEGACY_API_URL_ENV_VAR
+            .value
+            .as_deref()
+            .filter(|v| !v.is_empty())
+        {
+            legacy.to_string()
+        } else {
+            DEFAULT_API_URL.to_string()
+        };
 
         // Default model: Use env override if present; otherwise a reasonable default.
         let default_model_name = MODEL_ENV_VAR
@@ -185,9 +199,20 @@ impl AzureFoundryLanguageModelProvider {
                     .clone();
                 if this.settings != new_settings {
                     let api_url_ss = SharedString::new(new_settings.api_url.as_str());
+                    // Prefer the configured AZURE_FOUNDRY_API_KEY env var, but fall back to legacy AZURE_API_KEY.
+                    let api_key_env = if API_KEY_ENV_VAR
+                        .value
+                        .as_deref()
+                        .filter(|v| !v.is_empty())
+                        .is_some()
+                    {
+                        &*API_KEY_ENV_VAR
+                    } else {
+                        &*LEGACY_API_KEY_ENV_VAR
+                    };
                     this.api_key_state.handle_url_change(
                         api_url_ss,
-                        &API_KEY_ENV_VAR,
+                        api_key_env,
                         |this| &mut this.api_key_state,
                         cx,
                     );
@@ -1170,6 +1195,173 @@ async fn stream_completion_azure(
         ]
     };
 
+    // Helper: attempt to extract a meaningful assistant text from common /responses JSON shapes.
+    fn extract_text_from_responses_json(value: &serde_json::Value) -> Option<String> {
+        // 1) direct output_text
+        if let Some(s) = value.get("output_text").and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+        // 2) choices[0].message.content (OpenAI-like)
+        if let Some(choices) = value.get("choices").and_then(|v| v.as_array()) {
+            if let Some(first) = choices.get(0) {
+                if let Some(msg) = first.get("message") {
+                    if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                        return Some(content.to_string());
+                    }
+                }
+                if let Some(content) = first.get("content").and_then(|c| c.as_str()) {
+                    return Some(content.to_string());
+                }
+            }
+        }
+        // 3) outputs array with content fields
+        if let Some(outputs) = value.get("outputs").and_then(|v| v.as_array()) {
+            for o in outputs {
+                // common shape: { "content": [{ "type":"output_text","text":"..."}] }
+                if let Some(contents) = o.get("content").and_then(|c| c.as_array()) {
+                    for part in contents {
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                            return Some(text.to_string());
+                        }
+                        if let Some(text) = part.get("output_text").and_then(|t| t.as_str()) {
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+                // fallback: output element directly a string
+                if let Some(s) = o.as_str() {
+                    return Some(s.to_string());
+                }
+                // fallback: outputs[i].text
+                if let Some(s) = o.get("text").and_then(|t| t.as_str()) {
+                    return Some(s.to_string());
+                }
+            }
+        }
+        // 4) output top-level as string or object with nested content
+        if let Some(output) = value.get("output") {
+            if let Some(s) = output.as_str() {
+                return Some(s.to_string());
+            }
+            if let Some(arr) = output.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        return Some(s.to_string());
+                    }
+                    if let Some(obj_text) = item.get("text").and_then(|t| t.as_str()) {
+                        return Some(obj_text.to_string());
+                    }
+                }
+            }
+            if let Some(obj) = output.as_object() {
+                if let Some(content_arr) = obj.get("content").and_then(|c| c.as_array()) {
+                    for item in content_arr {
+                        if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
+                            return Some(t.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5) Foundry SSE delta and content-part shapes:
+        //    - {"type":"response.output_text.delta","delta":"..."}
+        //    - {"type":"response.content_part.added", "part": {"type":"output_text", "text":"..."}}
+        //    - {"type":"response.output_item.added", "item": { "type":"message", "content":[ ... ] } }
+        if let Some(typ) = value.get("type").and_then(|t| t.as_str()) {
+            // Direct output text delta
+            if typ == "response.output_text.delta" {
+                if let Some(delta) = value.get("delta").and_then(|d| d.as_str()) {
+                    return Some(delta.to_string());
+                }
+            }
+
+            // Content part added containing an output_text part with text field
+            if typ == "response.content_part.added" {
+                if let Some(part) = value.get("part") {
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            return Some(text.to_string());
+                        }
+                    }
+                    // Some parts use nested content array
+                    if let Some(contents) = part.get("content").and_then(|c| c.as_array()) {
+                        let mut acc = String::new();
+                        for p in contents {
+                            if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                                acc.push_str(t);
+                            }
+                        }
+                        if !acc.is_empty() {
+                            return Some(acc);
+                        }
+                    }
+                }
+            }
+
+            // Output item added may wrap a message with content array; attempt to extract there.
+            if typ == "response.output_item.added" {
+                if let Some(item) = value.get("item") {
+                    if let Some(content_arr) = item.get("content").and_then(|c| c.as_array()) {
+                        let mut acc = String::new();
+                        for c in content_arr {
+                            if let Some(text) = c.get("text").and_then(|t| t.as_str()) {
+                                acc.push_str(text);
+                            } else if let Some(contents) = c.get("content").and_then(|c| c.as_array()) {
+                                for p in contents {
+                                    if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                                        acc.push_str(t);
+                                    }
+                                }
+                            } else if let Some(delta) = c.get("delta").and_then(|d| d.as_str()) {
+                                acc.push_str(delta);
+                            }
+                        }
+                        if !acc.is_empty() {
+                            return Some(acc);
+                        }
+                    }
+                }
+            }
+        }
+
+        // New fallback: recursive search for any "delta" or "text" string anywhere in the JSON
+        fn find_any_delta_or_text(v: &serde_json::Value) -> Option<String> {
+            match v {
+                serde_json::Value::Object(map) => {
+                    if let Some(d) = map.get("delta").and_then(|x| x.as_str()) {
+                        if !d.is_empty() { return Some(d.to_string()); }
+                    }
+                    if let Some(t) = map.get("text").and_then(|x| x.as_str()) {
+                        if !t.is_empty() { return Some(t.to_string()); }
+                    }
+                    for (_k, v) in map.iter() {
+                        if let Some(found) = find_any_delta_or_text(v) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        if let Some(found) = find_any_delta_or_text(item) {
+                            return Some(found);
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+
+        if let Some(rec) = find_any_delta_or_text(value) {
+            return Some(rec);
+        }
+
+        // No match
+        None
+    }
+
     // We'll attempt each candidate in order. On first success, return its streamed events.
     for uri in candidates {
 
@@ -1208,8 +1400,8 @@ async fn stream_completion_azure(
             // Standard OpenAI-compatible chat/completions body
             serde_json::to_string(&request)?
         };
-        let req_body = AsyncBody::from(body_string);
-        let request = match request_builder.body(req_body) {
+        let req_body = AsyncBody::from(body_string.clone());
+        let built_req = match request_builder.body(req_body) {
             Ok(r) => r,
             Err(e) => {
                 log::warn!("Failed to build request for {}: {}", uri, e);
@@ -1217,34 +1409,273 @@ async fn stream_completion_azure(
             }
         };
 
-        let mut response = match client.send(request).await {
+        // First attempt: api-key header request
+        let mut response = match client.send(built_req).await {
             Ok(resp) => resp,
             Err(err) => {
-                log::warn!("Request to {} failed: {}", uri, err);
-                continue;
+                log::warn!("Request to {} failed with api-key: {}. Attempting bearer-token fallback if available.", uri, err);
+                // Try bearer fallback if env var present
+                if let Ok(token) = std::env::var("AZURE_FOUNDRY_BEARER_TOKEN") {
+                    log::debug!("AZURE_FOUNDRY_BEARER_TOKEN present: retrying {} with Authorization: Bearer", uri);
+                    let bearer_builder = HttpRequest::builder()
+                        .method(Method::POST)
+                        .uri(uri.clone())
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", format!("Bearer {}", token.trim()));
+                    let bearer_req = match bearer_builder.body(AsyncBody::from(body_string.clone())) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            log::warn!("Failed to build bearer request for {}: {}", uri, e);
+                            continue;
+                        }
+                    };
+                    match client.send(bearer_req).await {
+                        Ok(br) => br,
+                        Err(err2) => {
+                            log::warn!("Bearer retry to {} failed: {}", uri, err2);
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                }
             }
         };
+
+        // If we obtained a response but it's not successful, try bearer fallback before giving up.
+        if !response.status().is_success() {
+            // read body for diagnostics
+            let mut body_bytes = Vec::new();
+            futures::io::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes)
+                .await
+                .ok();
+            let body_txt = String::from_utf8_lossy(&body_bytes).to_string();
+            log::debug!(
+                "Azure Foundry endpoint {} returned HTTP {}: {}",
+                uri,
+                response.status(),
+                truncate_and_trailoff(&body_txt, 512)
+            );
+
+            if let Ok(token) = std::env::var("AZURE_FOUNDRY_BEARER_TOKEN") {
+                log::debug!("Retrying {} with Authorization: Bearer token", uri);
+                let bearer_builder = HttpRequest::builder()
+                    .method(Method::POST)
+                    .uri(uri.clone())
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", token.trim()));
+                let bearer_req = match bearer_builder.body(AsyncBody::from(body_string.clone())) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::warn!("Failed to build bearer request for {}: {}", uri, e);
+                        // keep the original response for downstream debug
+                        // fall through to continue
+                        continue;
+                    }
+                };
+                match client.send(bearer_req).await {
+                    Ok(mut bearer_resp) => {
+                        if bearer_resp.status().is_success() {
+                            response = bearer_resp;
+                        } else {
+                            let mut bb = Vec::new();
+                            futures::io::AsyncReadExt::read_to_end(bearer_resp.body_mut(), &mut bb)
+                                .await
+                                .ok();
+                            let body = String::from_utf8(bb).unwrap_or_default();
+                            log::debug!(
+                                "Bearer probe endpoint {} returned HTTP {}: {}",
+                                uri,
+                                bearer_resp.status(),
+                                truncate_and_trailoff(&body, 512)
+                            );
+                            // fallback attempt failed; try next candidate
+                            continue;
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!("Bearer retry request to {} failed: {}", uri, err);
+                        continue;
+                    }
+                }
+            } else {
+                // no bearer token available: continue to next candidate
+                continue;
+            }
+        }
 
         if response.status().is_success() {
             // If invoking Foundry/OpenAI v1 Responses, parse the non-streaming body and map to an OpenAI-style event.
             if uri.contains("/responses") {
+                // The Responses endpoint commonly streams SSE-style events composed of
+                // repeated "event: ..." / "data: {...}" lines. To avoid buffering the
+                // entire response we parse data-lines incrementally and yield events
+                // as they arrive. If a data line cannot be parsed as JSON we return
+                // an error item for visibility.
+                let reader = BufReader::new(response.into_body());
+                return Ok(reader
+                    .lines()
+                    .filter_map(move |line| {
+                        let uri_clone = uri.clone();
+                        async move {
+                            match line {
+                                Ok(line) => {
+                                    // Only care about `data:` lines (skip metadata like `event:` lines).
+                                    let data = line
+                                        .strip_prefix("data: ")
+                                        .or_else(|| line.strip_prefix("data:"));
+                                    let data = match data {
+                                        Some(d) => d.trim(),
+                                        None => return None,
+                                    };
+
+                                    // End-of-stream marker
+                                    if data == "[DONE]" {
+                                        log::debug!("SSE end marker received for {}", uri_clone);
+                                        return None;
+                                    }
+
+                                    // Parse JSON payload in data line
+                                    match serde_json::from_str::<serde_json::Value>(data) {
+                                        Ok(mut val) => {
+                                            // If the payload wraps a `response` object, use that as the target.
+                                            if let Some(resp) = val.get("response") {
+                                                val = resp.clone();
+                                            }
+
+                                            // If payload already matches OpenAI ResponseStreamEvent shape, accept it.
+                                            if let Ok(ev) = serde_json::from_value::<ResponseStreamEvent>(val.clone()) {
+                                                log::debug!("Parsed SSE as ResponseStreamEvent for {}: {:?}", uri_clone, ev);
+                                                return Some(Ok(ev));
+                                            }
+
+                                            // Otherwise, try to extract textual assistant output heuristically.
+                                            if let Some(text) = extract_text_from_responses_json(&val) {
+                                                let ev = open_ai::ResponseStreamEvent {
+                                                    choices: vec![open_ai::ChoiceDelta {
+                                                        index: 0,
+                                                        delta: open_ai::ResponseMessageDelta {
+                                                            role: None,
+                                                            content: Some(text),
+                                                            tool_calls: None,
+                                                        },
+                                                        finish_reason: Some("stop".to_string()),
+                                                    }],
+                                                    usage: None,
+                                                };
+                                                log::debug!("Synthesized ResponseStreamEvent (text) for {}: {:?}", uri_clone, ev);
+                                                return Some(Ok(ev));
+                                            }
+
+                                            // No textual content found — emit a progress event (empty content)
+                                            // so callers can observe that the response is progressing.
+                                            // Log the parsed JSON value so we can inspect shapes that contain no extractable text.
+                                            log::debug!(
+                                                "Foundry SSE parsed JSON without text for {}: {}",
+                                                uri_clone,
+                                                truncate_and_trailoff(&val.to_string(), 1024)
+                                            );
+                                            let ev = open_ai::ResponseStreamEvent {
+                                                choices: vec![open_ai::ChoiceDelta {
+                                                    index: 0,
+                                                    delta: open_ai::ResponseMessageDelta {
+                                                        role: None,
+                                                        content: Some(String::new()),
+                                                        tool_calls: None,
+                                                    },
+                                                    finish_reason: None,
+                                                }],
+                                                usage: None,
+                                            };
+                                            log::debug!("Emitting progress (empty) ResponseStreamEvent for {}.", uri_clone);
+                                            Some(Ok(ev))
+                                        }
+                                        Err(err) => {
+                                            log::debug!(
+                                                "Failed to parse SSE data chunk as JSON for {}: {}. Chunk (truncated): {}",
+                                                uri_clone,
+                                                err,
+                                                truncate_and_trailoff(data, 512)
+                                            );
+                                            Some(Err(anyhow!(err)))
+                                        }
+                                    }
+                                }
+                                Err(err) => Some(Err(anyhow!(err))),
+                            }
+                        }
+                    })
+                    .boxed());
+            } else {
+                // Handle either SSE streaming lines or a single non-streaming JSON body returned
+                // from chat/completions endpoints. Some Foundry deployments return a single JSON
+                // response instead of SSE; handle both cases here by reading the full body and
+                // attempting to parse it as either a streamed sequence or a single JSON payload.
                 let mut body_bytes = Vec::new();
                 futures::io::AsyncReadExt::read_to_end(response.body_mut(), &mut body_bytes).await?;
-                let value: serde_json::Value =
-                    serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
-                let text = value
-                    .get("output_text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default()
-                    .to_string();
+                let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
-                // Construct a synthetic OpenAI-style delta event with the assistant text.
+                // If the body contains explicit SSE markers ("data:"), treat it as stream of lines.
+                if body_str.contains("\ndata:") || body_str.starts_with("data:") {
+                    let mut events = Vec::new();
+                    for raw_line in body_str.lines() {
+                        if let Some(line) =
+                            raw_line.strip_prefix("data: ").or_else(|| raw_line.strip_prefix("data:"))
+                        {
+                            if line == "[DONE]" {
+                                // end marker, skip
+                                continue;
+                            }
+                            match serde_json::from_str::<ResponseStreamResult>(line) {
+                                Ok(ResponseStreamResult::Ok(response)) => events.push(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    events.push(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse Azure Foundry SSE line into ResponseStreamResult: `{}`\nResponse: `{}`",
+                                        error,
+                                        line,
+                                    );
+                                    events.push(Err(anyhow!(error)));
+                                }
+                            }
+                        }
+                    }
+                    return Ok(futures::stream::iter(events).boxed());
+                }
+
+                // Try parsing the entire body as a single ResponseStreamResult (Ok/Err).
+                if let Ok(rsr) = serde_json::from_str::<ResponseStreamResult>(&body_str) {
+                    match rsr {
+                        ResponseStreamResult::Ok(resp) => {
+                            return Ok(futures::stream::iter(vec![Ok(resp)]).boxed());
+                        }
+                        ResponseStreamResult::Err { error } => {
+                            return Err(anyhow!(error.message));
+                        }
+                    }
+                }
+
+                // Try parsing as a direct ResponseStreamEvent.
+                if let Ok(resp) = serde_json::from_str::<ResponseStreamEvent>(&body_str) {
+                    return Ok(futures::stream::iter(vec![Ok(resp)]).boxed());
+                }
+
+                // Fallback: if JSON was returned in an alternative shape, attempt to extract text
+                // and synthesize an OpenAI-style ResponseStreamEvent so the caller receives text.
+                let value: serde_json::Value =
+                    serde_json::from_str(&body_str).unwrap_or(serde_json::json!({}));
+                // Try to reuse the same extraction heuristics as /responses branch (helper above).
+                let extracted_text =
+                    extract_text_from_responses_json(&value).unwrap_or_else(|| body_str.clone());
+
                 let event = open_ai::ResponseStreamEvent {
                     choices: vec![open_ai::ChoiceDelta {
                         index: 0,
                         delta: open_ai::ResponseMessageDelta {
                             role: None,
-                            content: Some(text),
+                            content: Some(extracted_text),
                             tool_calls: None,
                         },
                         finish_reason: Some("stop".to_string()),
@@ -1252,40 +1683,6 @@ async fn stream_completion_azure(
                     usage: None,
                 };
                 return Ok(futures::stream::iter(vec![Ok(event)]).boxed());
-            } else {
-                // Stream the body as SSE-like lines; OpenAI chat/completions often stream newline-delimited "data: ..." events.
-                let reader = BufReader::new(response.into_body());
-                return Ok(reader
-                    .lines()
-                    .filter_map(|line| async move {
-                        match line {
-                            Ok(line) => {
-                                let line = line
-                                    .strip_prefix("data: ")
-                                    .or_else(|| line.strip_prefix("data:"))?;
-                                if line == "[DONE]" {
-                                    None
-                                } else {
-                                    match serde_json::from_str::<ResponseStreamResult>(&line) {
-                                        Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                        Ok(ResponseStreamResult::Err { error }) => {
-                                            Some(Err(anyhow!(error.message)))
-                                        }
-                                        Err(error) => {
-                                            log::error!(
-                                                "Failed to parse Azure Foundry response into ResponseStreamResult: `{}`\nResponse: `{}`",
-                                                error,
-                                                line,
-                                            );
-                                            Some(Err(anyhow!(error)))
-                                        }
-                                    }
-                                }
-                            }
-                            Err(error) => Some(Err(anyhow!(error))),
-                        }
-                    })
-                    .boxed());
             }
         } else {
             // Read body to log diagnostic and then continue to next candidate

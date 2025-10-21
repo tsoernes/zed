@@ -3058,12 +3058,14 @@ struct ThreadEventStream(mpsc::UnboundedSender<Result<ThreadEvent>>);
 
 impl ThreadEventStream {
     fn send_user_message(&self, message: &UserMessage) {
+        log::debug!("ThreadEventStream: send_user_message -> {:?}", message);
         self.0
             .unbounded_send(Ok(ThreadEvent::UserMessage(message.clone())))
             .ok();
     }
 
     fn send_text(&self, text: &str) {
+        log::debug!("ThreadEventStream: send_text (len={}) -> {:?}", text.len(), text);
         self.0
             .unbounded_send(Ok(ThreadEvent::AgentText(text.to_string())))
             .ok();
