@@ -85,6 +85,13 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             obj.insert("anyOf".to_string(), subschemas_clone);
         }
 
+        // Ensure object schemas have an explicit empty properties object
+        if matches!(obj.get("type"), Some(Value::String(s)) if s == "object")
+            && !obj.contains_key("properties")
+        {
+            obj.insert("properties".to_string(), Value::Object(Default::default()));
+        }
+
         // Recursively process all nested objects and arrays
         for (_, value) in obj.iter_mut() {
             if let Value::Object(_) | Value::Array(_) = value {

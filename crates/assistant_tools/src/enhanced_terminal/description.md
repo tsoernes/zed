@@ -5,6 +5,12 @@ Execute shell commands with advanced capabilities including optional sudo elevat
 Key features:
 - Run commands in any directory: pass an absolute path (e.g. /var/log) or a project worktree name, or use "." when there is exactly one worktree.
 - Optional sudo: set use_sudo: true to prefix the command with sudo -S (authorization required). Only use when strictly necessary and prefer read‑only or least‑privilege operations.
+  - For non-interactive password prompts, use askpass by setting SUDO_ASKPASS to a GUI helper (e.g., /usr/sbin/ksshaskpass) and invoke sudo with -A.
+  - Recommended pattern:
+    * Validate helper: command -v /usr/sbin/ksshaskpass
+    * Establish timestamp: env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A -v
+    * Run privileged command: env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A &lt;command&gt;
+    * Clear timestamp when done: sudo -k
 - Custom shell: choose a shell by absolute path (/usr/bin/fish) or by common name (bash, zsh, fish, sh, dash, ksh). If omitted, the system default shell is used.
 - Adjustable output capture: raise output_limit (bytes) for verbose commands. Large output may still be truncated; the response clarifies when truncation occurred (and detached jobs expose a preview via status).
 - Long running commands: omit timeout_seconds for no explicit timeout, or set a positive value to fail fast if the process exceeds that duration.
@@ -17,7 +23,7 @@ Input fields:
   * "." or "" – resolve to the single worktree root (fails if multiple roots exist).
   * Absolute path – must exist (anywhere on the filesystem).
   * Worktree name – resolves to that project root.
-- use_sudo (bool, optional, default false): Whether to run with elevated privileges (via sudo -S).
+- use_sudo (bool, optional, default false): Whether to run with elevated privileges (via sudo -S, or via sudo -A when SUDO_ASKPASS is provided).
 - shell (string, optional): Preferred shell name or full path. Falls back to best match or the system default.
 - output_limit (integer, optional): Maximum bytes of combined stdout/stderr to retain in immediate or detached preview (defaults: 16KB normal, 256KB when sudo requested unless overridden).
 - timeout_seconds (integer, optional): Hard limit after which the command is aborted with a timeout error (non-detached path).
@@ -120,6 +126,19 @@ Examples (conceptual, not literal JSON):
   job_id: "enhterm-job-5"
   full_output: true
 
+7. Sudo via ksshaskpass (non-interactive askpass):
+  command: "sudo -n ls -la /root || env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A ls -la /root"
+  use_sudo: true
+  timeout_seconds: 60
+
+  Notes:
+  - Prefer cached sudo first: "sudo -n ..." will use an existing timestamp without prompting.
+  - If writing files, avoid shell redirection (>) with sudo; use tee or run a root shell:
+    * echo "data" | env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A tee /tmp/file
+    * env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A bash -lc 'echo "data" > /tmp/file'
+  - Pass SUDO_ASKPASS via env to ensure sudo sees it in the same invocation.
+  - Be aware: sudo -A -v may block in some environments. Prefer pre-authorization and use a cached sudo fallback-only flow where possible: sudo -n <cmd> || env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A <cmd>.
+
 Streaming behavior:
 - While a detached job runs, output is read incrementally and a truncated preview (up to output_limit) is updated in memory.
 - Status polls return the latest preview (preview does not require re-running the command).
@@ -153,11 +172,18 @@ Overriding safety:
 - Always justify the necessity of dangerous commands in user-visible reasoning.
 
 Security & safety reminders:
-- Always justify sudo usage to the user during authorization.
+- Always justify sudo usage to the user during authorization. For non-interactive sudo, set SUDO_ASKPASS (e.g., /usr/sbin/ksshaskpass) and use sudo -A; never embed passwords or secrets directly in commands.
 - Avoid commands that daemonize or run indefinitely unless a timeout or detach mode is used intentionally.
 - Do not embed secrets directly in the command string.
 - Prefer absolute paths when operating outside project roots to avoid ambiguity.
 - Consider using preview first, then full_output for large logs to reduce exposure and bandwidth.
+
+Troubleshooting ksshaskpass (SUDO_ASKPASS):
+- Locale/prompt parsing: If you see "Unable to parse phrase", ensure sudo uses the default prompt; consider `LC_ALL=C` for consistent prompt parsing or set a simple `SUDO_PROMPT`.
+- GUI availability: ksshaskpass requires a GUI environment; on headless setups it may not display. Use a cached timestamp (`sudo -n`) or an alternative askpass, or establish the timestamp locally and then run read-only commands.
+- Cached sudo first: Pattern `sudo -n <cmd> || env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A <cmd>` attempts cached auth before askpass.
+- Writing via tee/stdin: Use `echo "data" | sudo -A tee /path` or run a root shell (`sudo -A bash -lc 'echo "data" > /path'`) because `sudo echo "data" > /path` won’t elevate the redirection.
+- Env passing: Prefer `env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A ...` so the variable is visible to the same `sudo` invocation; different shells handle exported vars differently (`fish: set -x`, `bash: env`).
 
 Returned response (non-detached) will summarize:
 - Success / failure / timeout / interruption

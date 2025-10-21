@@ -8797,6 +8797,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "release_channel",
+ "reqwest_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",

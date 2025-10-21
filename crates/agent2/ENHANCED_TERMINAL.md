@@ -85,6 +85,16 @@ The `enhanced_terminal` tool accepts the following parameters:
 }
 ```
 
+#### Command with sudo using ksshaskpass (non-interactive):
+```json
+{
+  "command": "env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A ls -ld /root",
+  "cwd": "/",
+  "use_sudo": true,
+  "timeout_seconds": 60
+}
+```
+
 #### Command with specific shell:
 ```json
 {
@@ -212,8 +222,36 @@ All fields optional:
 
 - Commands with `use_sudo: true` require explicit user authorization
 - Users will be prompted to approve sudo commands before execution
-- Explain to users why sudo is necessary during authorization
+- Explain to users why sudo is necessary during authorization and prefer read-only, least-privilege operations
 - Avoid using sudo unless absolutely required
+- For non-interactive sudo, set `SUDO_ASKPASS` to a GUI helper (e.g., `/usr/sbin/ksshaskpass`) and use `sudo -A`
+
+#### Non-interactive sudo via ksshaskpass (SUDO_ASKPASS)
+
+Recommended pattern:
+- Validate helper: `command -v /usr/sbin/ksshaskpass`
+- Establish timestamp: `env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A -v`
+- Run privileged command: `env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A <command>`
+- Clear timestamp when done: `sudo -k`
+
+Example:
+```json
+{
+  "command": "env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A id",
+  "cwd": "/",
+  "use_sudo": true,
+  "timeout_seconds": 60
+}
+```
+
+#### Troubleshooting and best practices for ksshaskpass
+
+- Locale/prompt parsing: If you see messages like `Unable to parse phrase`, ensure a predictable sudo prompt. Use `LC_ALL=C` or set a simple `SUDO_PROMPT`, and use `sudo -A`.
+- GUI availability: ksshaskpass requires a GUI. On headless/CI systems it may not display; use a cached timestamp (`sudo -n`) or an alternative askpass, or establish the timestamp locally and then run read-only `sudo -n` commands.
+- Prefer cached sudo first: Use `sudo -n <cmd> || env SUDO_ASKPASS=/usr/sbin/ksshaskpass sudo -A <cmd>` to leverage existing timestamps before invoking askpass.
+- Writing files as root: Shell redirection (`>`) happens in the caller’s shell and isn’t elevated. Use `echo "data" | sudo -A tee /path` or `sudo -A bash -lc 'echo "data" > /path'`.
+- Environment passing: Pass `SUDO_ASKPASS` on the same invocation with `env SUDO_ASKPASS=... sudo -A ...` to avoid shell export differences.
+- Clear timestamp: Always run `sudo -k` after elevated operations to clear cached credentials.
 
 ### Directory Access
 

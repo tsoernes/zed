@@ -1,4 +1,24 @@
 {
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        // Do NOT run `cargo check` on save
+        "checkOnSave": false,
+        // Don't pre-warm caches on project load
+        "cachePriming": { "enable": false },
+        "diagnostics": { "enable": false },
+        // Avoid extra cargo metadata reloads after Cargo.toml changes
+        "cargo": {
+          "autoreload": false,
+          "buildScripts": { "enable": false } // skip build.rs analysis
+        },
+        // Skip proc-macro expansion (speeds up indexing a lot)
+        "procMacro": { "enable": false },
+        // (Optional) keep RA outputs separate to avoid polluting target/
+        "rust": { "analyzerTargetDir": true }
+      }
+    }
+  },
   "languages": {
     "Markdown": {
       "tab_size": 2,
