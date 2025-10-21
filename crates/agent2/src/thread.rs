@@ -1088,9 +1088,10 @@ impl Thread {
             .find(|s| s.id == id)
             .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
 
+        // Compute token savings estimate using token counts (not char counts).
         let token_savings_estimate = seg
-            .message_char_count
-            .saturating_sub(seg.placeholder_char_count);
+            .message_token_count
+            .saturating_sub(seg.placeholder_token_count);
 
         let meta = serde_json::json!({
             "id": seg.id,
@@ -1098,9 +1099,11 @@ impl Thread {
             "end": seg.end,
             "count": seg.message_count,
             "chars": seg.message_char_count,
+            "tokens": seg.message_token_count,
             "summary": seg.summary.as_ref(),
             "stored_epoch_ms": seg.stored_epoch_ms,
             "placeholder_chars": seg.placeholder_char_count,
+            "placeholder_tokens": seg.placeholder_token_count,
             "token_savings_estimate": token_savings_estimate
         });
 
@@ -1131,8 +1134,9 @@ impl Thread {
                     seg.message_count,
                     seg.message_char_count,
                     seg.placeholder_char_count,
-                    seg.message_char_count
-                        .saturating_sub(seg.placeholder_char_count),
+                    // Use token counts for the estimated savings instead of character counts.
+                    seg.message_token_count
+                        .saturating_sub(seg.placeholder_token_count),
                     seg.summary.to_string(),
                     seg.stored_epoch_ms,
                 )

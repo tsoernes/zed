@@ -131,19 +131,20 @@ impl AgentTool for ListHistoryTool {
             let role = format!("{:?}", message.role());
             let markdown = message.to_markdown();
             let full: &str = markdown.as_ref();
-            let chars = full.len();
-            let preview = if full.len() <= input.max_chars_per_message {
-                full
+            // Use character counts and char-based slicing to avoid slicing at invalid UTF-8 byte boundaries.
+            let char_count = full.chars().count();
+            let preview = if char_count <= input.max_chars_per_message {
+                full.to_string()
             } else {
-                &full[..input.max_chars_per_message]
+                full.chars().take(input.max_chars_per_message).collect::<String>()
             };
             let mut preview = preview.replace('|', "\\|").replace('\n', " ");
-            if chars > input.max_chars_per_message {
+            if char_count > input.max_chars_per_message {
                 preview.push_str("...");
             }
             output.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
-                idx, role, chars, preview
+                idx, role, char_count, preview
             ));
         }
 

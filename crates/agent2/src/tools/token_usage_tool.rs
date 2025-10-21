@@ -106,9 +106,10 @@ impl AgentTool for TokenUsageTool {
         let memory_saved_tokens: usize = metas.iter().map(|m| m.6).sum();
 
         // Active vs full tokens (prefer precise for active if available).
+        // Use `_active_usage` in the precise-branch pattern to avoid an unused-variable warning.
         let (active_used, active_max, active_precise) =
             match (active_usage_opt.as_ref(), precise_opt, precise_max_opt) {
-                (Some(active_usage), Some(precise_used), Some(precise_max)) => {
+                (Some(_active_usage), Some(precise_used), Some(precise_max)) => {
                     (precise_used, precise_max, true)
                 }
                 (Some(active_usage), _, _) => {
@@ -122,13 +123,15 @@ impl AgentTool for TokenUsageTool {
             None => (0, active_max),
         };
 
+        // Keep these as fractions (0.0..1.0). Formatting into percent is
+        // done later so we can round to two decimal places consistently.
         let active_pct = if active_max > 0 {
-            (active_used as f64 / active_max as f64 * 100.0)
+            active_used as f64 / active_max as f64
         } else {
             0.0
         };
         let full_pct = if full_max > 0 {
-            (full_used as f64 / full_max as f64 * 100.0)
+            full_used as f64 / full_max as f64
         } else {
             0.0
         };
