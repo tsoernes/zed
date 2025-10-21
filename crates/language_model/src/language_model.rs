@@ -338,6 +338,9 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
                     provider,
                     retry_after: None,
                 },
+                ModelNotFoundError => Self::Other(error.into()),
+                InvalidToolUseError => Self::Other(error.into()),
+                UnsupportedFeatureError => Self::Other(error.into()),
             },
             None => Self::Other(error.into()),
         }

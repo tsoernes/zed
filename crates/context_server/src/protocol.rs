@@ -64,7 +64,7 @@ impl ModelContextProtocol {
             initialize: response,
         };
 
-        initialized_protocol.notify::<types::notifications::Initialized>(())?;
+        // Do not send an Initialized notification from the client; some MCP servers reject it with 400 (Unsupported method).
 
         Ok(initialized_protocol)
     }

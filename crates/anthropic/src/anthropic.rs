@@ -210,19 +210,39 @@ impl Model {
 
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
-        match self {
+        // If using alternate model IDs is enabled, this will override the model mapping
+        let alternate_model_map = std::env::var("ANTHROPIC_USE_ALTERNATE_MODEL_IDS").is_ok();
+
+        let model_id = match self {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
             Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
             Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-20250929",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
-            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
+            Self::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
+            Self::Claude3_7SonnetThinking => {
+                if alternate_model_map {
+                    log::info!(
+                        "Using alternate model ID for Claude3_7SonnetThinking: claude-3-7-sonnet-latest"
+                    );
+                    "claude-3-7-sonnet-latest" // Use non-thinking variant as fallback
+                } else {
+                    "claude-3-7-sonnet-thinking-latest"
+                }
+            }
             Self::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Self::Claude3Opus => "claude-3-opus-latest",
             Self::Claude3Sonnet => "claude-3-sonnet-20240229",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
-        }
+        };
+
+        log::info!(
+            "Anthropic model requested={:?}, using model_id={}",
+            self,
+            model_id
+        );
+        model_id
     }
 
     pub fn display_name(&self) -> &str {
@@ -364,7 +384,7 @@ impl Model {
         }
     }
 
-    pub const DEFAULT_BETA_HEADERS: &[&str] = &["prompt-caching-2024-07-31"];
+    pub const DEFAULT_BETA_HEADERS: &[&str] = &[];
 
     pub fn beta_headers(&self) -> String {
         let mut headers = Self::DEFAULT_BETA_HEADERS
@@ -374,9 +394,17 @@ impl Model {
 
         match self {
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => {
-                // Try beta token-efficient tool use (supported in Claude 3.7 Sonnet only)
-                // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
-                headers.push("token-efficient-tools-2025-02-19".to_string());
+                // Include token-efficient tools beta header only if opt-in env var is set.
+                if std::env::var("ANTHROPIC_ENABLE_TOKEN_EFFICIENT").is_ok() {
+                    // https://docs.anthropic.com/en/docs/build-with-claude/tool-use/token-efficient-tool-use
+                    headers.push("token-efficient-tools-2025-02-19".to_string());
+                }
+
+                // Don't use any beta headers if explicitly disabled
+                if std::env::var("ANTHROPIC_DISABLE_BETA_HEADERS").is_ok() {
+                    log::info!("Anthropic beta headers disabled by environment variable");
+                    headers.clear();
+                }
             }
             Self::Custom {
                 extra_beta_headers, ..
@@ -391,7 +419,9 @@ impl Model {
             _ => {}
         }
 
-        headers.join(",")
+        let result = headers.join(",");
+        log::info!("Using Anthropic beta headers: {}", result);
+        result
     }
 
     pub fn tool_model_id(&self) -> &str {
@@ -417,20 +447,37 @@ pub async fn complete(
     let uri = format!("{api_url}/v1/messages");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(&uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
+        .header("Anthropic-Beta", &beta_headers)
         .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
 
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let request = request_builder
-        .body(AsyncBody::from(serialized_request))
+
+    // Log comprehensive request details
+    log::info!(
+        "Anthropic complete request uri={} beta_headers={} model={} max_tokens={} tools={} thinking={}",
+        uri,
+        beta_headers,
+        request.model,
+        request.max_tokens,
+        request.tools.len(),
+        request.thinking.is_some()
+    );
+    log::trace!(
+        "Anthropic complete request full body (len={}): {}",
+        serialized_request.len(),
+        serialized_request
+    );
+
+    let http_request = request_builder
+        .body(AsyncBody::from(serialized_request.clone()))
         .map_err(AnthropicError::BuildRequestBody)?;
 
     let mut response = client
-        .send(request)
+        .send(http_request)
         .await
         .map_err(AnthropicError::HttpSend)?;
     let status_code = response.status();
@@ -444,6 +491,41 @@ pub async fn complete(
     if status_code.is_success() {
         Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
     } else {
+        // Try to parse as ApiError first for more detailed error information
+        let api_error = serde_json::from_str::<ApiError>(&body);
+        if let Ok(error) = api_error {
+            log::error!(
+                "Anthropic API error: status={} type={} message={}",
+                status_code,
+                error.error_type,
+                error.message
+            );
+        } else {
+            log::error!(
+                "Anthropic non-success response status={} body_len={} body_preview={}",
+                status_code,
+                body.len(),
+                &body.chars().take(1000).collect::<String>()
+            );
+        }
+
+        if status_code == StatusCode::BAD_REQUEST {
+            // Dump full serialized request (may include thinking/tool blocks) for diagnostics.
+            log::error!(
+                "Anthropic 400 request dump: serialized_request_len={} serialized_request={}",
+                serialized_request.len(),
+                serialized_request
+            );
+            log::error!(
+                "Anthropic 400 request meta: model={} max_tokens={} messages={} tools={} thinking_present={}",
+                request.model,
+                request.max_tokens,
+                request.messages.len(),
+                request.tools.len(),
+                request.thinking.is_some()
+            );
+        }
+
         Err(AnthropicError::HttpResponseError {
             status_code,
             message: body,
@@ -570,19 +652,34 @@ pub async fn stream_completion_with_rate_limit_info(
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(&uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
+        .header("Anthropic-Beta", &beta_headers)
         .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let request = request_builder
+
+    // Log detailed request information for debugging
+    log::info!(
+        "Anthropic streaming request uri={} beta_headers={}",
+        uri,
+        beta_headers
+    );
+    log::info!(
+        "Anthropic request model={} thinking={} tool_count={}",
+        request.base.model,
+        request.base.thinking.is_some(),
+        request.base.tools.len()
+    );
+    log::debug!("Anthropic request full body: {}", serialized_request);
+
+    let http_request = request_builder
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
     let mut response = client
-        .send(request)
+        .send(http_request)
         .await
         .map_err(AnthropicError::HttpSend)?;
     let rate_limits = RateLimitInfo::from_headers(response.headers());
@@ -618,12 +715,54 @@ pub async fn stream_completion_with_rate_limit_info(
             .await
             .map_err(AnthropicError::ReadResponse)?;
 
-        match serde_json::from_str::<Event>(&body) {
+        // Try to parse error as ApiError first
+        let api_error = serde_json::from_str::<ApiError>(&body);
+        if let Ok(error) = api_error {
+            log::error!(
+                "Anthropic streaming API error: status={} type={} message={}",
+                response.status(),
+                error.error_type,
+                error.message
+            );
+        } else {
+            log::error!(
+                "Anthropic streaming error: status={} body={}",
+                response.status(),
+                body
+            );
+
+            // Try to extract more specific error information
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                if let Some(error) = json.get("error") {
+                    log::error!("Anthropic API error details: {:?}", error);
+                }
+            }
+        }
+
+        // Attempt richer parsing path.
+        let event_result = serde_json::from_str::<Event>(&body);
+        match event_result {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
-                status_code: response.status(),
-                message: body,
-            }),
+            Ok(_) => {
+                if let Ok(api_error) = serde_json::from_str::<ApiError>(&body) {
+                    Err(AnthropicError::ApiError(api_error))
+                } else {
+                    Err(AnthropicError::HttpResponseError {
+                        status_code: response.status(),
+                        message: body,
+                    })
+                }
+            }
+            Err(_) => {
+                if let Ok(api_error) = serde_json::from_str::<ApiError>(&body) {
+                    Err(AnthropicError::ApiError(api_error))
+                } else {
+                    Err(AnthropicError::HttpResponseError {
+                        status_code: response.status(),
+                        message: body,
+                    })
+                }
+            }
         }
     }
 }
@@ -640,20 +779,20 @@ pub struct CacheControl {
     pub cache_type: CacheControlType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Message {
     pub role: Role,
     pub content: Vec<RequestContent>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Assistant,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 pub enum RequestContent {
     #[serde(rename = "text")]
@@ -695,14 +834,14 @@ pub enum RequestContent {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum ToolResultContent {
     Plain(String),
     Multipart(Vec<ToolResultPart>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolResultPart {
     Text { text: String },
@@ -726,7 +865,7 @@ pub enum ResponseContent {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImageSource {
     #[serde(rename = "type")]
     pub source_type: String,
@@ -734,14 +873,14 @@ pub struct ImageSource {
     pub data: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
@@ -750,20 +889,20 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
     Enabled { budget_tokens: Option<u32> },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum StringOrContents {
     String(String),
     Content(Vec<RequestContent>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u64,
@@ -795,7 +934,7 @@ struct StreamingRequest {
     pub stream: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Metadata {
     pub user_id: Option<String>,
 }
@@ -926,12 +1065,18 @@ pub enum ApiErrorCode {
     NotFoundError,
     /// 413 - `request_too_large`: Request exceeds the maximum allowed number of bytes.
     RequestTooLarge,
-    /// 429 - `rate_limit_error`: Your account has hit a rate limit.
+    /// 429 - `rate_limit_error`: You have exceeded your rate limit.
     RateLimitError,
     /// 500 - `api_error`: An unexpected error has occurred internal to Anthropic's systems.
     ApiError,
     /// 529 - `overloaded_error`: Anthropic's API is temporarily overloaded.
     OverloadedError,
+    /// 400 - `model_not_found_error`: The specified model was not found.
+    ModelNotFoundError,
+    /// 400 - `invalid_tool_use_error`: There was an issue with the tool use format.
+    InvalidToolUseError,
+    /// 400 - `unsupported_feature_error`: Feature not supported for this model or account.
+    UnsupportedFeatureError,
 }
 
 impl ApiError {
@@ -940,7 +1085,7 @@ impl ApiError {
     }
 
     pub fn is_rate_limit_error(&self) -> bool {
-        matches!(self.error_type.as_str(), "rate_limit_error")
+        matches!(self.code(), Some(ApiErrorCode::RateLimitError))
     }
 
     pub fn match_window_exceeded(&self) -> Option<u64> {
@@ -949,6 +1094,29 @@ impl ApiError {
         };
 
         parse_prompt_too_long(&self.message)
+    }
+
+    pub fn is_thinking_related(&self) -> bool {
+        self.message.to_lowercase().contains("thinking")
+            || (self.message.to_lowercase().contains("feature")
+                && self.message.to_lowercase().contains("support"))
+    }
+
+    pub fn is_tool_related(&self) -> bool {
+        self.message.to_lowercase().contains("tool")
+            || self.message.to_lowercase().contains("function")
+            || self.message.to_lowercase().contains("schema")
+    }
+
+    pub fn is_model_related(&self) -> bool {
+        self.message.to_lowercase().contains("model")
+            && (self.message.to_lowercase().contains("not found")
+                || self.message.to_lowercase().contains("invalid")
+                || self.message.to_lowercase().contains("unsupported"))
+    }
+
+    pub fn has_debug_info(&self) -> bool {
+        !self.message.is_empty() && self.message.len() > 10
     }
 }
 
@@ -992,4 +1160,25 @@ fn test_match_window_exceeded() {
         message: "prompt is too long: invalid tokens".to_string(),
     };
     assert_eq!(error.match_window_exceeded(), None);
+
+    // Test the new error detection helpers
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "The thinking feature is not supported for this model".to_string(),
+    };
+    assert!(error.is_thinking_related());
+    assert!(!error.is_tool_related());
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "Invalid tool schema: required property 'type' missing".to_string(),
+    };
+    assert!(error.is_tool_related());
+    assert!(!error.is_thinking_related());
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "Model claude-3-7-sonnet-thinking-latest not found".to_string(),
+    };
+    assert!(error.is_model_related());
 }

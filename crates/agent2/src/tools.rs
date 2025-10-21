@@ -8,6 +8,11 @@ mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
 mod list_directory_tool;
+mod list_history_tool;
+mod memory_tool;
+mod precise_token_tool;
+mod token_usage_tool;
+
 mod move_path_tool;
 mod now_tool;
 mod open_tool;
@@ -28,6 +33,9 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         FindPathTool::name(),
         GrepTool::name(),
         ListDirectoryTool::name(),
+        ListHistoryTool::name(),
+        MemoryAgentTool::name(),
+        PreciseTokenTool::name(),
         MovePathTool::name(),
         NowTool::name(),
         OpenTool::name(),
@@ -49,6 +57,11 @@ pub use fetch_tool::*;
 pub use find_path_tool::*;
 pub use grep_tool::*;
 pub use list_directory_tool::*;
+pub use list_history_tool::*;
+pub use memory_tool::*;
+pub use precise_token_tool::*;
+pub use token_usage_tool::*;
+
 pub use move_path_tool::*;
 pub use now_tool::*;
 pub use open_tool::*;

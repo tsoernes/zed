@@ -1,8 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
+    ReadFileTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
+    TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -14,6 +15,7 @@ use agent_settings::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
+
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
@@ -98,6 +100,87 @@ pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
     Resume,
+}
+
+// Internal thread-scoped archived memory segment.
+// Not exposed publicly; used for context compaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ThreadMemorySegment {
+    pub(crate) id: u64,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) summary: SharedString,
+    pub(crate) message_char_count: usize,
+    pub(crate) message_count: usize,
+    pub(crate) stored_epoch_ms: u128,
+    pub(crate) placeholder_char_count: usize,
+    // Token counts captured at archive time for reconstructing full context size.
+    pub(crate) message_token_count: usize,
+    pub(crate) placeholder_token_count: usize,
+    pub(crate) messages: Vec<Message>,
+}
+
+// On-disk persisted representation of thread memory segments.
+// Stored as JSON: { "segments": [ ThreadMemorySegment, ... ] }
+#[derive(Serialize, Deserialize)]
+struct PersistedMemorySegments {
+    segments: Vec<ThreadMemorySegment>,
+}
+
+// Auxiliary impl block providing persistence helpers.
+// These are separated to keep core logic above uncluttered.
+impl Thread {
+    fn memory_segments_file_path(&self) -> std::path::PathBuf {
+        // contexts_dir()/memory_segments/<thread_id>.json
+        paths::contexts_dir()
+            .join("memory_segments")
+            .join(format!("{}.json", self.id))
+    }
+
+    fn ensure_memory_dir(path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn persist_memory_segments(&self) -> anyhow::Result<()> {
+        // Do not write empty (avoid churn); if none exist and file present, remove it.
+        let path = self.memory_segments_file_path();
+        if self.memory_segments.is_empty() {
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+            return Ok(());
+        }
+        Self::ensure_memory_dir(&path)?;
+        let data = PersistedMemorySegments {
+            segments: self.memory_segments.clone(),
+        };
+        let json = serde_json::to_vec_pretty(&data)?;
+        // Atomic write: write to temp then rename.
+        let mut tmp = path.clone();
+        tmp.set_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    fn load_memory_segments_from_disk(&mut self) -> anyhow::Result<()> {
+        let path = self.memory_segments_file_path();
+        if !path.exists() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(&path)?;
+        let persisted: PersistedMemorySegments = serde_json::from_slice(&bytes)?;
+        // Assign and recompute next id
+        let max_id = persisted.segments.iter().map(|s| s.id).max().unwrap_or(0);
+        self.memory_segments = persisted.segments;
+        self.memory_next_id = max_id.saturating_add(1);
+        Ok(())
+    }
 }
 
 impl Message {
@@ -585,6 +668,9 @@ pub struct Thread {
     pending_title_generation: Option<Task<()>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
+    // Thread-scoped memory archive segments (non-public).
+    memory_segments: Vec<ThreadMemorySegment>,
+    memory_next_id: u64,
     completion_mode: CompletionMode,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -608,6 +694,12 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    /// Precise active token count for current conversation messages (if computed).
+    pub(crate) precise_active_tokens: Option<u64>,
+    /// Precise model max token capacity (cached when token count is computed).
+    pub(crate) precise_max_tokens: Option<u64>,
+    /// Precise per-message token counts aligned with current request messages, if computed.
+    pub(crate) precise_per_message_tokens: Option<Vec<usize>>,
 }
 
 impl Thread {
@@ -641,6 +733,8 @@ impl Thread {
             pending_title_generation: None,
             summary: None,
             messages: Vec::new(),
+            memory_segments: Vec::new(),
+            memory_next_id: 0,
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
@@ -658,6 +752,9 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
             model,
             summarization_model: None,
             prompt_capabilities_tx,
@@ -669,6 +766,493 @@ impl Thread {
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    /// Returns an immutable slice of all messages in the thread.
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
+    /// Archive (store) a contiguous inclusive range of messages, replacing them
+    /// with a single placeholder summary message. Returns the new memory segment id.
+    ///
+    /// Backwards-compatible wrapper that does not allow a custom summary. Calls
+    /// `store_memory_segment_with_summary` with `None`.
+    pub fn store_memory_segment(
+        &mut self,
+        start: usize,
+        end: usize,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<u64> {
+        self.store_memory_segment_with_summary(start, end, None, cx)
+    }
+
+    /// Archive (store) a contiguous inclusive range of messages with an optional
+    /// caller-provided custom summary. If `custom_summary` is `None` or empty
+    /// after trimming, an automatic summary is synthesized (previous behavior).
+    ///
+    /// Custom summary handling:
+    /// * Trim whitespace
+    /// * Collapse internal newlines to spaces
+    /// * Enforce a maximum length (96 chars); truncate with an ellipsis if exceeded
+    pub fn store_memory_segment_with_summary(
+        &mut self,
+        start: usize,
+        end: usize,
+        custom_summary: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<u64> {
+        if start > end {
+            return Err(anyhow::anyhow!("start index greater than end index"));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "range {}..={} out of bounds (len={})",
+                start,
+                end,
+                self.messages.len()
+            ));
+        }
+        if self.memory_range_overlaps(start, end) {
+            return Err(anyhow::anyhow!(
+                "range {}..={} overlaps an existing archived memory segment",
+                start,
+                end
+            ));
+        }
+
+        // Extract messages
+        let removed = self.extract_messages(start..=end, cx)?;
+        if removed.is_empty() {
+            return Err(anyhow::anyhow!("empty range cannot be archived"));
+        }
+
+        // Utility: truncate helper
+        fn truncate(s: &str, max: usize) -> String {
+            if s.len() <= max {
+                s.to_string()
+            } else {
+                let mut out = s.chars().take(max).collect::<String>();
+                out.push('…');
+                out
+            }
+        }
+
+        let mut char_total = 0usize;
+        let mut rendered: Vec<String> = Vec::with_capacity(removed.len());
+        for m in &removed {
+            let md = m.to_markdown();
+            char_total += md.len();
+            rendered.push(md);
+        }
+
+        // Auto summary (legacy behavior)
+        let auto_summary = if rendered.len() == 1 {
+            format!("Single message: {}", truncate(&rendered[0], 48))
+        } else {
+            let first = truncate(&rendered.first().unwrap(), 48);
+            let last = truncate(&rendered.last().unwrap(), 48);
+            format!(
+                "{} msgs | first: {} | last: {}",
+                rendered.len(),
+                first,
+                last
+            )
+        };
+
+        // Prepare a sanitized custom summary if provided.
+        let summary = custom_summary
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                // Replace internal newlines / tabs with single spaces and collapse runs of whitespace.
+                let cleaned = s
+                    .chars()
+                    .map(|c| {
+                        if c == '\n' || c == '\r' || c == '\t' {
+                            ' '
+                        } else {
+                            c
+                        }
+                    })
+                    .collect::<String>();
+                // Collapse multiple spaces
+                let mut collapsed = String::with_capacity(cleaned.len());
+                let mut last_space = false;
+                for ch in cleaned.chars() {
+                    if ch.is_whitespace() {
+                        if !last_space {
+                            collapsed.push(' ');
+                        }
+                        last_space = true;
+                    } else {
+                        collapsed.push(ch);
+                        last_space = false;
+                    }
+                }
+                // Enforce max length
+                let max_len = 96;
+                if collapsed.chars().count() > max_len {
+                    let mut truncated = collapsed.chars().take(max_len).collect::<String>();
+                    truncated.push('…');
+                    truncated
+                } else {
+                    collapsed
+                }
+            })
+            .unwrap_or(auto_summary);
+
+        let id = self.memory_next_id;
+
+        // Construct placeholder text now (need it for token counting)
+        let placeholder_text = format!("[memory:{}] {}", id, summary);
+
+        // Heuristic token counts for removed messages vs placeholder
+        let removed_req: Vec<_> = removed.iter().flat_map(|m| m.to_request()).collect();
+        let message_token_count = crate::token_usage::heuristic_token_count(&removed_req);
+
+        // Build placeholder message for token counting
+        let placeholder_message = Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(placeholder_text.clone())],
+            tool_results: Default::default(),
+        });
+        let placeholder_req: Vec<_> = placeholder_message.to_request();
+        let placeholder_token_count = crate::token_usage::heuristic_token_count(&placeholder_req);
+
+        self.memory_next_id = self.memory_next_id.saturating_add(1);
+
+        // Insert placeholder at start index
+        self.insert_messages(start, vec![placeholder_message], cx)?;
+
+        // Record segment
+        let seg = ThreadMemorySegment {
+            id,
+            start,
+            end,
+            summary: summary.clone().into(),
+            message_char_count: char_total,
+            message_count: removed.len(),
+            stored_epoch_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default(),
+            placeholder_char_count: placeholder_text.len(),
+            message_token_count,
+            placeholder_token_count,
+            messages: removed,
+        };
+        self.memory_segments.push(seg);
+        // Persist archive state (log errors, do not abort user-facing operation).
+        self.persist_memory_segments().log_err();
+
+        // Invalidate cached precise token usage & schedule recompute for updated “active” usage
+        self.invalidate_and_schedule_token_recount(cx);
+
+        Ok(id)
+    }
+
+    /// Restore a previously archived memory segment by id:
+    /// - Removes the placeholder if still present at the original start index.
+    /// - Reinserts the original messages in their prior order.
+    /// Segment remains archived (not pruned) after restore.
+    pub fn restore_memory_segment(
+        &mut self,
+        id: u64,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let seg_index = self
+            .memory_segments
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+
+        let seg_start;
+        {
+            let seg = &self.memory_segments[seg_index];
+            seg_start = seg.start;
+        }
+
+        // If placeholder still present at seg_start and matches id, remove it.
+        if seg_start < self.messages.len() {
+            let is_placeholder = match &self.messages[seg_start] {
+                Message::Agent(agent_msg) => agent_msg
+                    .content
+                    .iter()
+                    .any(|c| matches!(c, AgentMessageContent::Text(t) if t.starts_with(&format!("[memory:{}]", id)))),
+                _ => false,
+            };
+            if is_placeholder {
+                // Remove placeholder directly
+                self.messages.remove(seg_start);
+            }
+        }
+
+        // Reinsert archived messages at original start index
+        let archived = self.memory_segments[seg_index].messages.clone(); // clone to keep archive intact
+        self.insert_messages(seg_start, archived, cx)?;
+
+        // Restoring changes active context size
+        self.invalidate_and_schedule_token_recount(cx);
+        // Persist after restore to capture removal of placeholder and maintain archive continuity on disk.
+        self.persist_memory_segments().log_err();
+        Ok(())
+    }
+
+    /// Prune (delete) an archived memory segment by id. If the placeholder
+    /// representing the segment is still present at its original start index,
+    /// it is removed. This does not restore the archived messages.
+    pub fn prune_memory_segment(&mut self, id: u64, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let pos = self
+            .memory_segments
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+        let start_index = self.memory_segments[pos].start;
+        if start_index < self.messages.len() {
+            let placeholder_matches = match &self.messages[start_index] {
+                Message::Agent(agent_msg) => agent_msg.content.iter().any(|c| {
+                    matches!(
+                        c,
+                        AgentMessageContent::Text(t)
+                            if t.starts_with(&format!("[memory:{}]", id))
+                    )
+                }),
+                _ => false,
+            };
+            if placeholder_matches {
+                self.messages.remove(start_index);
+            }
+        }
+        self.memory_segments.remove(pos);
+        self.summary = None;
+        cx.notify();
+        // Persist after pruning.
+        self.persist_memory_segments().log_err();
+
+        // Pruning changes “full” context projection
+        self.invalidate_and_schedule_token_recount(cx);
+        Ok(())
+    }
+
+    /// Load (inspect) an archived memory segment by id without modifying the thread.
+    /// Returns a tuple of (metadata_json, messages_markdown).
+    /// The metadata includes a token_savings_estimate computed as (archived_chars - placeholder_chars).
+    fn invalidate_and_schedule_token_recount(&mut self, cx: &mut Context<Self>) {
+        self.precise_active_tokens = None;
+        self.precise_per_message_tokens = None;
+        self.spawn_compute_precise_usage(cx);
+    }
+
+    /// Returns (active_usage, full_usage):
+    /// active = current messages (with placeholders)
+    /// full   = hypothetical if all archived segments were expanded
+    pub fn active_and_full_token_usage(
+        &self,
+    ) -> Option<(acp_thread::TokenUsage, acp_thread::TokenUsage)> {
+        let model = self.model.clone()?;
+        let max_tokens = model.max_token_count_for_mode(self.completion_mode.into());
+
+        // Active token count: precise if available else heuristic
+        let active_used = if let Some(precise) = self.precise_active_tokens {
+            precise
+        } else {
+            let req: Vec<_> = self.messages.iter().flat_map(|m| m.to_request()).collect();
+            crate::token_usage::heuristic_token_count(&req) as u64
+        };
+
+        // Sum deltas (archived - placeholder)
+        let mut delta: i64 = 0;
+        for seg in &self.memory_segments {
+            let extra = seg
+                .message_token_count
+                .saturating_sub(seg.placeholder_token_count);
+            delta += extra as i64;
+        }
+        let full_used = (active_used as i64 + delta).max(0) as u64;
+
+        let active = acp_thread::TokenUsage {
+            max_tokens,
+            used_tokens: active_used,
+        };
+        let full = acp_thread::TokenUsage {
+            max_tokens,
+            used_tokens: full_used,
+        };
+        Some((active, full))
+    }
+
+    pub fn load_memory_segment(&self, id: u64) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+        let seg = self
+            .memory_segments
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
+
+        // Compute token savings estimate using token counts (not char counts).
+        let token_savings_estimate = seg
+            .message_token_count
+            .saturating_sub(seg.placeholder_token_count);
+
+        let meta = serde_json::json!({
+            "id": seg.id,
+            "start": seg.start,
+            "end": seg.end,
+            "count": seg.message_count,
+            "chars": seg.message_char_count,
+            "tokens": seg.message_token_count,
+            "summary": seg.summary.as_ref(),
+            "stored_epoch_ms": seg.stored_epoch_ms,
+            "placeholder_chars": seg.placeholder_char_count,
+            "placeholder_tokens": seg.placeholder_token_count,
+            "token_savings_estimate": token_savings_estimate
+        });
+
+        let messages_markdown: Vec<String> = seg.messages.iter().map(|m| m.to_markdown()).collect();
+
+        Ok((meta, messages_markdown))
+    }
+
+    /// List all archived memory segments (thread-scoped).
+    pub(crate) fn list_memory_segments(&self) -> &[ThreadMemorySegment] {
+        &self.memory_segments
+    }
+
+    /// Return metadata for all archived memory segments without exposing the internal
+    /// `ThreadMemorySegment` type. Each tuple contains:
+    /// (id, start, end, message_count, message_char_count, placeholder_char_count,
+    ///  token_savings_estimate, summary, stored_epoch_ms)
+    pub fn memory_segment_metas(
+        &self,
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)> {
+        self.memory_segments
+            .iter()
+            .map(|seg| {
+                (
+                    seg.id,
+                    seg.start,
+                    seg.end,
+                    seg.message_count,
+                    seg.message_char_count,
+                    seg.placeholder_char_count,
+                    // Use token counts for the estimated savings instead of character counts.
+                    seg.message_token_count
+                        .saturating_sub(seg.placeholder_token_count),
+                    seg.summary.to_string(),
+                    seg.stored_epoch_ms,
+                )
+            })
+            .collect()
+    }
+
+    /// Returns true if the inclusive range [start, end] overlaps any stored memory segment.
+    /// Overlap logic: two closed intervals [a,b] and [c,d] overlap if not (b < c || d < a).
+    pub fn memory_range_overlaps(&self, start: usize, end: usize) -> bool {
+        if start > end {
+            return false;
+        }
+        self.memory_segments
+            .iter()
+            .any(|seg| !(end < seg.start || start > seg.end))
+    }
+
+    /// Extract (remove) a contiguous inclusive range of messages from the thread,
+    /// returning the removed messages in their original order.
+    /// "Why": Needed by memory/context compaction to archive messages while shrinking
+    /// the active context. This is exposed (rather than direct field access) to
+    /// centralize bounds checking and notification logic.
+    pub fn extract_messages(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Vec<Message>> {
+        let start = *range.start();
+        let end = *range.end();
+        if start > end {
+            return Err(anyhow::anyhow!("start index greater than end index"));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "range {}..={} out of bounds (len={})",
+                start,
+                end,
+                self.messages.len()
+            ));
+        }
+        let count = end - start + 1;
+        let mut removed = Vec::with_capacity(count);
+        // Remove in-place by repeatedly removing at 'start'
+        for _ in 0..count {
+            removed.push(self.messages.remove(start));
+        }
+        // Any cached summary may now be invalid
+        self.summary = None;
+        cx.notify();
+        Ok(removed)
+    }
+
+    /// Insert a sequence of messages starting at the given index (clamped to len).
+    /// "Why": Allows restoration of archived messages (memory restore) at an arbitrary
+    /// point without exposing internal vector operations elsewhere.
+    pub fn insert_messages(
+        &mut self,
+        index: usize,
+        mut msgs: Vec<Message>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let insert_at = index.min(self.messages.len());
+        // Preserve order: insert by extending via splice pattern
+        if insert_at == self.messages.len() {
+            self.messages.extend(msgs.drain(..));
+        } else {
+            for (offset, msg) in msgs.drain(..).enumerate() {
+                self.messages.insert(insert_at + offset, msg);
+            }
+        }
+        self.summary = None;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Replace a single message at `index` with an agent placeholder message containing
+    /// the provided text. Fails if index is out of bounds.
+    /// "Why": Memory archiving uses placeholders to retain a compact semantic summary
+    /// and a handle reference in place of original verbose content.
+    pub fn set_placeholder(
+        &mut self,
+        index: usize,
+        placeholder_text: String,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        if index >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "placeholder index {} out of bounds (len={})",
+                index,
+                self.messages.len()
+            ));
+        }
+        self.messages[index] = Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(placeholder_text)],
+            tool_results: Default::default(),
+        });
+        self.summary = None;
+        cx.notify();
+        Ok(())
+    }
+
+    /// Remove a single message at index (used when eliminating a placeholder after restore).
+    /// "Why": Keeps placeholder removal logic consistent and bounds-checked.
+    pub fn remove_message(&mut self, index: usize, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        if index >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "remove index {} out of bounds (len={})",
+                index,
+                self.messages.len()
+            ));
+        }
+        self.messages.remove(index);
+        self.summary = None;
+        cx.notify();
+        Ok(())
     }
 
     pub fn replay(
@@ -809,7 +1393,7 @@ impl Thread {
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
 
-        Self {
+        let mut thread = Self {
             id,
             prompt_id: PromptId::new(),
             title: if db_thread.title.is_empty() {
@@ -820,6 +1404,8 @@ impl Thread {
             pending_title_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
+            memory_segments: Vec::new(),
+            memory_next_id: 0,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
@@ -832,6 +1418,10 @@ impl Thread {
             profile_id,
             project_context,
             templates,
+            // Newly added precise token usage cache fields (were missing causing E0063)
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
             model,
             summarization_model: None,
             project,
@@ -839,7 +1429,16 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+        };
+
+        if let Err(err) = thread.load_memory_segments_from_disk() {
+            log::warn!(
+                "failed to load memory segments for thread {}: {err:#}",
+                thread.id
+            );
         }
+
+        thread
     }
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
@@ -1057,6 +1656,10 @@ impl Thread {
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
+        self.add_tool(ListHistoryTool::new(cx.weak_entity()));
+        self.add_tool(MemoryAgentTool::new(cx.weak_entity()));
+        self.add_tool(TokenUsageTool::new(cx.weak_entity()));
+
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
@@ -1171,6 +1774,8 @@ impl Thread {
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
+        // Kick off (non-blocking) precise token usage computation.
+        self.spawn_compute_precise_usage(cx);
         self.run_turn(cx)
     }
 
@@ -1838,6 +2443,13 @@ impl Thread {
         log::debug!("Request will include {} messages", messages.len());
         log::debug!("Request includes {} tools", tools.len());
 
+        // Enumerate tool names for debugging (visibility into which tools, including "memory", are offered)
+        if log::log_enabled!(log::Level::Info) {
+            for tool_name in tools.iter().map(|t| &t.name) {
+                log::info!("Thread {} including tool: {}", self.id, tool_name);
+            }
+        }
+
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
@@ -1923,6 +2535,32 @@ impl Thread {
         tools
     }
 
+    // ----------------------------------------------------------------------------
+    // Debug helpers (not exposed outside tests / diagnostics)
+    // ----------------------------------------------------------------------------
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_memory_store(
+        &mut self,
+        start: usize,
+        end: usize,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<u64> {
+        self.store_memory_segment(start, end, cx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_memory_list(
+        &self,
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)> {
+        self.memory_segment_metas()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_memory_restore(&mut self, id: u64, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        self.restore_memory_segment(id, cx)
+    }
+
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
@@ -1933,9 +2571,52 @@ impl Thread {
             self.messages.len()
         );
 
+        // Token usage (precise only):
+        // Expose usage in system prompt only when precise values have been computed; do not surface heuristic estimates.
+        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
+            (self.precise_active_tokens, self.precise_max_tokens)
+        {
+            let pct = if max > 0 {
+                (precise as f64 / max as f64) * 100.0
+            } else {
+                0.0
+            };
+            (
+                Some(precise as usize),
+                Some(max as usize),
+                Some((pct * 100.0).round() / 100.0),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        // Derive memory tool telemetry (only when segments exist and we have at least some recorded token counts).
+        let (memory_segment_count_opt, memory_saved_tokens_opt) = if self.memory_segments.is_empty()
+        {
+            (None, None)
+        } else {
+            let mut saved: u64 = 0;
+            for seg in &self.memory_segments {
+                // Only add when precise token counts were captured (message_token_count > 0).
+                // We treat missing/zero token counts as unknown and skip them.
+                if seg.message_token_count > 0
+                    && seg.message_token_count >= seg.placeholder_token_count
+                {
+                    saved += (seg.message_token_count - seg.placeholder_token_count) as u64;
+                }
+            }
+            let count = self.memory_segments.len();
+            (Some(count), if saved > 0 { Some(saved) } else { None })
+        };
+
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
+            active_tokens: active_tokens_opt,
+            max_tokens: max_tokens_opt,
+            usage_pct: usage_pct_opt,
+            memory_segment_count: memory_segment_count_opt,
+            memory_saved_tokens: memory_saved_tokens_opt,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -1958,6 +2639,107 @@ impl Thread {
         }
 
         messages
+    }
+
+    /// Spawn an async task to compute precise token usage (total + per-message) and
+    /// cache the aggregate values in the thread so subsequent prompt builds can
+    /// surface accurate usage data in the system prompt. This runs best-effort:
+    /// failures (e.g. provider not supporting counting) fall back silently to
+    /// heuristic-only behavior. It only updates when values change to limit
+    /// unnecessary UI events.
+    fn spawn_compute_precise_usage(&mut self, cx: &mut Context<Self>) {
+        if self.model.is_none() {
+            return;
+        }
+        let model = self.model.clone();
+        let prompt_id = self.prompt_id.clone();
+        let completion_mode = self.completion_mode;
+        let messages_snapshot: Vec<_> = self.messages.iter().flat_map(|m| m.to_request()).collect();
+
+        let base_request = LanguageModelRequest {
+            thread_id: Some(self.id.to_string()),
+            prompt_id: Some(prompt_id.to_string()),
+            intent: None,
+            mode: Some(completion_mode.into()),
+            messages: messages_snapshot.clone(),
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: Some(0.0),
+            thinking_allowed: true,
+        };
+
+        let _ = cx.spawn({
+            let thread = cx.weak_entity();
+            async move |_, cx| {
+                let Some(model) = model else {
+                    return;
+                };
+
+                // Attempt full per-message precise counting first (can be expensive).
+                let per_message_result = crate::token_usage::precise_per_message_tokens(
+                    &model,
+                    &base_request,
+                    &messages_snapshot,
+                    cx, // AsyncApp implements TokenCountApp
+                )
+                .await;
+
+                // Fallback to heuristic if precise per-message fails.
+                let (per_message, total_precise) = match per_message_result {
+                    Ok((per, total)) => (Some(per), total),
+                    Err(_) => {
+                        let total = crate::token_usage::precise_tokens_for_slice(
+                            &model,
+                            &base_request,
+                            &messages_snapshot,
+                            cx,
+                        )
+                        .await;
+                        // If precise total also failed (unlikely), heuristic fallback.
+                        let final_total = if total == 0 {
+                            crate::token_usage::heuristic_token_count(&messages_snapshot)
+                        } else {
+                            total
+                        };
+                        let per = crate::token_usage::heuristic_per_message(&messages_snapshot);
+                        (Some(per), final_total)
+                    }
+                };
+
+                let max_tokens = model.max_token_count();
+
+                let _ = thread.update(cx, |this, cx| {
+                    let total_changed = this
+                        .precise_active_tokens
+                        .map(|v| v as usize != total_precise)
+                        .unwrap_or(true);
+                    let max_changed = this
+                        .precise_max_tokens
+                        .map(|v| v != max_tokens)
+                        .unwrap_or(true);
+                    let per_changed = match (&this.precise_per_message_tokens, &per_message) {
+                        (None, Some(_)) => true,
+                        (Some(old), Some(new)) => {
+                            // Explicitly annotate the vector types to satisfy the compiler's type inference (fixes E0282).
+                            let (old, new): (&Vec<usize>, &Vec<usize>) = (old, new);
+                            old.len() != new.len() || old != new
+                        }
+                        (Some(_), None) => false, // keep existing if new unavailable
+                        (None, None) => false,
+                    };
+
+                    if total_changed || max_changed || per_changed {
+                        this.precise_active_tokens = Some(total_precise as u64);
+                        this.precise_max_tokens = Some(max_tokens);
+                        if per_message.is_some() {
+                            this.precise_per_message_tokens = per_message;
+                        }
+                        cx.notify();
+                    }
+                });
+            }
+        });
     }
 
     pub fn to_markdown(&self) -> String {

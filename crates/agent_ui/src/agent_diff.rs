@@ -1292,6 +1292,24 @@ impl AgentDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Update global active thread for MCP memory tools
+        match &thread {
+            AgentDiffThread::AcpThread(acp_thread) => {
+                // Get the internal thread from the ACP thread via the native connection
+                if let Some(connection) = acp_thread
+                    .read(cx)
+                    .connection()
+                    .clone()
+                    .downcast::<agent2::NativeAgentConnection>()
+                {
+                    let session_id = acp_thread.read(cx).session_id();
+                    if let Some(internal_thread) = connection.thread(session_id, cx) {
+                        agent2::active_thread::set_active_thread(Some(internal_thread), cx);
+                    }
+                }
+            }
+        }
+
         let action_log = thread.action_log(cx);
 
         let action_log_subscription = cx.observe_in(&action_log, window, {

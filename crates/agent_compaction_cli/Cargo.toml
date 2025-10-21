@@ -1,0 +1,19 @@
+[package]
+name = "agent_compaction_cli"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+description = "CLI helper to call embedded agent compaction (list_history, memory) tools via the in-process MCP server socket."
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = []
+
+[lints]
+workspace = true

@@ -70,6 +70,8 @@ web_search.workspace = true
 workspace-hack.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
+once_cell = "1"
+regex.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, "features" = ["test-support"] }

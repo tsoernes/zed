@@ -247,12 +247,14 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
+ "once_cell",
  "open",
  "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "regex",
  "reqwest_client",
  "rust-embed",
  "schemars 1.0.1",
@@ -282,6 +284,16 @@ dependencies = [
  "zed_env_vars",
  "zlog",
  "zstd",
+]
+
+[[package]]
+name = "agent_compaction_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -659,6 +671,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures 0.3.31",
+ "http_client",
+ "log",
  "schemars 1.0.1",
  "serde",
  "serde_json",
@@ -975,6 +989,7 @@ dependencies = [
  "action_log",
  "agent_settings",
  "anyhow",
+ "assistant_context",
  "assistant_tool",
  "buffer_diff",
  "chrono",
@@ -1001,6 +1016,7 @@ dependencies = [
  "lsp",
  "markdown",
  "open",
+ "parking_lot",
  "paths",
  "portable-pty",
  "pretty_assertions",
@@ -1026,6 +1042,8 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
+ "util",
+ "uuid",
  "watch",
  "web_search",
  "workspace",
@@ -19989,6 +20007,7 @@ dependencies = [
  "acp_tools",
  "activity_indicator",
  "agent",
+ "agent2",
  "agent_settings",
  "agent_ui",
  "anyhow",

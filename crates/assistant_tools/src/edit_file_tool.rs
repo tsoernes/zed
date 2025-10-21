@@ -240,6 +240,16 @@ impl Tool for EditFileTool {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
+        log::info!("EditFileTool raw input: {}", input);
+        if let Some(mode_val) = input.get("mode").and_then(|v| v.as_str()) {
+            if !matches!(mode_val, "edit" | "create" | "overwrite") {
+                return Task::ready(Err(anyhow!(
+                    "Invalid mode '{}'. Use one of: edit | create | overwrite.",
+                    mode_val
+                )))
+                .into();
+            }
+        }
         let input = match serde_json::from_value::<EditFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
@@ -394,29 +404,34 @@ impl Tool for EditFileTool {
 
             let input_path = input.path.display();
             if diff.is_empty() {
-                anyhow::ensure!(
-                    !hallucinated_old_text,
-                    formatdoc! {"
-                        Some edits were produced but none of them could be applied.
-                        Read the relevant sections of {input_path} again so that
-                        I can perform the requested edits.
-                    "}
-                );
-                anyhow::ensure!(
-                    ambiguous_ranges.is_empty(),
-                    {
-                        let line_numbers = ambiguous_ranges
-                            .iter()
-                            .map(|range| range.start.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        formatdoc! {"
-                            <old_text> matches more than one position in the file (lines: {line_numbers}). Read the
-                            relevant sections of {input_path} again and extend <old_text> so
-                            that I can perform the requested edits.
-                        "}
-                    }
-                );
+                if hallucinated_old_text {
+                    let diagnostic = serde_json::json!({
+                        "kind": "edit_hallucination",
+                        "path": input_path.to_string(),
+                        "message": "Some edits were produced but none could be applied. Re-read relevant sections and try again."
+                    });
+                    return Ok(ToolResultOutput {
+                        content: ToolResultContent::Text("No edits were made (hallucinated ranges).".into()),
+                        output: Some(diagnostic),
+                    });
+                }
+                if !ambiguous_ranges.is_empty() {
+                    let line_numbers = ambiguous_ranges
+                        .iter()
+                        .map(|range| range.start.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let diagnostic = serde_json::json!({
+                        "kind": "edit_ambiguous_old_text",
+                        "path": input_path.to_string(),
+                        "lines": line_numbers,
+                        "message": "<old_text> matches multiple positions. Extend <old_text> for disambiguation."
+                    });
+                    return Ok(ToolResultOutput {
+                        content: ToolResultContent::Text("No edits were made (ambiguous <old_text>).".into()),
+                        output: Some(diagnostic),
+                    });
+                }
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text("No edits were made.".into()),
                     output: serde_json::to_value(output).ok(),
@@ -1443,7 +1458,7 @@ mod tests {
 
     fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
         cx.update(|cx| {
-            paths::set_custom_data_dir(data_dir.to_str().unwrap());
+            paths::set_custom_data_dir_allow_late(data_dir.to_str().unwrap());
             // Set custom data directory (config will be under data_dir/config)
 
             let settings_store = SettingsStore::test(cx);

@@ -1,4 +1,5 @@
 [workspace]
+
 resolver = "2"
 members = [
     "crates/acp_tools",
@@ -7,6 +8,7 @@ members = [
     "crates/activity_indicator",
     "crates/agent",
     "crates/agent2",
+    "crates/agent_compaction_cli",
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",

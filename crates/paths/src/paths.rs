@@ -80,6 +80,20 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     })
 }
 
+pub fn set_custom_data_dir_allow_late(dir: &str) -> &'static PathBuf {
+    CUSTOM_DATA_DIR.get_or_init(|| {
+        let mut path = PathBuf::from(dir);
+        if path.is_relative() {
+            let abs_path = path
+                .canonicalize()
+                .expect("failed to canonicalize custom data directory's path to an absolute path");
+            path = util::paths::SanitizedPath::new(&abs_path).into()
+        }
+        let _ = std::fs::create_dir_all(&path);
+        path
+    })
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     CONFIG_DIR.get_or_init(|| {

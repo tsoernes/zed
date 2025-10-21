@@ -977,23 +977,39 @@ impl Thread {
         cx: &App,
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
-        if model.supports_tools() {
-            self.profile
-                .enabled_tools(cx)
-                .into_iter()
-                .filter_map(|(name, tool)| {
-                    // Skip tools that cannot be supported
-                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                    Some(LanguageModelRequestTool {
-                        name: name.into(),
-                        description: tool.description(),
-                        input_schema,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::default()
+        if !model.supports_tools() {
+            return Vec::default();
         }
+
+        // Gather enabled tools first so we can log candidates before schema filtering.
+        let enabled = self.profile.enabled_tools(cx);
+        for (name, _tool) in &enabled {
+            log::info!("Thread::available_tools candidate tool: {}", name);
+        }
+
+        enabled
+            .into_iter()
+            .filter_map(
+                |(name, tool)| match tool.input_schema(model.tool_input_format()) {
+                    Ok(input_schema) => {
+                        log::info!("Thread::available_tools including tool: {}", name);
+                        Some(LanguageModelRequestTool {
+                            name: name.into(),
+                            description: tool.description(),
+                            input_schema,
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Thread::available_tools dropping tool '{}' due to schema error: {}",
+                            name,
+                            e
+                        );
+                        None
+                    }
+                },
+            )
+            .collect()
     }
 
     pub fn insert_user_message(
@@ -1348,6 +1364,13 @@ impl Thread {
                 cache: false,
             };
 
+            // Prepend a stable message index marker so the language model can see
+            // each message's index. This is intentionally added only to the model
+            // request content and does not affect UI rendering.
+            request_message.content.push(MessageContent::Text(
+                format!("[[MSG_INDEX:{}]]", message.id.0).into(),
+            ));
+
             message
                 .loaded_context
                 .add_to_request_message(&mut request_message);
@@ -1467,6 +1490,14 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
+
+            // Prepend a stable message index marker so the summarization request
+            // sent to the language model includes explicit message indices. This
+            // marker is only added to the model request payload and does not
+            // affect UI rendering or stored messages.
+            request_message.content.push(MessageContent::Text(
+                format!("[[MSG_INDEX:{}]]", message.id.0).into(),
+            ));
 
             for segment in &message.segments {
                 match segment {
