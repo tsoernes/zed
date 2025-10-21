@@ -1025,6 +1025,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter-rust",
  "ui",

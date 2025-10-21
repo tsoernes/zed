@@ -1,9 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
-    ReadFileTool, ShellDetectorTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
-    TokenUsageTool, WebSearchTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool,
+    GrepTool, ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
+    ReadFileTool, ShellDetectorTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ThinkingTool, TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1110,6 +1110,7 @@ impl Thread {
     }
 
     /// List all archived memory segments (thread-scoped).
+    #[allow(dead_code)]
     pub(crate) fn list_memory_segments(&self) -> &[ThreadMemorySegment] {
         &self.memory_segments
     }
@@ -1664,7 +1665,10 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
-        self.add_tool(EnhancedTerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(EnhancedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
         self.add_tool(ShellDetectorTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
@@ -2569,22 +2573,25 @@ impl Thread {
     /// guidance material vs the dynamic conversation messages.
     pub fn build_system_prompt(&self, cx: &App) -> String {
         // Token usage (precise only): only surface when available; otherwise omit.
-        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
-            (self.precise_active_tokens, self.precise_max_tokens)
-        {
-            let pct = if max > 0 {
-                (precise as f64 / max as f64) * 100.0
+        // Prefix these with underscores to indicate intentional unused bindings
+        // when the precise values are not needed by the template rendering.
+        let (_active_tokens_opt, _max_tokens_opt, _usage_pct_opt) =
+            if let (Some(precise), Some(max)) =
+                (self.precise_active_tokens, self.precise_max_tokens)
+            {
+                let pct = if max > 0 {
+                    (precise as f64 / max as f64) * 100.0
+                } else {
+                    0.0
+                };
+                (
+                    Some(precise as usize),
+                    Some(max as usize),
+                    Some((pct * 100.0).round() / 100.0),
+                )
             } else {
-                0.0
+                (None, None, None)
             };
-            (
-                Some(precise as usize),
-                Some(max as usize),
-                Some((pct * 100.0).round() / 100.0),
-            )
-        } else {
-            (None, None, None)
-        };
         SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),

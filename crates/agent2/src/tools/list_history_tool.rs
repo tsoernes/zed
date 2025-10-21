@@ -106,10 +106,10 @@ impl AgentTool for ListHistoryTool {
         let mut current_heading: Option<String> = None;
         let mut current_lines: Vec<String> = Vec::new();
 
-        let mut push_current = |messages: &mut Vec<ParsedMessage>,
-                                role: &mut Option<String>,
-                                heading: &mut Option<String>,
-                                lines: &mut Vec<String>| {
+        let push_current = |messages: &mut Vec<ParsedMessage>,
+                            role: &mut Option<String>,
+                            heading: &mut Option<String>,
+                            lines: &mut Vec<String>| {
             if let (Some(r), Some(h)) = (role.take(), heading.take()) {
                 let body = if lines.is_empty() {
                     format!("{h}\n")
