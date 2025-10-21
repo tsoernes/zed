@@ -1,5 +1,7 @@
-use crate::context_store::ContextStore;
-use agent::HistoryStore;
+use agent::{
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 use collections::VecDeque;
 use editor::actions::Paste;
 use editor::display_map::EditorMargins;
@@ -14,7 +16,6 @@ use gpui::{
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
-use prompt_store::PromptStore;
 use settings::Settings;
 use std::cmp;
 use std::rc::Rc;
@@ -776,8 +777,8 @@ impl PromptEditor<BufferCodegen> {
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
@@ -822,7 +823,7 @@ impl PromptEditor<BufferCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
-                prompt_store.clone(),
+                text_thread_store.clone(),
                 prompt_editor_entity,
                 codegen_buffer.as_ref().map(Entity::downgrade),
             ))));
@@ -836,7 +837,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_store,
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 ModelUsageContext::InlineAssistant,
@@ -948,8 +949,8 @@ impl PromptEditor<TerminalCodegen> {
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -987,7 +988,7 @@ impl PromptEditor<TerminalCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
-                prompt_store.clone(),
+                text_thread_store.clone(),
                 prompt_editor_entity,
                 None,
             ))));
@@ -1001,7 +1002,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_store.clone(),
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 ModelUsageContext::InlineAssistant,

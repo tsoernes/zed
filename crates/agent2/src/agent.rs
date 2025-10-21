@@ -326,9 +326,6 @@ impl NativeAgent {
             }),
         ];
 
-        // Clone before moving into the sessions map so we can set the global active thread.
-        let thread_entity_for_global = thread_handle.clone();
-
         self.sessions.insert(
             session_id,
             Session {
@@ -338,11 +335,6 @@ impl NativeAgent {
                 pending_save: Task::ready(()),
             },
         );
-
-        // Safety hook: ensure GlobalActiveThread is always set when a session is registered.
-        // This covers code paths (e.g. restored sessions) that may bypass NativeAgentConnection::new_thread.
-        crate::active_thread::set_active_thread(Some(thread_entity_for_global), cx);
-
         acp_thread
     }
 
@@ -959,21 +951,16 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             .models
                             .model_from_id(&LanguageModels::model_id(&default_model.model))
                     });
-                    Ok({
-                        let thread_entity = cx.new(|cx| {
-                            Thread::new(
-                                project.clone(),
-                                agent.project_context.clone(),
-                                agent.context_server_registry.clone(),
-                                agent.templates.clone(),
-                                default_model,
-                                cx,
-                            )
-                        });
-                        // Hook: set active thread globally so memory backend can operate.
-                        crate::active_thread::set_active_thread(Some(thread_entity.clone()), cx);
-                        thread_entity
-                    })
+                    Ok(cx.new(|cx| {
+                        Thread::new(
+                            project.clone(),
+                            agent.project_context.clone(),
+                            agent.context_server_registry.clone(),
+                            agent.templates.clone(),
+                            default_model,
+                            cx,
+                        )
+                    }))
                 },
             )??;
             agent.update(cx, |agent, cx| agent.register_session(thread, cx))
@@ -1431,7 +1418,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
     async fn test_save_load_thread(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -1511,7 +1497,8 @@ mod tests {
         model.send_last_completion_stream_text_chunk("Lorem.");
         model.end_last_completion_stream();
         cx.run_until_parked();
-        summary_model.send_last_completion_stream_text_chunk("Explaining /a/b.md");
+        summary_model
+            .send_last_completion_stream_text_chunk(&format!("Explaining {}", path!("/a/b.md")));
         summary_model.end_last_completion_stream();
 
         send.await.unwrap();
@@ -1551,7 +1538,7 @@ mod tests {
             history_entries(&history_store, cx),
             vec![(
                 HistoryEntryId::AcpThread(session_id.clone()),
-                "Explaining /a/b.md".into()
+                format!("Explaining {}", path!("/a/b.md"))
             )]
         );
         let acp_thread = agent

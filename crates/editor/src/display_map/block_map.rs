@@ -1521,11 +1521,10 @@ impl BlockSnapshot {
     }
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
-        let (start, _, item) =
-            self.transforms
-                .find::<Dimensions<BlockRow, WrapRow>, _>((), &row, Bias::Right);
-        if let Some(transform) = item {
-            let Dimensions(output_start, input_start, _) = start;
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
+        cursor.seek(&BlockRow(row.0), Bias::Right);
+        if let Some(transform) = cursor.item() {
+            let Dimensions(output_start, input_start, _) = cursor.start();
             let overshoot = row.0 - output_start.0;
             if transform.block.is_some() {
                 0
@@ -1540,13 +1539,15 @@ impl BlockSnapshot {
     }
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
-        let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
-        item.is_some_and(|t| t.block.is_some())
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
+        cursor.seek(&row, Bias::Right);
+        cursor.item().is_some_and(|t| t.block.is_some())
     }
 
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
-        let (_, _, item) = self.transforms.find::<BlockRow, _>((), &row, Bias::Right);
-        let Some(transform) = item else {
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
+        cursor.seek(&row, Bias::Right);
+        let Some(transform) = cursor.item() else {
             return false;
         };
         matches!(transform.block, Some(Block::FoldedBuffer { .. }))
@@ -1556,10 +1557,9 @@ impl BlockSnapshot {
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
-        let (_, _, item) =
-            self.transforms
-                .find::<WrapRow, _>((), &WrapRow(wrap_point.row()), Bias::Right);
-        item.is_some_and(|transform| {
+        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(());
+        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
+        cursor.item().is_some_and(|transform| {
             transform
                 .block
                 .as_ref()
@@ -1627,16 +1627,13 @@ impl BlockSnapshot {
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
-        let (start, _, item) = self.transforms.find::<Dimensions<WrapRow, BlockRow>, _>(
-            (),
-            &WrapRow(wrap_point.row()),
-            Bias::Right,
-        );
-        if let Some(transform) = item {
+        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(());
+        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
+        if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
-                BlockPoint::new(start.1.0, 0)
+                BlockPoint::new(cursor.start().1.0, 0)
             } else {
-                let Dimensions(input_start_row, output_start_row, _) = start;
+                let Dimensions(input_start_row, output_start_row, _) = cursor.start();
                 let input_start = Point::new(input_start_row.0, 0);
                 let output_start = Point::new(output_start_row.0, 0);
                 let input_overshoot = wrap_point.0 - input_start;
@@ -1648,29 +1645,26 @@ impl BlockSnapshot {
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
-        let (start, end, item) = self.transforms.find::<Dimensions<BlockRow, WrapRow>, _>(
-            (),
-            &BlockRow(block_point.row),
-            Bias::Right,
-        );
-        if let Some(transform) = item {
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
+        cursor.seek(&BlockRow(block_point.row), Bias::Right);
+        if let Some(transform) = cursor.item() {
             match transform.block.as_ref() {
                 Some(block) => {
                     if block.place_below() {
-                        let wrap_row = start.1.0 - 1;
+                        let wrap_row = cursor.start().1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     } else if block.place_above() {
-                        WrapPoint::new(start.1.0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else if bias == Bias::Left {
-                        WrapPoint::new(start.1.0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else {
-                        let wrap_row = end.1.0 - 1;
+                        let wrap_row = cursor.end().1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     }
                 }
                 None => {
-                    let overshoot = block_point.row - start.0.0;
-                    let wrap_row = start.1.0 + overshoot;
+                    let overshoot = block_point.row - cursor.start().0.0;
+                    let wrap_row = cursor.start().1.0 + overshoot;
                     WrapPoint::new(wrap_row, block_point.column)
                 }
             }

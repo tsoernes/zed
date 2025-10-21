@@ -1,25 +1,31 @@
-use std::ops::Range;
-
+use agent::{context::AgentContextKey, context_store::ContextStoreEvent};
+use agent_settings::AgentProfileId;
 use collections::HashMap;
 use editor::display_map::CreaseId;
 use editor::{Addon, AnchorRangeExt, Editor};
-use gpui::{Entity, Subscription};
+use gpui::{App, Entity, Subscription};
 use ui::prelude::*;
 
-use crate::{
-    context::{AgentContextHandle, AgentContextKey},
-    context_picker::crease_for_mention,
-    context_store::{ContextStore, ContextStoreEvent},
-};
+use crate::context_picker::crease_for_mention;
+use crate::profile_selector::ProfileProvider;
+use agent::{MessageCrease, Thread, context_store::ContextStore};
 
-/// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
-#[derive(Clone, Debug)]
-pub struct MessageCrease {
-    pub range: Range<usize>,
-    pub icon_path: SharedString,
-    pub label: SharedString,
-    /// None for a deserialized message, Some otherwise.
-    pub context: Option<AgentContextHandle>,
+impl ProfileProvider for Entity<Thread> {
+    fn profiles_supported(&self, cx: &App) -> bool {
+        self.read(cx)
+            .configured_model()
+            .is_some_and(|model| model.model.supports_tools())
+    }
+
+    fn profile_id(&self, cx: &App) -> AgentProfileId {
+        self.read(cx).profile().id().clone()
+    }
+
+    fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_profile(profile_id, cx);
+        });
+    }
 }
 
 #[derive(Default)]

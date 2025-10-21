@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent::{HistoryEntry, HistoryStore};
+use agent::context_store::ContextStore;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
 use file_icons::FileIcons;
@@ -11,12 +11,12 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use itertools::Itertools;
-use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
+use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::lsp_store::SymbolLocation;
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
-    ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
+    Symbol, WorktreeId,
 };
 use prompt_store::PromptStore;
 use rope::Point;
@@ -27,9 +27,10 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::Workspace;
 
-use crate::{
+use agent::{
+    Thread,
     context::{AgentContextHandle, AgentContextKey, RULES_ICON},
-    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
 };
 
 use super::fetch_context_picker::fetch_url_content;
@@ -37,7 +38,7 @@ use super::file_context_picker::{FileMatch, search_files};
 use super::rules_context_picker::{RulesContextEntry, search_rules};
 use super::symbol_context_picker::SymbolMatch;
 use super::symbol_context_picker::search_symbols;
-use super::thread_context_picker::search_threads;
+use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
     available_context_picker_entries, recent_context_picker_entries_with_store, selection_ranges,
@@ -47,8 +48,7 @@ use crate::message_editor::ContextCreasesAddon;
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(HistoryEntry),
-    RecentThread(HistoryEntry),
+    Thread(ThreadMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
@@ -65,7 +65,6 @@ impl Match {
             Match::File(file) => file.mat.score,
             Match::Entry(mode) => mode.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
             Match::Thread(_) => 1.,
-            Match::RecentThread(_) => 1.,
             Match::Symbol(_) => 1.,
             Match::Fetch(_) => 1.,
             Match::Rules(_) => 1.,
@@ -78,8 +77,9 @@ fn search(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     recent_entries: Vec<RecentEntry>,
-    prompt_store: Option<WeakEntity<PromptStore>>,
-    thread_store: Option<WeakEntity<HistoryStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_context_store: Option<WeakEntity<assistant_context::ContextStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Vec<Match>> {
@@ -107,9 +107,13 @@ fn search(
         }
 
         Some(ContextPickerMode::Thread) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
+            if let Some((thread_store, context_store)) = thread_store
+                .as_ref()
+                .and_then(|t| t.upgrade())
+                .zip(text_thread_context_store.as_ref().and_then(|t| t.upgrade()))
+            {
                 let search_threads_task =
-                    search_threads(query, cancellation_flag, &thread_store, cx);
+                    search_threads(query, cancellation_flag, thread_store, context_store, cx);
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -131,8 +135,8 @@ fn search(
         }
 
         Some(ContextPickerMode::Rules) => {
-            if let Some(prompt_store) = prompt_store.as_ref().and_then(|p| p.upgrade()) {
-                let search_rules_task = search_rules(query, cancellation_flag, &prompt_store, cx);
+            if let Some(prompt_store) = prompt_store.as_ref() {
+                let search_rules_task = search_rules(query, cancellation_flag, prompt_store, cx);
                 cx.background_spawn(async move {
                     search_rules_task
                         .await
@@ -165,7 +169,12 @@ fn search(
                             },
                             is_recent: true,
                         }),
-                        super::RecentEntry::Thread(entry) => Match::RecentThread(entry),
+                        super::RecentEntry::Thread(thread_context_entry) => {
+                            Match::Thread(ThreadMatch {
+                                thread: thread_context_entry,
+                                is_recent: true,
+                            })
+                        }
                     })
                     .collect::<Vec<_>>();
 
@@ -236,8 +245,8 @@ fn search(
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    thread_store: Option<WeakEntity<HistoryStore>>,
-    prompt_store: Option<WeakEntity<PromptStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     editor: WeakEntity<Editor>,
     excluded_buffer: Option<WeakEntity<Buffer>>,
 }
@@ -246,8 +255,8 @@ impl ContextPickerCompletionProvider {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         editor: WeakEntity<Editor>,
         exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
@@ -255,7 +264,7 @@ impl ContextPickerCompletionProvider {
             workspace,
             context_store,
             thread_store,
-            prompt_store,
+            text_thread_store,
             editor,
             excluded_buffer: exclude_buffer,
         }
@@ -397,14 +406,14 @@ impl ContextPickerCompletionProvider {
     }
 
     fn completion_for_thread(
-        thread_entry: HistoryEntry,
+        thread_entry: ThreadContextEntry,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         recent: bool,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
-        thread_store: Entity<HistoryStore>,
-        project: Entity<Project>,
+        thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
     ) -> Completion {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
@@ -430,16 +439,18 @@ impl ContextPickerCompletionProvider {
                 editor,
                 context_store.clone(),
                 move |window, cx| match &thread_entry {
-                    HistoryEntry::AcpThread(thread) => {
+                    ThreadContextEntry::Thread { id, .. } => {
+                        let thread_id = id.clone();
                         let context_store = context_store.clone();
-                        let load_thread_task = agent::load_agent_thread(
-                            thread.id.clone(),
-                            thread_store.clone(),
-                            project.clone(),
-                            cx,
-                        );
+                        let thread_store = thread_store.clone();
                         window.spawn::<_, Option<_>>(cx, async move |cx| {
-                            let thread = load_thread_task.await.log_err()?;
+                            let thread: Entity<Thread> = thread_store
+                                .update_in(cx, |thread_store, window, cx| {
+                                    thread_store.open_thread(&thread_id, window, cx)
+                                })
+                                .ok()?
+                                .await
+                                .log_err()?;
                             let context = context_store
                                 .update(cx, |context_store, cx| {
                                     context_store.add_thread(thread, false, cx)
@@ -448,13 +459,13 @@ impl ContextPickerCompletionProvider {
                             Some(context)
                         })
                     }
-                    HistoryEntry::TextThread(thread) => {
-                        let path = thread.path.clone();
+                    ThreadContextEntry::Context { path, .. } => {
+                        let path = path.clone();
                         let context_store = context_store.clone();
-                        let thread_store = thread_store.clone();
+                        let text_thread_store = text_thread_store.clone();
                         cx.spawn::<_, Option<_>>(async move |cx| {
-                            let thread = thread_store
-                                .update(cx, |store, cx| store.load_text_thread(path, cx))
+                            let thread = text_thread_store
+                                .update(cx, |store, cx| store.open_local_context(path, cx))
                                 .ok()?
                                 .await
                                 .log_err()?;
@@ -675,8 +686,7 @@ impl ContextPickerCompletionProvider {
         };
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        let mut label = CodeLabelBuilder::default();
-        label.push_str(&symbol.name, None);
+        let mut label = CodeLabel::plain(symbol.name.clone(), None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
         label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
@@ -686,7 +696,7 @@ impl ContextPickerCompletionProvider {
         Some(Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: label.build(),
+            label,
             documentation: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(IconName::Code.path().into()),
@@ -719,7 +729,7 @@ impl ContextPickerCompletionProvider {
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
     let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-    let mut label = CodeLabelBuilder::default();
+    let mut label = CodeLabel::default();
 
     label.push_str(file_name, None);
     label.push_str(" ", None);
@@ -728,7 +738,9 @@ fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: 
         label.push_str(directory, comment_id);
     }
 
-    label.build()
+    label.filter_range = 0..label.text().len();
+
+    label
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -763,7 +775,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
-        let prompt_store = self.prompt_store.clone();
+        let text_thread_store = self.text_thread_store.clone();
         let editor = self.editor.clone();
         let http_client = workspace.read(cx).client().http_client();
         let path_style = workspace.read(cx).path_style(cx);
@@ -781,10 +793,18 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let recent_entries = recent_context_picker_entries_with_store(
             context_store.clone(),
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
             excluded_path.clone(),
             cx,
         );
+
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
 
         let search_task = search(
             mode,
@@ -793,14 +813,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             recent_entries,
             prompt_store,
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
             cx,
         );
-        let project = workspace.read(cx).project().downgrade();
 
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
-            let Some((editor, project)) = editor.upgrade().zip(project.upgrade()) else {
+            let Some(editor) = editor.upgrade() else {
                 return Ok(Vec::new());
             };
 
@@ -841,32 +861,25 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             workspace.clone(),
                             cx,
                         ),
-                        Match::Thread(thread) => {
+
+                        Match::Thread(ThreadMatch {
+                            thread, is_recent, ..
+                        }) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                            let text_thread_store =
+                                text_thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_thread(
                                 thread,
                                 excerpt_id,
                                 source_range.clone(),
-                                false,
+                                is_recent,
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
-                                project.clone(),
+                                text_thread_store,
                             ))
                         }
-                        Match::RecentThread(thread) => {
-                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_thread(
-                                thread,
-                                excerpt_id,
-                                source_range.clone(),
-                                true,
-                                editor.clone(),
-                                context_store.clone(),
-                                thread_store,
-                                project.clone(),
-                            ))
-                        }
+
                         Match::Rules(user_rules) => Some(Self::completion_for_rules(
                             user_rules,
                             excerpt_id,
@@ -1269,7 +1282,7 @@ mod tests {
             editor
         });
 
-        let context_store = cx.new(|_| ContextStore::new(project.downgrade()));
+        let context_store = cx.new(|_| ContextStore::new(project.downgrade(), None));
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {

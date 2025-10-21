@@ -7,7 +7,7 @@ use futures::Stream;
 use futures::channel::mpsc;
 use fuzzy::PathMatch;
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{BufferSnapshot, CodeLabelBuilder, HighlightId, LineEnding, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
@@ -168,7 +168,7 @@ impl SlashCommand for FileSlashCommand {
                         .display(path_style)
                         .to_string();
 
-                    let mut label = CodeLabelBuilder::default();
+                    let mut label = CodeLabel::default();
                     let file_name = path_match.path.file_name()?;
                     let label_text = if path_match.is_dir {
                         format!("{}/ ", file_name)
@@ -178,10 +178,10 @@ impl SlashCommand for FileSlashCommand {
 
                     label.push_str(label_text.as_str(), None);
                     label.push_str(&text, comment_id);
-                    label.respan_filter_range(Some(file_name));
+                    label.filter_range = 0..file_name.len();
 
                     Some(ArgumentCompletion {
-                        label: label.build(),
+                        label,
                         new_text: text,
                         after_completion: AfterCompletion::Compose,
                         replace_previous_arguments: false,

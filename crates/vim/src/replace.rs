@@ -53,7 +53,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let display_selections = editor.selections.all::<Point>(&map.display_snapshot);
+                let display_selections = editor.selections.all::<Point>(cx);
 
                 // Handles all string that require manipulation, including inserts and replaces
                 let edits = display_selections
@@ -98,7 +98,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
-                let selections = editor.selections.all::<Point>(&map.display_snapshot);
+                let selections = editor.selections.all::<Point>(cx);
                 let mut new_selections = vec![];
                 let edits: Vec<(Range<Point>, String)> = selections
                     .into_iter()
@@ -150,9 +150,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let mut selection = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
+            let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around, None);
             let start = snapshot
@@ -198,9 +196,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
-            let mut selection = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
+            let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
             motion.expand_selection(
                 &snapshot,

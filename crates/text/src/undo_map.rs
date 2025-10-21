@@ -1,5 +1,4 @@
 use crate::UndoOperation;
-use clock::Lamport;
 use std::cmp;
 use sum_tree::{Bias, SumTree};
 
@@ -25,7 +24,7 @@ impl sum_tree::KeyedItem for UndoMapEntry {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct UndoMapKey {
     edit_id: clock::Lamport,
     undo_id: clock::Lamport,
@@ -33,10 +32,7 @@ struct UndoMapKey {
 
 impl sum_tree::ContextLessSummary for UndoMapKey {
     fn zero() -> Self {
-        UndoMapKey {
-            edit_id: Lamport::MIN,
-            undo_id: Lamport::MIN,
-        }
+        Default::default()
     }
 
     fn add_summary(&mut self, summary: &Self) {
@@ -73,7 +69,7 @@ impl UndoMap {
         cursor.seek(
             &UndoMapKey {
                 edit_id,
-                undo_id: Lamport::MIN,
+                undo_id: Default::default(),
             },
             Bias::Left,
         );
@@ -97,7 +93,7 @@ impl UndoMap {
         cursor.seek(
             &UndoMapKey {
                 edit_id,
-                undo_id: Lamport::MIN,
+                undo_id: Default::default(),
             },
             Bias::Left,
         );

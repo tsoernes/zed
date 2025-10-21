@@ -17,7 +17,6 @@ pub enum CliRequest {
         wsl: Option<String>,
         wait: bool,
         open_new_workspace: Option<bool>,
-        reuse: bool,
         env: Option<HashMap<String, String>>,
         user_data_dir: Option<String>,
     },

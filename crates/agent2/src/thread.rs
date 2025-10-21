@@ -1,8 +1,8 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
-    ReadFileTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
+    ReadFileTool, ShellDetectorTool, SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool,
     TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -1088,10 +1088,9 @@ impl Thread {
             .find(|s| s.id == id)
             .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
 
-        // Compute token savings estimate using token counts (not char counts).
         let token_savings_estimate = seg
-            .message_token_count
-            .saturating_sub(seg.placeholder_token_count);
+            .message_char_count
+            .saturating_sub(seg.placeholder_char_count);
 
         let meta = serde_json::json!({
             "id": seg.id,
@@ -1099,11 +1098,9 @@ impl Thread {
             "end": seg.end,
             "count": seg.message_count,
             "chars": seg.message_char_count,
-            "tokens": seg.message_token_count,
             "summary": seg.summary.as_ref(),
             "stored_epoch_ms": seg.stored_epoch_ms,
             "placeholder_chars": seg.placeholder_char_count,
-            "placeholder_tokens": seg.placeholder_token_count,
             "token_savings_estimate": token_savings_estimate
         });
 
@@ -1134,9 +1131,8 @@ impl Thread {
                     seg.message_count,
                     seg.message_char_count,
                     seg.placeholder_char_count,
-                    // Use token counts for the estimated savings instead of character counts.
-                    seg.message_token_count
-                        .saturating_sub(seg.placeholder_token_count),
+                    seg.message_char_count
+                        .saturating_sub(seg.placeholder_char_count),
                     seg.summary.to_string(),
                     seg.stored_epoch_ms,
                 )
@@ -1667,7 +1663,9 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(EnhancedTerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(ShellDetectorTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
     }
@@ -2565,14 +2563,12 @@ impl Thread {
         self.running_turn.as_ref()?.tools.get(name).cloned()
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
-        log::trace!(
-            "Building request messages from {} thread messages",
-            self.messages.len()
-        );
-
-        // Token usage (precise only):
-        // Expose usage in system prompt only when precise values have been computed; do not surface heuristic estimates.
+    /// Build the current system prompt string (excluding any pending user input).
+    /// This is factored out so that other components (e.g. token usage tooling) can
+    /// separately account for "overhead" tokens contributed by the static / rule /
+    /// guidance material vs the dynamic conversation messages.
+    pub fn build_system_prompt(&self, cx: &App) -> String {
+        // Token usage (precise only): only surface when available; otherwise omit.
         let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
             (self.precise_active_tokens, self.precise_max_tokens)
         {
@@ -2589,43 +2585,40 @@ impl Thread {
         } else {
             (None, None, None)
         };
-
-        // Derive memory tool telemetry (only when segments exist and we have at least some recorded token counts).
-        let (memory_segment_count_opt, memory_saved_tokens_opt) = if self.memory_segments.is_empty()
-        {
-            (None, None)
-        } else {
-            let mut saved: u64 = 0;
-            for seg in &self.memory_segments {
-                // Only add when precise token counts were captured (message_token_count > 0).
-                // We treat missing/zero token counts as unknown and skip them.
-                if seg.message_token_count > 0
-                    && seg.message_token_count >= seg.placeholder_token_count
-                {
-                    saved += (seg.message_token_count - seg.placeholder_token_count) as u64;
-                }
-            }
-            let count = self.memory_segments.len();
-            (Some(count), if saved > 0 { Some(saved) } else { None })
-        };
-
-        let system_prompt = SystemPromptTemplate {
+        SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
-            active_tokens: active_tokens_opt,
-            max_tokens: max_tokens_opt,
-            usage_pct: usage_pct_opt,
-            memory_segment_count: memory_segment_count_opt,
-            memory_saved_tokens: memory_saved_tokens_opt,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
-        .expect("Invalid template");
+        .expect("Invalid template")
+    }
+
+    /// Heuristic token count for the system prompt alone (no conversation messages).
+    /// This lets UIs distinguish between user/assistant exchange tokens and fixed overhead.
+    pub fn system_prompt_token_count_heuristic(&self, cx: &App) -> usize {
+        let prompt = self.build_system_prompt(cx);
+        let msg = LanguageModelRequestMessage {
+            role: Role::System,
+            content: vec![prompt.into()],
+            cache: false,
+        };
+        crate::token_usage::heuristic_token_count(std::slice::from_ref(&msg))
+    }
+
+    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+        log::trace!(
+            "Building request messages from {} thread messages",
+            self.messages.len()
+        );
+
+        let system_prompt = self.build_system_prompt(cx);
         let mut messages = vec![LanguageModelRequestMessage {
             role: Role::System,
             content: vec![system_prompt.into()],
             cache: false,
         }];
+
         for message in &self.messages {
             messages.extend(message.to_request());
         }

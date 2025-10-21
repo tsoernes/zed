@@ -20,6 +20,7 @@ impl Render for GradientViewer {
         let color_space = self.color_space;
 
         div()
+            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .size_full()
             .p_4()

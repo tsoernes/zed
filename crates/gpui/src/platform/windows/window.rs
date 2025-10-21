@@ -51,6 +51,7 @@ pub struct WindowsWindowState {
     pub renderer: DirectXRenderer,
 
     pub click_state: ClickState,
+    pub system_settings: WindowsSystemSettings,
     pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
@@ -65,7 +66,6 @@ pub(crate) struct WindowsWindowInner {
     pub(super) this: Weak<Self>,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
-    pub(crate) system_settings: RefCell<WindowsSystemSettings>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) is_movable: bool,
@@ -115,6 +115,7 @@ impl WindowsWindowState {
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
+        let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
@@ -137,6 +138,7 @@ impl WindowsWindowState {
             hovered,
             renderer,
             click_state,
+            system_settings,
             current_cursor,
             nc_button_pressed,
             display,
@@ -169,9 +171,7 @@ impl WindowsWindowState {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(self.hwnd, &mut placement)
-                .context("failed to get window placement")
-                .log_err();
+            GetWindowPlacement(self.hwnd, &mut placement).log_err();
             placement
         };
         (
@@ -231,7 +231,6 @@ impl WindowsWindowInner {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
             platform_window_handle: context.platform_window_handle,
-            system_settings: RefCell::new(WindowsSystemSettings::new(context.display)),
         }))
     }
 
@@ -256,9 +255,7 @@ impl WindowsWindowInner {
                     lock.fullscreen_restore_bounds = window_bounds;
                     let style = WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
                     let mut rc = RECT::default();
-                    unsafe { GetWindowRect(this.hwnd, &mut rc) }
-                        .context("failed to get window rect")
-                        .log_err();
+                    unsafe { GetWindowRect(this.hwnd, &mut rc) }.log_err();
                     let _ = lock.fullscreen.insert(StyleAndBounds {
                         style,
                         x: rc.left,
@@ -305,20 +302,15 @@ impl WindowsWindowInner {
         };
         match open_status.state {
             WindowOpenState::Maximized => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
-                    .context("failed to set window placement")?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
                 ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
             },
             WindowOpenState::Fullscreen => {
-                unsafe {
-                    SetWindowPlacement(self.hwnd, &open_status.placement)
-                        .context("failed to set window placement")?
-                };
+                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
                 self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
-                    .context("failed to set window placement")?;
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
             },
         }
         Ok(())
@@ -652,12 +644,10 @@ impl PlatformWindow for WindowsWindow {
                     let mut btn_encoded = Vec::new();
                     for (index, btn) in answers.iter().enumerate() {
                         let encoded = HSTRING::from(btn.label().as_ref());
-                        let button_id = match btn {
-                            PromptButton::Ok(_) => IDOK.0,
-                            PromptButton::Cancel(_) => IDCANCEL.0,
-                            // the first few low integer values are reserved for known buttons
-                            // so for simplicity we just go backwards from -1
-                            PromptButton::Other(_) => -(index as i32) - 1,
+                        let button_id = if btn.is_cancel() {
+                            IDCANCEL.0
+                        } else {
+                            index as i32 - 100
                         };
                         button_id_map.push(button_id);
                         buttons.push(TASKDIALOG_BUTTON {
@@ -675,11 +665,11 @@ impl PlatformWindow for WindowsWindow {
                         .context("unable to create task dialog")
                         .log_err();
 
-                    if let Some(clicked) =
-                        button_id_map.iter().position(|&button_id| button_id == res)
-                    {
-                        let _ = done_tx.send(clicked);
-                    }
+                    let clicked = button_id_map
+                        .iter()
+                        .position(|&button_id| button_id == res)
+                        .unwrap();
+                    let _ = done_tx.send(clicked);
                 }
             })
             .detach();

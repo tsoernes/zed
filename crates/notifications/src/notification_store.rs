@@ -123,16 +123,14 @@ impl NotificationStore {
             return None;
         }
         let ix = count - 1 - ix;
-        let (.., item) = self
-            .notifications
-            .find::<Count, _>((), &Count(ix), Bias::Right);
-        item
+        let mut cursor = self.notifications.cursor::<Count>(());
+        cursor.seek(&Count(ix), Bias::Right);
+        cursor.item()
     }
     pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
-        let (.., item) =
-            self.notifications
-                .find::<NotificationId, _>((), &NotificationId(id), Bias::Left);
-        if let Some(item) = item
+        let mut cursor = self.notifications.cursor::<NotificationId>(());
+        cursor.seek(&NotificationId(id), Bias::Left);
+        if let Some(item) = cursor.item()
             && item.id == id
         {
             return Some(item);

@@ -1,8 +1,7 @@
-use std::ffi::OsStr;
+use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
-use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use task::{DebugScenario, ZedDebugConfig};
@@ -161,7 +160,6 @@ impl DebugAdapter for GdbDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         user_args: Option<Vec<String>>,
-        user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let user_setting_path = user_installed_path
@@ -190,7 +188,7 @@ impl DebugAdapter for GdbDebugAdapter {
         Ok(DebugAdapterBinary {
             command: Some(gdb_path),
             arguments: user_args.unwrap_or_else(|| vec!["-i=dap".into()]),
-            envs: user_env.unwrap_or_default(),
+            envs: HashMap::default(),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args: StartDebuggingRequestArguments {

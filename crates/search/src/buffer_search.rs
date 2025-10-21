@@ -1524,7 +1524,6 @@ mod tests {
     use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
-    use util_macros::perf;
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1581,7 +1580,6 @@ mod tests {
         (editor.unwrap(), search_bar, cx)
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -1862,7 +1860,6 @@ mod tests {
             .collect::<Vec<_>>()
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_option_handling(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -1923,7 +1920,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_select_all_matches(cx: &mut TestAppContext) {
         init_globals(cx);
@@ -2132,7 +2128,6 @@ mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_query_with_match_whole_word(cx: &mut TestAppContext) {
         init_globals(cx);
@@ -2218,7 +2213,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
         let (_editor, search_bar, cx) = init_test(cx);
@@ -2368,7 +2362,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_replace_simple(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -2536,7 +2529,6 @@ mod tests {
         );
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_replace_special_characters(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -2600,7 +2592,6 @@ mod tests {
         .await;
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
         cx: &mut TestAppContext,
@@ -2667,7 +2658,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_find_matches_in_selections_multiple_excerpts_buffer_multiple_selections(
         cx: &mut TestAppContext,
@@ -2754,7 +2744,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_invalid_regexp_search_after_valid(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_test(cx);
@@ -2790,7 +2779,6 @@ mod tests {
         });
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_options_changes(cx: &mut TestAppContext) {
         let (_editor, search_bar, cx) = init_test(cx);

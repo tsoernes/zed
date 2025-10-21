@@ -8,7 +8,6 @@ use client::{Client, UserStore};
 use cloud_llm_client::predict_edits_v3::{DeclarationScoreComponents, PromptFormat};
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
-use feature_flags::FeatureFlagAppExt as _;
 use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
     CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -21,11 +20,9 @@ use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{PredictionDebugInfo, Zeta, Zeta2FeatureFlag, ZetaOptions};
+use zeta2::{DEFAULT_CONTEXT_OPTIONS, PredictionDebugInfo, Zeta, ZetaOptions};
 
-use edit_prediction_context::{
-    DeclarationStyle, EditPredictionContextOptions, EditPredictionExcerptOptions,
-};
+use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
 actions!(
     dev,
@@ -68,7 +65,6 @@ pub struct Zeta2Inspector {
     min_excerpt_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
     max_prompt_bytes_input: Entity<SingleLineInput>,
-    max_retrieved_declarations: Entity<SingleLineInput>,
     active_view: ActiveView,
     zeta: Entity<Zeta>,
     _active_editor_subscription: Option<Subscription>,
@@ -134,7 +130,6 @@ impl Zeta2Inspector {
             min_excerpt_bytes_input: Self::number_input("Min Excerpt Bytes", window, cx),
             cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
             max_prompt_bytes_input: Self::number_input("Max Prompt Bytes", window, cx),
-            max_retrieved_declarations: Self::number_input("Max Retrieved Definitions", window, cx),
             zeta: zeta.clone(),
             _active_editor_subscription: None,
             _update_state_task: Task::ready(()),
@@ -171,13 +166,6 @@ impl Zeta2Inspector {
         });
         self.max_prompt_bytes_input.update(cx, |input, cx| {
             input.set_text(options.max_prompt_bytes.to_string(), window, cx);
-        });
-        self.max_retrieved_declarations.update(cx, |input, cx| {
-            input.set_text(
-                options.context.max_retrieved_declarations.to_string(),
-                window,
-                cx,
-            );
         });
         cx.notify();
     }
@@ -244,24 +232,17 @@ impl Zeta2Inspector {
                         .unwrap_or_default()
                 }
 
-                let zeta_options = this.zeta.read(cx).options().clone();
-
-                let context_options = EditPredictionContextOptions {
-                    excerpt: EditPredictionExcerptOptions {
-                        max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
-                        min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
-                        target_before_cursor_over_total_bytes: number_input_value(
-                            &this.cursor_context_ratio_input,
-                            cx,
-                        ),
-                    },
-                    max_retrieved_declarations: number_input_value(
-                        &this.max_retrieved_declarations,
+                let mut context_options = DEFAULT_CONTEXT_OPTIONS.clone();
+                context_options.excerpt = EditPredictionExcerptOptions {
+                    max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
+                    min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
+                    target_before_cursor_over_total_bytes: number_input_value(
+                        &this.cursor_context_ratio_input,
                         cx,
                     ),
-                    ..zeta_options.context
                 };
 
+                let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
                         context: context_options,
@@ -549,7 +530,6 @@ impl Zeta2Inspector {
                         h_flex()
                             .gap_2()
                             .items_end()
-                            .child(self.max_retrieved_declarations.clone())
                             .child(self.max_prompt_bytes_input.clone())
                             .child(self.render_prompt_format_dropdown(window, cx)),
                     ),
@@ -691,23 +671,15 @@ impl Zeta2Inspector {
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !cx.has_flag::<Zeta2FeatureFlag>() {
-            return Self::render_message("`zeta2` feature flag is not enabled");
-        }
-
         match self.last_prediction.as_ref() {
-            None => Self::render_message("No prediction"),
+            None => v_flex()
+                .size_full()
+                .justify_center()
+                .items_center()
+                .child(Label::new("No prediction").size(LabelSize::Large))
+                .into_any(),
             Some(prediction) => self.render_last_prediction(prediction, cx).into_any(),
         }
-    }
-
-    fn render_message(message: impl Into<SharedString>) -> AnyElement {
-        v_flex()
-            .size_full()
-            .justify_center()
-            .items_center()
-            .child(Label::new(message).size(LabelSize::Large))
-            .into_any()
     }
 
     fn render_last_prediction(&self, prediction: &LastPrediction, cx: &mut Context<Self>) -> Div {

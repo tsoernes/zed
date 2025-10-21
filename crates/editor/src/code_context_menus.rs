@@ -328,7 +328,11 @@ impl CompletionsMenu {
             .map(|choice| Completion {
                 replace_range: selection.start.text_anchor..selection.end.text_anchor,
                 new_text: choice.to_string(),
-                label: CodeLabel::plain(choice.to_string(), None),
+                label: CodeLabel {
+                    text: choice.to_string(),
+                    runs: Default::default(),
+                    filter_range: Default::default(),
+                },
                 icon_path: None,
                 documentation: None,
                 confirm: None,

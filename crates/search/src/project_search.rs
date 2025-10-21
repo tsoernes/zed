@@ -8,8 +8,7 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects,
+    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, SelectionEffects,
     actions::{Backtab, SelectAll, Tab},
     items::active_match_index,
     multibuffer_context_lines,
@@ -154,7 +153,7 @@ pub fn init(cx: &mut App) {
 
         // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
         workspace.register_action(move |workspace, action: &DeploySearch, window, cx| {
-            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) {
                 cx.propagate();
                 return;
             }
@@ -162,7 +161,7 @@ pub fn init(cx: &mut App) {
             cx.notify();
         });
         workspace.register_action(move |workspace, action: &NewSearch, window, cx| {
-            if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+            if workspace.has_active_modal(window, cx) {
                 cx.propagate();
                 return;
             }
@@ -341,7 +340,6 @@ impl ProjectSearch {
                                 .into_iter()
                                 .map(|(buffer, ranges)| {
                                     excerpts.set_anchored_excerpts_for_path(
-                                        PathKey::for_buffer(&buffer, cx),
                                         buffer,
                                         ranges,
                                         multibuffer_context_lines(cx),
@@ -2283,7 +2281,7 @@ fn register_workspace_action<A: Action>(
     callback: fn(&mut ProjectSearchBar, &A, &mut Window, &mut Context<ProjectSearchBar>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+        if workspace.has_active_modal(window, cx) {
             cx.propagate();
             return;
         }
@@ -2310,7 +2308,7 @@ fn register_workspace_action_for_present_search<A: Action>(
     callback: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+        if workspace.has_active_modal(window, cx) {
             cx.propagate();
             return;
         }
@@ -2359,10 +2357,8 @@ pub mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, paths::PathStyle, rel_path::rel_path};
-    use util_macros::perf;
     use workspace::DeploySearch;
 
-    #[perf]
     #[gpui::test]
     async fn test_project_search(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2500,7 +2496,6 @@ pub mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_deploy_project_search_focus(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2741,7 +2736,6 @@ pub mod tests {
         }).unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_filters_consider_toggle_state(cx: &mut TestAppContext) {
         init_test(cx);
@@ -2862,7 +2856,6 @@ pub mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_new_project_search_focus(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3158,7 +3151,6 @@ pub mod tests {
                 });}).unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_new_project_search_in_directory(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3285,7 +3277,6 @@ pub mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3616,7 +3607,6 @@ pub mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_search_query_history_with_multiple_views(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3840,7 +3830,6 @@ pub mod tests {
         assert_eq!(active_query(&search_view_1, cx), "");
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_deploy_search_with_multiple_panes(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4000,7 +3989,6 @@ pub mod tests {
             .unwrap();
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_scroll_search_results_to_top(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4081,7 +4069,6 @@ pub mod tests {
             .expect("unable to update search view");
     }
 
-    #[perf]
     #[gpui::test]
     async fn test_buffer_search_query_reused(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4159,67 +4146,6 @@ pub mod tests {
                 "Project search should take the query from the buffer search bar since it got focused and had a query inside"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_search_dismisses_modal(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/dir"),
-            json!({
-                "one.rs": "const ONE: usize = 1;",
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        struct EmptyModalView {
-            focus_handle: gpui::FocusHandle,
-        }
-        impl EventEmitter<gpui::DismissEvent> for EmptyModalView {}
-        impl Render for EmptyModalView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-                div()
-            }
-        }
-        impl Focusable for EmptyModalView {
-            fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-                self.focus_handle.clone()
-            }
-        }
-        impl workspace::ModalView for EmptyModalView {}
-
-        window
-            .update(cx, |workspace, window, cx| {
-                workspace.toggle_modal(window, cx, |_, cx| EmptyModalView {
-                    focus_handle: cx.focus_handle(),
-                });
-                assert!(workspace.has_active_modal(window, cx));
-            })
-            .unwrap();
-
-        cx.dispatch_action(window.into(), Deploy::find());
-
-        window
-            .update(cx, |workspace, window, cx| {
-                assert!(!workspace.has_active_modal(window, cx));
-                workspace.toggle_modal(window, cx, |_, cx| EmptyModalView {
-                    focus_handle: cx.focus_handle(),
-                });
-                assert!(workspace.has_active_modal(window, cx));
-            })
-            .unwrap();
-
-        cx.dispatch_action(window.into(), DeploySearch::find());
-
-        window
-            .update(cx, |workspace, window, cx| {
-                assert!(!workspace.has_active_modal(window, cx));
-            })
-            .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) {

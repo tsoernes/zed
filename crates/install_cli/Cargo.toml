@@ -21,4 +21,5 @@ gpui.workspace = true
 release_channel.workspace = true
 smol.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true

@@ -10,14 +10,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, Settings,
+    NotifyWhenAgentWaiting, Settings, SettingsContent,
 };
 
 pub use crate::agent_profile::*;
 
-pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
-    include_str!("prompts/summarize_thread_detailed_prompt.txt");
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -41,6 +42,7 @@ pub struct AgentSettings {
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: bool,
+    pub stream_edits: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
@@ -49,6 +51,10 @@ pub struct AgentSettings {
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
+    // Enhanced terminal safety configuration (from AgentSettingsContent)
+    pub enhanced_terminal_allow_dangerous: bool,
+    pub enhanced_terminal_denylist: Vec<Arc<str>>,
+    pub enhanced_terminal_disable_default_denylist: bool,
 }
 
 impl AgentSettings {
@@ -173,6 +179,7 @@ impl Settings for AgentSettings {
             always_allow_tool_actions: agent.always_allow_tool_actions.unwrap(),
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
             play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
+            stream_edits: agent.stream_edits.unwrap(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
             preferred_completion_mode: agent.preferred_completion_mode.unwrap().into(),
@@ -181,6 +188,23 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
+            enhanced_terminal_allow_dangerous: agent
+                .enhanced_terminal_allow_dangerous
+                .unwrap_or(false),
+            enhanced_terminal_denylist: agent.enhanced_terminal_denylist.unwrap_or_default(),
+            enhanced_terminal_disable_default_denylist: agent
+                .enhanced_terminal_disable_default_denylist
+                .unwrap_or(false),
+        }
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
+        if let Some(b) = vscode
+            .read_value("chat.agent.enabled")
+            .and_then(|b| b.as_bool())
+        {
+            current.agent.get_or_insert_default().enabled = Some(b);
+            current.agent.get_or_insert_default().button = Some(b);
         }
     }
 }

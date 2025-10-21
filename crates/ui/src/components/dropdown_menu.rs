@@ -1,6 +1,6 @@
-use gpui::{AnyView, Corner, Entity, Pixels, Point};
+use gpui::{Corner, Entity, Pixels, Point};
 
-use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
+use crate::{ContextMenu, PopoverMenu, prelude::*};
 
 use super::PopoverMenuHandle;
 
@@ -9,7 +9,6 @@ pub enum DropdownStyle {
     #[default]
     Solid,
     Outlined,
-    Subtle,
     Ghost,
 }
 
@@ -23,8 +22,6 @@ pub struct DropdownMenu {
     id: ElementId,
     label: LabelKind,
     trigger_size: ButtonSize,
-    trigger_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
-    trigger_icon: Option<IconName>,
     style: DropdownStyle,
     menu: Entity<ContextMenu>,
     full_width: bool,
@@ -33,7 +30,6 @@ pub struct DropdownMenu {
     attach: Option<Corner>,
     offset: Option<Point<Pixels>>,
     tab_index: Option<isize>,
-    chevron: bool,
 }
 
 impl DropdownMenu {
@@ -46,8 +42,6 @@ impl DropdownMenu {
             id: id.into(),
             label: LabelKind::Text(label.into()),
             trigger_size: ButtonSize::Default,
-            trigger_tooltip: None,
-            trigger_icon: Some(IconName::ChevronUpDown),
             style: DropdownStyle::default(),
             menu,
             full_width: false,
@@ -56,7 +50,6 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
-            chevron: true,
         }
     }
 
@@ -69,8 +62,6 @@ impl DropdownMenu {
             id: id.into(),
             label: LabelKind::Element(label),
             trigger_size: ButtonSize::Default,
-            trigger_tooltip: None,
-            trigger_icon: Some(IconName::ChevronUpDown),
             style: DropdownStyle::default(),
             menu,
             full_width: false,
@@ -79,13 +70,7 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
-            chevron: true,
         }
-    }
-
-    pub fn style(mut self, style: DropdownStyle) -> Self {
-        self.style = style;
-        self
     }
 
     pub fn trigger_size(mut self, size: ButtonSize) -> Self {
@@ -93,16 +78,8 @@ impl DropdownMenu {
         self
     }
 
-    pub fn trigger_tooltip(
-        mut self,
-        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) -> Self {
-        self.trigger_tooltip = Some(Box::new(tooltip));
-        self
-    }
-
-    pub fn trigger_icon(mut self, icon: IconName) -> Self {
-        self.trigger_icon = Some(icon);
+    pub fn style(mut self, style: DropdownStyle) -> Self {
+        self.style = style;
         self
     }
 
@@ -132,11 +109,6 @@ impl DropdownMenu {
         self.tab_index = Some(arg);
         self
     }
-
-    pub fn no_chevron(mut self) -> Self {
-        self.chevron = false;
-        self
-    }
 }
 
 impl Disableable for DropdownMenu {
@@ -150,7 +122,6 @@ impl RenderOnce for DropdownMenu {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let button_style = match self.style {
             DropdownStyle::Solid => ButtonStyle::Filled,
-            DropdownStyle::Subtle => ButtonStyle::Subtle,
             DropdownStyle::Outlined => ButtonStyle::Outlined,
             DropdownStyle::Ghost => ButtonStyle::Transparent,
         };
@@ -158,62 +129,32 @@ impl RenderOnce for DropdownMenu {
         let full_width = self.full_width;
         let trigger_size = self.trigger_size;
 
-        let (text_button, element_button) = match self.label {
-            LabelKind::Text(text) => (
-                Some(
-                    Button::new(self.id.clone(), text)
-                        .style(button_style)
-                        .when(self.chevron, |this| {
-                            this.icon(self.trigger_icon)
-                                .icon_position(IconPosition::End)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                        })
-                        .when(full_width, |this| this.full_width())
-                        .size(trigger_size)
-                        .disabled(self.disabled)
-                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
-                ),
-                None,
-            ),
-            LabelKind::Element(element) => (
-                None,
-                Some(
-                    ButtonLike::new(self.id.clone())
-                        .child(element)
-                        .style(button_style)
-                        .when(self.chevron, |this| {
-                            this.child(
-                                Icon::new(IconName::ChevronUpDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                        })
-                        .when(full_width, |this| this.full_width())
-                        .size(trigger_size)
-                        .disabled(self.disabled)
-                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
-                ),
-            ),
-        };
+        let button = match self.label {
+            LabelKind::Text(text) => Button::new(self.id.clone(), text)
+                .style(button_style)
+                .icon(IconName::ChevronUpDown)
+                .icon_position(IconPosition::End)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .when(full_width, |this| this.full_width())
+                .size(trigger_size)
+                .disabled(self.disabled),
+            LabelKind::Element(_element) => Button::new(self.id.clone(), "")
+                .style(button_style)
+                .icon(IconName::ChevronUpDown)
+                .icon_position(IconPosition::End)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .when(full_width, |this| this.full_width())
+                .size(trigger_size)
+                .disabled(self.disabled),
+        }
+        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index));
 
-        let mut popover = PopoverMenu::new((self.id.clone(), "popover"))
+        PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
-            .menu(move |_window, _cx| Some(self.menu.clone()));
-
-        popover = match (text_button, element_button, self.trigger_tooltip) {
-            (Some(text_button), None, Some(tooltip)) => {
-                popover.trigger_with_tooltip(text_button, tooltip)
-            }
-            (Some(text_button), None, None) => popover.trigger(text_button),
-            (None, Some(element_button), Some(tooltip)) => {
-                popover.trigger_with_tooltip(element_button, tooltip)
-            }
-            (None, Some(element_button), None) => popover.trigger(element_button),
-            _ => popover,
-        };
-
-        popover
+            .menu(move |_window, _cx| Some(self.menu.clone()))
+            .trigger(button)
             .attach(match self.attach {
                 Some(attach) => attach,
                 None => Corner::BottomRight,

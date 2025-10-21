@@ -69,8 +69,7 @@ To get completions for `deno.json` or `package.json` you can add the following t
           "schemas": [
             {
               "fileMatch": [
-                "deno.json",
-                "deno.jsonc"
+                "deno.json"
               ],
               "url": "https://raw.githubusercontent.com/denoland/deno/refs/heads/main/cli/schemas/config-file.v1.json"
             },

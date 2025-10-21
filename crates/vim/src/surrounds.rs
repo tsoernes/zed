@@ -45,8 +45,7 @@ impl Vim {
                     },
                 };
                 let surround = pair.end != surround_alias((*text).as_ref());
-                let display_map = editor.display_snapshot(cx);
-                let display_selections = editor.selections.all_adjusted_display(&display_map);
+                let (display_map, display_selections) = editor.selections.all_adjusted_display(cx);
                 let mut edits = Vec::new();
                 let mut anchors = Vec::new();
 
@@ -145,8 +144,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let display_map = editor.display_snapshot(cx);
-                let display_selections = editor.selections.all_display(&display_map);
+                let (display_map, display_selections) = editor.selections.all_display(cx);
                 let mut edits = Vec::new();
                 let mut anchors = Vec::new();
 
@@ -258,8 +256,7 @@ impl Vim {
                     let preserve_space =
                         will_replace_pair.start == will_replace_pair.end || !opening;
 
-                    let display_map = editor.display_snapshot(cx);
-                    let selections = editor.selections.all_adjusted_display(&display_map);
+                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
 
@@ -385,8 +382,7 @@ impl Vim {
             self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    let display_map = editor.display_snapshot(cx);
-                    let selections = editor.selections.all_adjusted_display(&display_map);
+                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut anchors = Vec::new();
 
                     for selection in &selections {
@@ -504,8 +500,7 @@ impl Vim {
                 let mut min_range_size = usize::MAX;
 
                 let _ = self.editor.update(cx, |editor, cx| {
-                    let display_map = editor.display_snapshot(cx);
-                    let selections = editor.selections.all_adjusted_display(&display_map);
+                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     // Even if there's multiple cursors, we'll simply rely on
                     // the first one to understand what bracket pair to map to.
                     // I believe we could, if worth it, go one step above and

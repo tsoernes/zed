@@ -825,21 +825,22 @@ impl InlayMap {
 
 impl InlaySnapshot {
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
-        let (start, _, item) = self
+        let mut cursor = self
             .transforms
-            .find::<Dimensions<InlayOffset, InlayPoint, usize>, _>((), &offset, Bias::Right);
-        let overshoot = offset.0 - start.0.0;
-        match item {
+            .cursor::<Dimensions<InlayOffset, InlayPoint, usize>>(());
+        cursor.seek(&offset, Bias::Right);
+        let overshoot = offset.0 - cursor.start().0.0;
+        match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_offset_start = start.2;
+                let buffer_offset_start = cursor.start().2;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
-                InlayPoint(start.1.0 + (buffer_end - buffer_start))
+                InlayPoint(cursor.start().1.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text().offset_to_point(overshoot);
-                InlayPoint(start.1.0 + overshoot)
+                InlayPoint(cursor.start().1.0 + overshoot)
             }
             None => self.max_point(),
         }
@@ -854,48 +855,47 @@ impl InlaySnapshot {
     }
 
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
-        let (start, _, item) = self
+        let mut cursor = self
             .transforms
-            .find::<Dimensions<InlayPoint, InlayOffset, Point>, _>((), &point, Bias::Right);
-        let overshoot = point.0 - start.0.0;
-        match item {
+            .cursor::<Dimensions<InlayPoint, InlayOffset, Point>>(());
+        cursor.seek(&point, Bias::Right);
+        let overshoot = point.0 - cursor.start().0.0;
+        match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_point_start = start.2;
+                let buffer_point_start = cursor.start().2;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
                 let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
-                InlayOffset(start.1.0 + (buffer_offset_end - buffer_offset_start))
+                InlayOffset(cursor.start().1.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text().point_to_offset(overshoot);
-                InlayOffset(start.1.0 + overshoot)
+                InlayOffset(cursor.start().1.0 + overshoot)
             }
             None => self.len(),
         }
     }
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
-        let (start, _, item) =
-            self.transforms
-                .find::<Dimensions<InlayPoint, Point>, _>((), &point, Bias::Right);
-        match item {
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
+        cursor.seek(&point, Bias::Right);
+        match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = point.0 - start.0.0;
-                start.1 + overshoot
+                let overshoot = point.0 - cursor.start().0.0;
+                cursor.start().1 + overshoot
             }
-            Some(Transform::Inlay(_)) => start.1,
+            Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.buffer.max_point(),
         }
     }
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
-        let (start, _, item) =
-            self.transforms
-                .find::<Dimensions<InlayOffset, usize>, _>((), &offset, Bias::Right);
-        match item {
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
+        cursor.seek(&offset, Bias::Right);
+        match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = offset - start.0;
-                start.1 + overshoot.0
+                let overshoot = offset - cursor.start().0;
+                cursor.start().1 + overshoot.0
             }
-            Some(Transform::Inlay(_)) => start.1,
+            Some(Transform::Inlay(_)) => cursor.start().1,
             None => self.buffer.len(),
         }
     }
@@ -1278,7 +1278,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::default(),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1298,7 +1298,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::default(),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1318,7 +1318,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::default(),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1338,7 +1338,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::default(),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1361,7 +1361,7 @@ mod tests {
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::default(),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,

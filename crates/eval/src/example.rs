@@ -9,9 +9,7 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use acp_thread::UserMessageId;
-use agent::{Thread, ThreadEvent, UserMessageContent};
-use agent_client_protocol as acp;
+use agent::{ContextLoadResult, Thread, ThreadEvent};
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;

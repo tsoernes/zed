@@ -5,6 +5,8 @@ use std::{
 
 use async_task::Runnable;
 use flume::Sender;
+use parking::Parker;
+use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
     System::Threading::{
@@ -22,6 +24,7 @@ use crate::{
 
 pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
+    parker: Mutex<Parker>,
     main_thread_id: ThreadId,
     platform_window_handle: SafeHwnd,
     validation_number: usize,
@@ -33,11 +36,13 @@ impl WindowsDispatcher {
         platform_window_handle: HWND,
         validation_number: usize,
     ) -> Self {
+        let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
         let platform_window_handle = platform_window_handle.into();
 
         WindowsDispatcher {
             main_sender,
+            parker,
             main_thread_id,
             platform_window_handle,
             validation_number,
@@ -106,5 +111,18 @@ impl PlatformDispatcher for WindowsDispatcher {
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
         self.dispatch_on_threadpool_after(runnable, duration);
+    }
+
+    fn park(&self, timeout: Option<Duration>) -> bool {
+        if let Some(timeout) = timeout {
+            self.parker.lock().park_timeout(timeout)
+        } else {
+            self.parker.lock().park();
+            true
+        }
+    }
+
+    fn unparker(&self) -> parking::Unparker {
+        self.parker.lock().unparker()
     }
 }

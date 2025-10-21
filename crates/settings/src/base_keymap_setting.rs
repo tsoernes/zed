@@ -1,9 +1,12 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{self as settings, settings_content::BaseKeymapContent};
+use crate::{
+    self as settings,
+    settings_content::{BaseKeymapContent, SettingsContent},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, VsCodeSettings};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
@@ -53,7 +56,7 @@ impl Into<BaseKeymapContent> for BaseKeymap {
 impl Display for BaseKeymap {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BaseKeymap::VSCode => write!(f, "VS Code"),
+            BaseKeymap::VSCode => write!(f, "VSCode"),
             BaseKeymap::JetBrains => write!(f, "JetBrains"),
             BaseKeymap::SublimeText => write!(f, "Sublime Text"),
             BaseKeymap::Atom => write!(f, "Atom"),
@@ -68,7 +71,7 @@ impl Display for BaseKeymap {
 impl BaseKeymap {
     #[cfg(target_os = "macos")]
     pub const OPTIONS: [(&'static str, Self); 7] = [
-        ("VS Code (Default)", Self::VSCode),
+        ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
@@ -79,7 +82,7 @@ impl BaseKeymap {
 
     #[cfg(not(target_os = "macos"))]
     pub const OPTIONS: [(&'static str, Self); 6] = [
-        ("VS Code (Default)", Self::VSCode),
+        ("VSCode (Default)", Self::VSCode),
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
@@ -129,5 +132,9 @@ impl BaseKeymap {
 impl Settings for BaseKeymap {
     fn from_settings(s: &crate::settings_content::SettingsContent) -> Self {
         s.base_keymap.unwrap().into()
+    }
+
+    fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut SettingsContent) {
+        current.base_keymap = Some(BaseKeymapContent::VSCode);
     }
 }

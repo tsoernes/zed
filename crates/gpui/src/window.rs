@@ -4313,14 +4313,14 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<E: 'static, Callback: Fn(&mut E, &mut Window, &mut Context<E>) + 'static>(
+    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
         &self,
-        entity: &Entity<E>,
+        view: &Entity<V>,
         f: Callback,
-    ) -> impl Fn(&mut Window, &mut App) + 'static {
-        let entity = entity.downgrade();
+    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
+        let view = view.downgrade();
         move |window: &mut Window, cx: &mut App| {
-            entity.update(cx, |entity, cx| f(entity, window, cx)).ok();
+            view.update(cx, |view, cx| f(view, window, cx)).ok();
         }
     }
 
@@ -4650,7 +4650,7 @@ pub struct WindowHandle<V> {
     #[deref]
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
-    state_type: PhantomData<fn(V) -> V>,
+    state_type: PhantomData<V>,
 }
 
 impl<V> Debug for WindowHandle<V> {
@@ -4718,7 +4718,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .get(self.id)
             .and_then(|window| {
                 window
-                    .as_deref()
+                    .as_ref()
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
@@ -4785,6 +4785,9 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
         val.any_handle
     }
 }
+
+unsafe impl<V> Send for WindowHandle<V> {}
+unsafe impl<V> Sync for WindowHandle<V> {}
 
 /// A handle to a window with any root view type, which can be downcast to a window with a specific root view type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]

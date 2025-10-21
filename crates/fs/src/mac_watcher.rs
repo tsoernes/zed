@@ -32,7 +32,6 @@ impl MacWatcher {
 
 impl Watcher for MacWatcher {
     fn add(&self, path: &Path) -> Result<()> {
-        log::trace!("mac watcher add: {:?}", path);
         let handles = self
             .handles
             .upgrade()
@@ -45,9 +44,6 @@ impl Watcher for MacWatcher {
             .next_back()
             && path.starts_with(watched_path)
         {
-            log::trace!(
-                "mac watched path starts with existing watched path: {watched_path:?}, {path:?}"
-            );
             return Ok(());
         }
 

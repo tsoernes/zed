@@ -648,11 +648,9 @@ fn get_or_npm_install_builtin_agent(
                 let dir = dir.clone();
                 let fs = fs.clone();
                 async move {
-                    let latest_version = node_runtime
-                        .npm_package_latest_version(&package_name)
-                        .await
-                        .ok();
-                    if let Some(latest_version) = latest_version
+                    let latest_version =
+                        node_runtime.npm_package_latest_version(&package_name).await;
+                    if let Ok(latest_version) = latest_version
                         && &latest_version != &file_name.to_string_lossy()
                     {
                         let download_result = download_latest_version(
@@ -880,12 +878,7 @@ impl ExternalAgentServer for LocalGemini {
                     GEMINI_NAME.into(),
                     "@google/gemini-cli".into(),
                     "node_modules/@google/gemini-cli/dist/index.js".into(),
-                    if cfg!(windows) {
-                        // v0.8.x on Windows has a bug that causes the initialize request to hang forever
-                        Some("0.9.0".parse().unwrap())
-                    } else {
-                        Some("0.2.1".parse().unwrap())
-                    },
+                    Some("0.2.1".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,

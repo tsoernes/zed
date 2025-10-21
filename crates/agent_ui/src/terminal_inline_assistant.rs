@@ -1,12 +1,12 @@
-use crate::{
+use crate::inline_prompt_editor::{
+    CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
+};
+use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
+use agent::{
     context::load_context,
     context_store::ContextStore,
-    inline_prompt_editor::{
-        CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
-    },
-    terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
+    thread_store::{TextThreadStore, ThreadStore},
 };
-use agent::HistoryStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -74,7 +74,8 @@ impl TerminalInlineAssistant {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -87,7 +88,7 @@ impl TerminalInlineAssistant {
                 cx,
             )
         });
-        let context_store = cx.new(|_cx| ContextStore::new(project));
+        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -100,7 +101,7 @@ impl TerminalInlineAssistant {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_store.as_ref().map(|s| s.downgrade()),
+                text_thread_store.clone(),
                 window,
                 cx,
             )
@@ -281,6 +282,7 @@ impl TerminalInlineAssistant {
 
             context_load_task
                 .await
+                .loaded_context
                 .add_to_request_message(&mut request_message);
 
             request_message.content.push(prompt.into());

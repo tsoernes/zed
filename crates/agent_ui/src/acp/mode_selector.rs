@@ -174,16 +174,11 @@ impl Render for ModeSelector {
 
         let this = cx.entity();
 
-        let icon = if self.menu_handle.is_deployed() {
-            IconName::ChevronUp
-        } else {
-            IconName::ChevronDown
-        };
-
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
+            .style(ButtonStyle::Subtle)
             .color(Color::Muted)
-            .icon(icon)
+            .icon(IconName::ChevronDown)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
             .icon_color(Color::Muted)

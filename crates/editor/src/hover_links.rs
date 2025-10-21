@@ -493,15 +493,22 @@ pub fn show_link_definition(
     }
 
     let trigger_anchor = trigger_point.anchor();
-    let anchor = snapshot.buffer_snapshot().anchor_before(*trigger_anchor);
-    let Some(buffer) = editor.buffer().read(cx).buffer_for_anchor(anchor, cx) else {
+    let Some((buffer, buffer_position)) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(*trigger_anchor, cx)
+    else {
         return;
     };
-    let Anchor {
-        excerpt_id,
-        text_anchor,
-        ..
-    } = anchor;
+
+    let Some((excerpt_id, _, _)) = editor
+        .buffer()
+        .read(cx)
+        .excerpt_containing(*trigger_anchor, cx)
+    else {
+        return;
+    };
+
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -531,40 +538,44 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
-                                let range =
-                                    snapshot.anchor_range_in_excerpt(excerpt_id, url_range)?;
-                                Some(RangeInEditor::Text(range))
+                                let start =
+                                    snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
+                                let end = snapshot.anchor_in_excerpt(excerpt_id, url_range.end)?;
+                                Some(RangeInEditor::Text(start..end))
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), text_anchor, cx).await
+                        find_file(&buffer, project.clone(), buffer_position, cx).await
                     {
                         let range = maybe!({
-                            let range =
-                                snapshot.anchor_range_in_excerpt(excerpt_id, filename_range)?;
-                            Some(RangeInEditor::Text(range))
+                            let start =
+                                snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
+                            let end = snapshot.anchor_in_excerpt(excerpt_id, filename_range.end)?;
+                            Some(RangeInEditor::Text(start..end))
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, text_anchor, preferred_kind, cx)
+                            provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
                             task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let range = snapshot.anchor_range_in_excerpt(
+                                            let start = snapshot.anchor_in_excerpt(
                                                 excerpt_id,
-                                                origin.range.clone(),
+                                                origin.range.start,
                                             )?;
-                                            Some(RangeInEditor::Text(range))
+                                            let end = snapshot
+                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
+                                            Some(RangeInEditor::Text(start..end))
                                         })
                                     }),
                                     definition_result.into_iter().map(HoverLink::Text).collect(),

@@ -91,18 +91,14 @@ impl Database {
                 .await?;
             }
 
-            let replica_id = if is_ssh_project {
-                clock::ReplicaId::REMOTE_SERVER
-            } else {
-                clock::ReplicaId::LOCAL
-            };
+            let replica_id = if is_ssh_project { 1 } else { 0 };
 
             project_collaborator::ActiveModel {
                 project_id: ActiveValue::set(project.id),
                 connection_id: ActiveValue::set(connection.id as i32),
                 connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
                 user_id: ActiveValue::set(participant.user_id),
-                replica_id: ActiveValue::set(ReplicaId(replica_id.as_u16() as i32)),
+                replica_id: ActiveValue::set(ReplicaId(replica_id)),
                 is_host: ActiveValue::set(true),
                 id: ActiveValue::NotSet,
                 committer_name: ActiveValue::Set(None),
@@ -845,7 +841,7 @@ impl Database {
             .iter()
             .map(|c| c.replica_id)
             .collect::<HashSet<_>>();
-        let mut replica_id = ReplicaId(clock::ReplicaId::FIRST_COLLAB_ID.as_u16() as i32);
+        let mut replica_id = ReplicaId(1);
         while replica_ids.contains(&replica_id) {
             replica_id.0 += 1;
         }

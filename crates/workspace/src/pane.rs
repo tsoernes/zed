@@ -376,7 +376,6 @@ pub struct Pane {
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     max_tabs: Option<NonZeroUsize>,
-    use_max_tabs: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// This is set to true if a user scroll has occurred more recently than a system scroll
@@ -474,16 +473,10 @@ impl Pane {
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
-        use_max_tabs: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let max_tabs = if use_max_tabs {
-            WorkspaceSettings::get_global(cx).max_tabs
-        } else {
-            None
-        };
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),
@@ -505,8 +498,7 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
-            max_tabs,
-            use_max_tabs,
+            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -714,7 +706,7 @@ impl Pane {
             self.preview_item_id = None;
         }
 
-        if self.use_max_tabs && new_max_tabs != self.max_tabs {
+        if new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
             self.close_items_on_settings_change(window, cx);
         }
@@ -962,11 +954,6 @@ impl Pane {
             if allow_preview {
                 pane.set_preview_item_id(Some(new_item.item_id()), cx);
             }
-
-            if let Some(text) = new_item.telemetry_event_text(cx) {
-                telemetry::event!(text);
-            }
-
             pane.add_item_inner(
                 new_item,
                 true,
@@ -1183,10 +1170,6 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
-            telemetry::event!(text);
-        }
-
         self.add_item_inner(
             item,
             activate_pane,

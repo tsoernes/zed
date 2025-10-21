@@ -2187,13 +2187,21 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         .full_label
         .replace("\r\n", "\r")
         .replace('\n', "\r");
-    let success = error_code == Some(0);
-    let task_line = match error_code {
-        Some(0) => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
-        Some(error_code) => format!(
-            "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
+    let (success, task_line) = match error_code {
+        Some(0) => (
+            true,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
         ),
-        None => format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+        Some(error_code) => (
+            false,
+            format!(
+                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
+            ),
+        ),
+        None => (
+            false,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+        ),
     };
     let escaped_command_label = task
         .spawned_task

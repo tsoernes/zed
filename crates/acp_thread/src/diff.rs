@@ -236,21 +236,21 @@ impl PendingDiff {
     fn finalize(&self, cx: &mut Context<Diff>) -> FinalizedDiff {
         let ranges = self.excerpt_ranges(cx);
         let base_text = self.base_text.clone();
-        let new_buffer = self.new_buffer.read(cx);
-        let language_registry = new_buffer.language_registry();
+        let language_registry = self.new_buffer.read(cx).language_registry();
 
-        let path = new_buffer
+        let path = self
+            .new_buffer
+            .read(cx)
             .file()
             .map(|file| file.path().display(file.path_style(cx)))
             .unwrap_or("untitled".into())
             .into();
-        let replica_id = new_buffer.replica_id();
 
         // Replace the buffer in the multibuffer with the snapshot
         let buffer = cx.new(|cx| {
             let language = self.new_buffer.read(cx).language().cloned();
             let buffer = TextBuffer::new_normalized(
-                replica_id,
+                0,
                 cx.entity_id().as_non_zero_u64().into(),
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),

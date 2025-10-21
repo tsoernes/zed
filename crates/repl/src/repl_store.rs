@@ -214,9 +214,8 @@ impl ReplStore {
         let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
 
         if let Some(language_at_cursor) = language_at_cursor {
-            selected_kernelspec.or_else(|| {
-                self.kernelspec_legacy_by_lang_only(worktree_id, language_at_cursor, cx)
-            })
+            selected_kernelspec
+                .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
         } else {
             selected_kernelspec
         }
@@ -224,7 +223,6 @@ impl ReplStore {
 
     fn kernelspec_legacy_by_lang_only(
         &self,
-        worktree_id: WorktreeId,
         language_at_cursor: Arc<Language>,
         cx: &App,
     ) -> Option<KernelSpecification> {
@@ -234,7 +232,8 @@ impl ReplStore {
             .get(language_at_cursor.code_fence_block_name().as_ref());
 
         let found_by_name = self
-            .kernel_specifications_for_worktree(worktree_id)
+            .kernel_specifications
+            .iter()
             .find(|runtime_specification| {
                 if let (Some(selected), KernelSpecification::Jupyter(runtime_specification)) =
                     (selected_kernel, runtime_specification)
@@ -250,7 +249,8 @@ impl ReplStore {
             return Some(found_by_name);
         }
 
-        self.kernel_specifications_for_worktree(worktree_id)
+        self.kernel_specifications
+            .iter()
             .find(|kernel_option| match kernel_option {
                 KernelSpecification::Jupyter(runtime_specification) => {
                     runtime_specification.kernelspec.language.to_lowercase()

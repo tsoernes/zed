@@ -142,7 +142,7 @@
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "git::Blame",
       "cmd-alt-g m": "git::OpenModifiedFiles",
-      "cmd-shift-space": "editor::ShowSignatureHelp",
+      "cmd-i": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
       "ctrl-f12": "editor::GoToDeclaration",
@@ -307,7 +307,7 @@
     }
   },
   {
-    "context": "AgentPanel && text_thread",
+    "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewTextThread",
@@ -315,7 +315,7 @@
     }
   },
   {
-    "context": "AgentPanel && acp_thread",
+    "context": "AgentPanel && external_agent_thread",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewExternalAgentThread",
@@ -539,10 +539,10 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-ctrl-p": ["editor::AddSelectionAbove", { "skip_soft_wrap": false }], // Insert cursor above
-      "cmd-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }],
-      "cmd-ctrl-n": ["editor::AddSelectionBelow", { "skip_soft_wrap": false }], // Insert cursor below
-      "cmd-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }],
+      "cmd-ctrl-p": "editor::AddSelectionAbove", // Insert cursor above
+      "cmd-alt-up": "editor::AddSelectionAbove",
+      "cmd-ctrl-n": "editor::AddSelectionBelow", // Insert cursor below
+      "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -864,7 +864,7 @@
       "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPreviousHunk",
-      "cmd-i": "assistant::InlineAssist",
+      "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
   },
@@ -1153,8 +1153,7 @@
     "context": "StashList || (StashList > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem",
-      "ctrl-shift-v": "stash_picker::ShowStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
     }
   },
   {
@@ -1168,7 +1167,7 @@
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
-      "cmd-i": "assistant::InlineAssist",
+      "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"], // ctrl-u: clear line
@@ -1373,22 +1372,11 @@
     }
   },
   {
-    "context": "StashDiff > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-space": "git::ApplyCurrentStash",
-      "ctrl-shift-space": "git::PopCurrentStash",
-      "ctrl-shift-backspace": "git::DropCurrentStash"
-    }
-  },
-  {
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
       "up": "settings_editor::FocusPreviousNavEntry",
-      "shift-tab": "settings_editor::FocusPreviousNavEntry",
       "down": "settings_editor::FocusNextNavEntry",
-      "tab": "settings_editor::FocusNextNavEntry",
       "right": "settings_editor::ExpandNavEntry",
       "left": "settings_editor::CollapseNavEntry",
       "pageup": "settings_editor::FocusPreviousRootNavEntry",

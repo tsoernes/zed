@@ -19,8 +19,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    Clickable, FluentBuilder, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage,
-    ToggleState, Tooltip, VisibleOnHover, prelude::*, tooltip_container,
+    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
+    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
+    h_flex, relative, tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
@@ -49,8 +51,7 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
-    title_bar_background_color: Hsla,
-    panel_background_color: Hsla,
+    element_background_color: Hsla,
     text_color: Hsla,
     link_color: Hsla,
     window_rem_size: Pixels,
@@ -60,7 +61,6 @@ pub struct RenderContext {
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
-    is_last_child: bool,
 }
 
 impl RenderContext {
@@ -86,8 +86,7 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
-            title_bar_background_color: theme.colors().title_bar_background,
-            panel_background_color: theme.colors().panel_background,
+            element_background_color: theme.colors().element_background,
             text_color: theme.colors().text,
             link_color: theme.colors().text_accent,
             window_rem_size: window.rem_size(),
@@ -95,7 +94,6 @@ impl RenderContext {
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
-            is_last_child: false,
         }
     }
 
@@ -137,24 +135,11 @@ impl RenderContext {
     /// We give padding between "This is a block quote."
     /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
-        if self.indent > 0 && !self.is_last_child {
+        if self.indent > 0 {
             element.pb(self.scaled_rems(0.75))
         } else {
             element
         }
-    }
-
-    /// The is used to indicate that the current element is the last child or not of its parent.
-    ///
-    /// Then we can avoid adding padding to the bottom of the last child.
-    fn with_last_child<R>(&mut self, is_last: bool, render: R) -> AnyElement
-    where
-        R: FnOnce(&mut Self) -> AnyElement,
-    {
-        self.is_last_child = is_last;
-        let element = render(self);
-        self.is_last_child = false;
-        element
     }
 }
 
@@ -511,27 +496,28 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         &parsed.column_alignments,
         &max_column_widths,
         true,
-        0,
         cx,
     );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .enumerate()
-        .map(|(index, row)| {
+        .map(|row| {
             render_markdown_table_row(
                 row,
                 &parsed.column_alignments,
                 &max_column_widths,
                 false,
-                index,
                 cx,
             )
         })
         .collect();
 
-    div().child(header).children(body).into_any()
+    cx.with_common_p(v_flex())
+        .w_full()
+        .child(header)
+        .children(body)
+        .into_any()
 }
 
 fn render_markdown_table_row(
@@ -539,7 +525,6 @@ fn render_markdown_table_row(
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
     is_header: bool,
-    row_index: usize,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = Vec::with_capacity(parsed.children.len());
@@ -574,7 +559,7 @@ fn render_markdown_table_row(
         }
 
         if is_header {
-            cell = cell.bg(cx.title_bar_background_color).opacity(0.6)
+            cell = cell.bg(cx.element_background_color)
         }
 
         items.push(cell);
@@ -586,10 +571,6 @@ fn render_markdown_table_row(
         row = row.border_y_1();
     } else {
         row = row.border_b_1();
-    }
-
-    if row_index % 2 == 1 {
-        row = row.bg(cx.panel_background_color)
     }
 
     row.children(items).into_any_element()
@@ -604,12 +585,7 @@ fn render_markdown_block_quote(
     let children: Vec<AnyElement> = parsed
         .children
         .iter()
-        .enumerate()
-        .map(|(ix, child)| {
-            cx.with_last_child(ix + 1 == parsed.children.len(), |cx| {
-                render_markdown_block(child, cx)
-            })
-        })
+        .map(|child| render_markdown_block(child, cx))
         .collect();
 
     cx.indent -= 1;
@@ -696,7 +672,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
-                            .to_highlight_style(&syntax_theme)
+                            .to_highlight_style(&syntax_theme, link_color)
                             .map(|style| (range.clone(), style))
                     }),
                     parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
@@ -706,14 +682,6 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                     range.clone(),
                                     HighlightStyle {
                                         background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else if region.link.is_some() {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        color: Some(link_color),
                                         ..Default::default()
                                     },
                                 ))

@@ -62,22 +62,16 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse"])]
+    #[arg(short, long, overrides_with = "new")]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse"])]
+    #[arg(short, long, overrides_with = "add")]
     new: bool,
-    /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new"])]
-    reuse: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
-    /// This overrides the default platform-specific data directory location:
-    #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
-    #[cfg_attr(target_os = "windows", doc = "`%LOCALAPPDATA%\\Zed`.")]
-    #[cfg_attr(
-        not(any(target_os = "windows", target_os = "macos")),
-        doc = "`$XDG_DATA_HOME/zed`."
-    )]
+    /// This overrides the default platform-specific data directory location.
+    /// On macOS, the default is `~/Library/Application Support/Zed`.
+    /// On Linux/FreeBSD, the default is `$XDG_DATA_HOME/zed`.
+    /// On Windows, the default is `%LOCALAPPDATA%\Zed`.
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
@@ -158,7 +152,6 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
-    let mut source = PathWithPosition::parse_str(source);
     let mut command = util::command::new_std_command("wsl.exe");
 
     let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
@@ -177,17 +170,19 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
     let output = command
         .arg("--distribution")
         .arg(distro_name)
-        .arg("--exec")
         .arg("wslpath")
         .arg("-m")
-        .arg(&source.path)
+        .arg(source)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
     let prefix = format!("//wsl.localhost/{}", distro_name);
-    source.path = Path::new(result.trim().strip_prefix(&prefix).unwrap_or(&result)).to_owned();
 
-    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
+    Ok(result
+        .trim()
+        .strip_prefix(&prefix)
+        .unwrap_or(&result)
+        .to_string())
 }
 
 fn main() -> Result<()> {
@@ -377,7 +372,6 @@ fn main() -> Result<()> {
                     wsl,
                     wait: args.wait,
                     open_new_workspace,
-                    reuse: args.reuse,
                     env,
                     user_data_dir: user_data_dir_for_thread,
                 })?;

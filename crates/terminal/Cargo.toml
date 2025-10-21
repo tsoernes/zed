@@ -39,6 +39,7 @@ thiserror.workspace = true
 util.workspace = true
 regex.workspace = true
 urlencoding.workspace = true
+workspace-hack.workspace = true
 itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]

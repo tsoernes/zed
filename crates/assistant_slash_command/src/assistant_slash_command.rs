@@ -9,7 +9,6 @@ use anyhow::Result;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use gpui::{App, SharedString, Task, WeakEntity, Window};
-use language::CodeLabelBuilder;
 use language::HighlightId;
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
@@ -329,15 +328,15 @@ impl SlashCommandLine {
 }
 
 pub fn create_label_for_command(command_name: &str, arguments: &[&str], cx: &App) -> CodeLabel {
-    let mut label = CodeLabelBuilder::default();
+    let mut label = CodeLabel::default();
     label.push_str(command_name, None);
-    label.respan_filter_range(None);
     label.push_str(" ", None);
     label.push_str(
         &arguments.join(" "),
         cx.theme().syntax().highlight_id("comment").map(HighlightId),
     );
-    label.build()
+    label.filter_range = 0..command_name.len();
+    label
 }
 
 #[cfg(test)]

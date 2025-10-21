@@ -90,9 +90,85 @@ impl AgentTool for ListHistoryTool {
             )));
         };
 
-        // Read thread state
-        let (total_messages, messages_vec) =
-            thread.read_with(cx, |t, _| (t.messages().len(), t.messages().to_vec()));
+        // Obtain full markdown representation of the thread and derive messages
+        let full_markdown = thread.read_with(cx, |t, _| t.to_markdown());
+
+        // Parse messages from markdown. Each message starts with a heading "## User" or "## Assistant".
+        // Resume markers "[resume]" are treated as distinct messages with role "Resume".
+        #[derive(Clone)]
+        struct ParsedMessage {
+            role: String,
+            markdown: String,
+        }
+
+        let mut messages: Vec<ParsedMessage> = Vec::new();
+        let mut current_role: Option<String> = None;
+        let mut current_heading: Option<String> = None;
+        let mut current_lines: Vec<String> = Vec::new();
+
+        let mut push_current = |messages: &mut Vec<ParsedMessage>,
+                                role: &mut Option<String>,
+                                heading: &mut Option<String>,
+                                lines: &mut Vec<String>| {
+            if let (Some(r), Some(h)) = (role.take(), heading.take()) {
+                let body = if lines.is_empty() {
+                    format!("{h}\n")
+                } else {
+                    format!("{h}\n\n{}", lines.join("\n"))
+                };
+                messages.push(ParsedMessage {
+                    role: r,
+                    markdown: body,
+                });
+            }
+            lines.clear();
+        };
+
+        for line in full_markdown.lines() {
+            if line.starts_with("## User") || line.starts_with("## Assistant") {
+                // New message boundary
+                push_current(
+                    &mut messages,
+                    &mut current_role,
+                    &mut current_heading,
+                    &mut current_lines,
+                );
+                if line.starts_with("## User") {
+                    current_role = Some("User".to_string());
+                } else {
+                    current_role = Some("Assistant".to_string());
+                }
+                current_heading = Some(line.to_string());
+                continue;
+            }
+            if line.trim() == "[resume]" {
+                // Flush any current message
+                push_current(
+                    &mut messages,
+                    &mut current_role,
+                    &mut current_heading,
+                    &mut current_lines,
+                );
+                // Store resume as a standalone message
+                messages.push(ParsedMessage {
+                    role: "Resume".to_string(),
+                    markdown: "[resume]\n".to_string(),
+                });
+                continue;
+            }
+            if current_role.is_some() {
+                current_lines.push(line.to_string());
+            }
+        }
+        // Push last accumulated
+        push_current(
+            &mut messages,
+            &mut current_role,
+            &mut current_heading,
+            &mut current_lines,
+        );
+
+        let total_messages = messages.len();
 
         if input.start >= total_messages {
             let mut out = String::new();
@@ -105,7 +181,7 @@ impl AgentTool for ListHistoryTool {
         }
 
         let end_index = (input.start + input.limit).min(total_messages);
-        let slice = &messages_vec[input.start..end_index];
+        let slice = &messages[input.start..end_index];
 
         let mut output = String::new();
         output.push_str("# Conversation History\n\n");
@@ -126,37 +202,36 @@ impl AgentTool for ListHistoryTool {
         output.push_str("| Idx | Role | Chars | Preview |\n");
         output.push_str("|-----|------|-------|---------|\n");
 
-        for (offset, message) in slice.iter().enumerate() {
+        for (offset, pm) in slice.iter().enumerate() {
             let idx = input.start + offset;
-            let role = format!("{:?}", message.role());
-            let markdown = message.to_markdown();
-            let full: &str = markdown.as_ref();
-            // Use character counts and char-based slicing to avoid slicing at invalid UTF-8 byte boundaries.
-            let char_count = full.chars().count();
-            let preview = if char_count <= input.max_chars_per_message {
-                full.to_string()
+            let role = &pm.role;
+            let full = pm.markdown.as_str();
+            let chars = full.len();
+            let preview = if full.len() <= input.max_chars_per_message {
+                full
             } else {
-                full.chars().take(input.max_chars_per_message).collect::<String>()
+                &full[..input.max_chars_per_message]
             };
             let mut preview = preview.replace('|', "\\|").replace('\n', " ");
-            if char_count > input.max_chars_per_message {
+            if chars > input.max_chars_per_message {
                 preview.push_str("...");
             }
             output.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
-                idx, role, char_count, preview
+                idx, role, chars, preview
             ));
         }
 
         if input.include_full_markdown {
             output.push_str("\n## Full Message Content\n\n");
-            for (offset, message) in slice.iter().enumerate() {
+            for (offset, pm) in slice.iter().enumerate() {
                 let idx = input.start + offset;
-                let role = format!("{:?}", message.role());
-                let markdown = message.to_markdown();
-                output.push_str(&format!("### Message {} ({})\n\n", idx, role));
-                output.push_str(markdown.as_ref());
-                output.push_str("\n\n");
+                output.push_str(&format!("### Message {} ({})\n\n", idx, pm.role));
+                output.push_str(&pm.markdown);
+                if !pm.markdown.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push('\n');
             }
         }
 

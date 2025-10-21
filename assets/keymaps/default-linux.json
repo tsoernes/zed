@@ -269,14 +269,14 @@
     }
   },
   {
-    "context": "AgentPanel && text_thread",
+    "context": "AgentPanel && prompt_editor",
     "bindings": {
       "ctrl-n": "agent::NewTextThread",
       "ctrl-alt-t": "agent::NewThread"
     }
   },
   {
-    "context": "AgentPanel && acp_thread",
+    "context": "AgentPanel && external_agent_thread",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewExternalAgentThread",
@@ -491,8 +491,8 @@
     "bindings": {
       "ctrl-[": "editor::Outdent",
       "ctrl-]": "editor::Indent",
-      "shift-alt-up": ["editor::AddSelectionAbove", { "skip_soft_wrap": true }], // Insert Cursor Above
-      "shift-alt-down": ["editor::AddSelectionBelow", { "skip_soft_wrap": true }], // Insert Cursor Below
+      "shift-alt-up": "editor::AddSelectionAbove", // Insert Cursor Above
+      "shift-alt-down": "editor::AddSelectionBelow", // Insert Cursor Below
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -539,7 +539,7 @@
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
-      "ctrl-shift-space": "editor::ShowSignatureHelp",
+      "ctrl-shift-space": "editor::ShowWordCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
@@ -799,7 +799,7 @@
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPreviousHunk",
-      "ctrl-i": "assistant::InlineAssist",
+      "ctrl-enter": "assistant::InlineAssist",
       "ctrl-:": "editor::ToggleInlayHints"
     }
   },
@@ -1080,8 +1080,7 @@
   {
     "context": "StashList || (StashList > Picker > Editor)",
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem",
-      "ctrl-shift-v": "stash_picker::ShowStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
     }
   },
   {
@@ -1094,7 +1093,7 @@
       "paste": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
-      "ctrl-i": "assistant::InlineAssist",
+      "ctrl-enter": "assistant::InlineAssist",
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
@@ -1268,21 +1267,11 @@
     }
   },
   {
-    "context": "StashDiff > Editor",
-    "bindings": {
-      "ctrl-space": "git::ApplyCurrentStash",
-      "ctrl-shift-space": "git::PopCurrentStash",
-      "ctrl-shift-backspace": "git::DropCurrentStash"
-    }
-  },
-  {
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
       "up": "settings_editor::FocusPreviousNavEntry",
-      "shift-tab": "settings_editor::FocusPreviousNavEntry",
       "down": "settings_editor::FocusNextNavEntry",
-      "tab": "settings_editor::FocusNextNavEntry",
       "right": "settings_editor::ExpandNavEntry",
       "left": "settings_editor::CollapseNavEntry",
       "pageup": "settings_editor::FocusPreviousRootNavEntry",

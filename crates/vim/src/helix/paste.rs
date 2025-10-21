@@ -44,8 +44,7 @@ impl Vim {
                     return;
                 };
 
-                let display_map = editor.display_snapshot(cx);
-                let current_selections = editor.selections.all_adjusted_display(&display_map);
+                let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
 
                 // The clipboard can have multiple selections, and there can
                 // be multiple selections. Helix zips them together, so the first

@@ -4,7 +4,7 @@ use text::{Point, ToOffset as _, ToPoint as _};
 use tree_sitter::{Node, TreeCursor};
 use util::RangeExt;
 
-use crate::{BufferDeclaration, Line, declaration::DeclarationId, syntax_index::SyntaxIndexState};
+use crate::{BufferDeclaration, declaration::DeclarationId, syntax_index::SyntaxIndexState};
 
 // TODO:
 //
@@ -35,7 +35,6 @@ pub struct EditPredictionExcerptOptions {
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
-    pub line_range: Range<Line>,
     pub parent_declarations: Vec<(DeclarationId, Range<usize>)>,
     pub size: usize,
 }
@@ -87,19 +86,12 @@ impl EditPredictionExcerpt {
                 buffer.len(),
                 options.max_bytes
             );
-            let offset_range = 0..buffer.len();
-            let line_range = Line(0)..Line(buffer.max_point().row);
-            return Some(EditPredictionExcerpt::new(
-                offset_range,
-                line_range,
-                Vec::new(),
-            ));
+            return Some(EditPredictionExcerpt::new(0..buffer.len(), Vec::new()));
         }
 
         let query_offset = query_point.to_offset(buffer);
-        let query_line_range = query_point.row..query_point.row + 1;
-        let query_range = Point::new(query_line_range.start, 0).to_offset(buffer)
-            ..Point::new(query_line_range.end, 0).to_offset(buffer);
+        let query_range = Point::new(query_point.row, 0).to_offset(buffer)
+            ..Point::new(query_point.row + 1, 0).to_offset(buffer);
         if query_range.len() >= options.max_bytes {
             return None;
         }
@@ -115,7 +107,6 @@ impl EditPredictionExcerpt {
         let excerpt_selector = ExcerptSelector {
             query_offset,
             query_range,
-            query_line_range: Line(query_line_range.start)..Line(query_line_range.end),
             parent_declarations: &parent_declarations,
             buffer,
             options,
@@ -139,11 +130,7 @@ impl EditPredictionExcerpt {
         excerpt_selector.select_lines()
     }
 
-    fn new(
-        range: Range<usize>,
-        line_range: Range<Line>,
-        parent_declarations: Vec<(DeclarationId, Range<usize>)>,
-    ) -> Self {
+    fn new(range: Range<usize>, parent_declarations: Vec<(DeclarationId, Range<usize>)>) -> Self {
         let size = range.len()
             + parent_declarations
                 .iter()
@@ -153,11 +140,10 @@ impl EditPredictionExcerpt {
             range,
             parent_declarations,
             size,
-            line_range,
         }
     }
 
-    fn with_expanded_range(&self, new_range: Range<usize>, new_line_range: Range<Line>) -> Self {
+    fn with_expanded_range(&self, new_range: Range<usize>) -> Self {
         if !new_range.contains_inclusive(&self.range) {
             // this is an issue because parent_signature_ranges may be incorrect
             log::error!("bug: with_expanded_range called with disjoint range");
@@ -169,7 +155,7 @@ impl EditPredictionExcerpt {
             }
             parent_declarations.push((*declaration_id, range.clone()));
         }
-        Self::new(new_range, new_line_range, parent_declarations)
+        Self::new(new_range, parent_declarations)
     }
 
     fn parent_signatures_size(&self) -> usize {
@@ -180,7 +166,6 @@ impl EditPredictionExcerpt {
 struct ExcerptSelector<'a> {
     query_offset: usize,
     query_range: Range<usize>,
-    query_line_range: Range<Line>,
     parent_declarations: &'a [(DeclarationId, &'a BufferDeclaration)],
     buffer: &'a BufferSnapshot,
     options: &'a EditPredictionExcerptOptions,
@@ -193,13 +178,10 @@ impl<'a> ExcerptSelector<'a> {
         let mut cursor = selected_layer_root.walk();
 
         loop {
-            let line_start = node_line_start(cursor.node());
-            let line_end = node_line_end(cursor.node());
-            let line_range = Line(line_start.row)..Line(line_end.row);
-            let excerpt_range =
-                line_start.to_offset(&self.buffer)..line_end.to_offset(&self.buffer);
+            let excerpt_range = node_line_start(cursor.node()).to_offset(&self.buffer)
+                ..node_line_end(cursor.node()).to_offset(&self.buffer);
             if excerpt_range.contains_inclusive(&self.query_range) {
-                let excerpt = self.make_excerpt(excerpt_range, line_range);
+                let excerpt = self.make_excerpt(excerpt_range);
                 if excerpt.size <= self.options.max_bytes {
                     return Some(self.expand_to_siblings(&mut cursor, excerpt));
                 }
@@ -290,13 +272,9 @@ impl<'a> ExcerptSelector<'a> {
 
             let mut forward = None;
             while !forward_done {
-                let new_end_point = node_line_end(forward_cursor.node());
-                let new_end = new_end_point.to_offset(&self.buffer);
+                let new_end = node_line_end(forward_cursor.node()).to_offset(&self.buffer);
                 if new_end > excerpt.range.end {
-                    let new_excerpt = excerpt.with_expanded_range(
-                        excerpt.range.start..new_end,
-                        excerpt.line_range.start..Line(new_end_point.row),
-                    );
+                    let new_excerpt = excerpt.with_expanded_range(excerpt.range.start..new_end);
                     if new_excerpt.size <= self.options.max_bytes {
                         forward = Some(new_excerpt);
                         break;
@@ -311,13 +289,9 @@ impl<'a> ExcerptSelector<'a> {
 
             let mut backward = None;
             while !backward_done {
-                let new_start_point = node_line_start(backward_cursor.node());
-                let new_start = new_start_point.to_offset(&self.buffer);
+                let new_start = node_line_start(backward_cursor.node()).to_offset(&self.buffer);
                 if new_start < excerpt.range.start {
-                    let new_excerpt = excerpt.with_expanded_range(
-                        new_start..excerpt.range.end,
-                        Line(new_start_point.row)..excerpt.line_range.end,
-                    );
+                    let new_excerpt = excerpt.with_expanded_range(new_start..excerpt.range.end);
                     if new_excerpt.size <= self.options.max_bytes {
                         backward = Some(new_excerpt);
                         break;
@@ -365,7 +339,7 @@ impl<'a> ExcerptSelector<'a> {
 
     fn select_lines(&self) -> Option<EditPredictionExcerpt> {
         // early return if line containing query_offset is already too large
-        let excerpt = self.make_excerpt(self.query_range.clone(), self.query_line_range.clone());
+        let excerpt = self.make_excerpt(self.query_range.clone());
         if excerpt.size > self.options.max_bytes {
             log::debug!(
                 "excerpt for cursor line is {} bytes, which exceeds the window",
@@ -379,24 +353,24 @@ impl<'a> ExcerptSelector<'a> {
         let before_bytes =
             (self.options.target_before_cursor_over_total_bytes * bytes_remaining as f32) as usize;
 
-        let start_line = {
+        let start_point = {
             let offset = self.query_offset.saturating_sub(before_bytes);
             let point = offset.to_point(self.buffer);
-            Line(point.row + 1)
+            Point::new(point.row + 1, 0)
         };
-        let start_offset = Point::new(start_line.0, 0).to_offset(&self.buffer);
-        let end_line = {
+        let start_offset = start_point.to_offset(&self.buffer);
+        let end_point = {
             let offset = start_offset + bytes_remaining;
             let point = offset.to_point(self.buffer);
-            Line(point.row)
+            Point::new(point.row, 0)
         };
-        let end_offset = Point::new(end_line.0, 0).to_offset(&self.buffer);
+        let end_offset = end_point.to_offset(&self.buffer);
 
         // this could be expanded further since recalculated `signature_size` may be smaller, but
         // skipping that for now for simplicity
         //
         // TODO: could also consider checking if lines immediately before / after fit.
-        let excerpt = self.make_excerpt(start_offset..end_offset, start_line..end_line);
+        let excerpt = self.make_excerpt(start_offset..end_offset);
         if excerpt.size > self.options.max_bytes {
             log::error!(
                 "bug: line-based excerpt selection has size {}, \
@@ -408,14 +382,14 @@ impl<'a> ExcerptSelector<'a> {
         return Some(excerpt);
     }
 
-    fn make_excerpt(&self, range: Range<usize>, line_range: Range<Line>) -> EditPredictionExcerpt {
+    fn make_excerpt(&self, range: Range<usize>) -> EditPredictionExcerpt {
         let parent_declarations = self
             .parent_declarations
             .iter()
             .filter(|(_, declaration)| declaration.item_range.contains_inclusive(&range))
             .map(|(id, declaration)| (*id, declaration.signature_range.clone()))
             .collect();
-        EditPredictionExcerpt::new(range, line_range, parent_declarations)
+        EditPredictionExcerpt::new(range, parent_declarations)
     }
 
     /// Returns `true` if the `forward` excerpt is a better choice than the `backward` excerpt.

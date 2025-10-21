@@ -33,6 +33,7 @@ strum.workspace = true
 text.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 clap.workspace = true

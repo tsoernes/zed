@@ -4,10 +4,8 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod context;
 mod context_picker;
 mod context_server_configuration;
-mod context_store;
 mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -24,6 +22,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -140,7 +139,10 @@ pub struct QuoteSelection;
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct NewThread;
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
+}
 
 /// Creates a new external agent conversation thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -159,9 +161,10 @@ pub struct NewNativeAgentThreadFromSummary {
 }
 
 // TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ExternalAgent {
+enum ExternalAgent {
+    #[default]
     Gemini,
     ClaudeCode,
     Codex,
@@ -181,26 +184,26 @@ fn placeholder_command() -> AgentServerCommand {
 }
 
 impl ExternalAgent {
-    pub fn parse_built_in(server: &dyn agent_servers::AgentServer) -> Option<Self> {
-        match server.telemetry_id() {
-            "gemini-cli" => Some(Self::Gemini),
-            "claude-code" => Some(Self::ClaudeCode),
-            "codex" => Some(Self::Codex),
-            "zed" => Some(Self::NativeAgent),
-            _ => None,
+    fn name(&self) -> &'static str {
+        match self {
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Custom { .. } => "custom",
         }
     }
 
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
-        history: Entity<agent::HistoryStore>,
+        history: Entity<agent2::HistoryStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::Codex => Rc::new(agent_servers::Codex),
-            Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
+            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
             Self::Custom { name, command: _ } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }
@@ -264,6 +267,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
+    agent::init(fs.clone(), cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);

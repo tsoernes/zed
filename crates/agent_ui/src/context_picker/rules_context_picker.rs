@@ -7,11 +7,9 @@ use prompt_store::{PromptId, PromptStore, UserPromptId};
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 
-use crate::{
-    context::RULES_ICON,
-    context_picker::ContextPicker,
-    context_store::{self, ContextStore},
-};
+use crate::context_picker::ContextPicker;
+use agent::context::RULES_ICON;
+use agent::context_store::{self, ContextStore};
 
 pub struct RulesContextPicker {
     picker: Entity<Picker<RulesContextPickerDelegate>>,
@@ -19,7 +17,7 @@ pub struct RulesContextPicker {
 
 impl RulesContextPicker {
     pub fn new(
-        prompt_store: WeakEntity<PromptStore>,
+        prompt_store: Entity<PromptStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
         window: &mut Window,
@@ -51,7 +49,7 @@ pub struct RulesContextEntry {
 }
 
 pub struct RulesContextPickerDelegate {
-    prompt_store: WeakEntity<PromptStore>,
+    prompt_store: Entity<PromptStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
     matches: Vec<RulesContextEntry>,
@@ -60,7 +58,7 @@ pub struct RulesContextPickerDelegate {
 
 impl RulesContextPickerDelegate {
     pub fn new(
-        prompt_store: WeakEntity<PromptStore>,
+        prompt_store: Entity<PromptStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
     ) -> Self {
@@ -104,10 +102,12 @@ impl PickerDelegate for RulesContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Some(prompt_store) = self.prompt_store.upgrade() else {
-            return Task::ready(());
-        };
-        let search_task = search_rules(query, Arc::new(AtomicBool::default()), &prompt_store, cx);
+        let search_task = search_rules(
+            query,
+            Arc::new(AtomicBool::default()),
+            &self.prompt_store,
+            cx,
+        );
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {

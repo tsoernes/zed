@@ -56,8 +56,7 @@ impl Vim {
                     vim.copy_selections_content(editor, MotionKind::for_mode(vim.mode), window, cx);
                 }
 
-                let display_map = editor.display_snapshot(cx);
-                let current_selections = editor.selections.all_adjusted_display(&display_map);
+                let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
 
                 // unlike zed, if you have a multi-cursor selection from vim block mode,
                 // pasting it will paste it on subsequent lines, even if you don't yet
@@ -174,7 +173,7 @@ impl Vim {
                     original_indent_columns.push(original_indent_column);
                 }
 
-                let cursor_offset = editor.selections.last::<usize>(&display_map).head();
+                let cursor_offset = editor.selections.last::<usize>(cx).head();
                 if editor
                     .buffer()
                     .read(cx)

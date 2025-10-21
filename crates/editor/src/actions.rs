@@ -318,24 +318,6 @@ pub struct GoToPreviousDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Adds a cursor above the current selection.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct AddSelectionAbove {
-    #[serde(default = "default_true")]
-    pub skip_soft_wrap: bool,
-}
-
-/// Adds a cursor below the current selection.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct AddSelectionBelow {
-    #[serde(default = "default_true")]
-    pub skip_soft_wrap: bool,
-}
-
 actions!(
     debugger,
     [
@@ -363,6 +345,10 @@ actions!(
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
+        /// Adds a cursor above the current selection.
+        AddSelectionAbove,
+        /// Adds a cursor below the current selection.
+        AddSelectionBelow,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
@@ -458,8 +444,6 @@ actions!(
         /// Expands all diff hunks in the editor.
         #[action(deprecated_aliases = ["editor::ExpandAllHunkDiffs"])]
         ExpandAllDiffHunks,
-        /// Collapses all diff hunks in the editor.
-        CollapseAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds all references to the symbol at cursor.

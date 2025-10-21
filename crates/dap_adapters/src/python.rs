@@ -1,6 +1,5 @@
 use crate::*;
 use anyhow::{Context as _, bail};
-use collections::HashMap;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use fs::RemoveOptions;
 use futures::{StreamExt, TryStreamExt};
@@ -17,6 +16,7 @@ use std::ffi::OsString;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
 };
@@ -239,23 +239,20 @@ impl PythonDebugAdapter {
                     })?
                 };
 
-                let debug_adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
-                let output = util::command::new_smol_command(&base_python)
+                let did_succeed = util::command::new_smol_command(base_python)
                     .args(["-m", "venv", "zed_base_venv"])
                     .current_dir(
-                        &debug_adapter_path,
+                        paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref()),
                     )
                     .spawn()
                     .map_err(|e| format!("{e:#?}"))?
-                    .output()
+                    .status()
                     .await
-                    .map_err(|e| format!("{e:#?}"))?;
+                    .map_err(|e| format!("{e:#?}"))?
+                    .success();
 
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let debug_adapter_path = debug_adapter_path.display();
-                    return Err(format!("Failed to create base virtual environment with {base_python} in:\n{debug_adapter_path}\nstderr:\n{stderr}\nstdout:\n{stdout}\n"));
+                if !did_succeed {
+                    return Err("Failed to create base virtual environment".into());
                 }
 
                 const PYTHON_PATH: &str = if cfg!(target_os = "windows") {
@@ -312,7 +309,6 @@ impl PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_env: Option<HashMap<String, String>>,
         python_from_toolchain: Option<String>,
     ) -> Result<DebugAdapterBinary> {
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -350,7 +346,7 @@ impl PythonDebugAdapter {
                 timeout,
             }),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: user_env.unwrap_or_default(),
+            envs: HashMap::default(),
             request_args: self.request_args(delegate, config).await?,
         })
     }
@@ -745,7 +741,6 @@ impl DebugAdapter for PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if let Some(local_path) = &user_installed_path {
@@ -754,14 +749,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 local_path.display()
             );
             return self
-                .get_installed_binary(
-                    delegate,
-                    config,
-                    Some(local_path.clone()),
-                    user_args,
-                    user_env,
-                    None,
-                )
+                .get_installed_binary(delegate, config, Some(local_path.clone()), user_args, None)
                 .await;
         }
 
@@ -799,13 +787,12 @@ impl DebugAdapter for PythonDebugAdapter {
                     config,
                     None,
                     user_args,
-                    user_env,
                     Some(toolchain.path.to_string()),
                 )
                 .await;
         }
 
-        self.get_installed_binary(delegate, config, None, user_args, user_env, None)
+        self.get_installed_binary(delegate, config, None, user_args, None)
             .await
     }
 

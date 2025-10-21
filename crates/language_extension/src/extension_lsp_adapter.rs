@@ -463,7 +463,11 @@ fn build_code_label(
 
     let filter_range = label.filter_range.clone();
     text.get(filter_range.clone())?;
-    Some(CodeLabel::new(text, filter_range, runs))
+    Some(CodeLabel {
+        text,
+        runs,
+        filter_range,
+    })
 }
 
 fn lsp_completion_to_extension(value: lsp::CompletionItem) -> extension::Completion {
@@ -611,7 +615,11 @@ fn test_build_code_label() {
 
     assert_eq!(
         label,
-        CodeLabel::new(label_text, label.filter_range.clone(), label_runs)
+        CodeLabel {
+            text: label_text,
+            runs: label_runs,
+            filter_range: label.filter_range.clone()
+        }
     )
 }
 

@@ -21,9 +21,7 @@ use gpui::{
 };
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
-use project::{
-    PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
-};
+use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use search::ToggleIncludeIgnored;
 use settings::Settings;
 use std::{
@@ -540,14 +538,11 @@ impl Matches {
 
     fn push_new_matches<'a>(
         &'a mut self,
-        worktree_store: Entity<WorktreeStore>,
-        cx: &'a App,
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
         currently_opened: Option<&'a FoundPath>,
         query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
-        path_style: PathStyle,
     ) {
         let Some(query) = query else {
             // assuming that if there's no query, then there's no search matches.
@@ -561,25 +556,8 @@ impl Matches {
                 .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
-        // If several worktress are open we have to set the worktree root names in path prefix
-        let several_worktrees = worktree_store.read(cx).worktrees().count() > 1;
-        let worktree_name_by_id = several_worktrees.then(|| {
-            worktree_store
-                .read(cx)
-                .worktrees()
-                .map(|worktree| {
-                    let snapshot = worktree.read(cx).snapshot();
-                    (snapshot.id(), snapshot.root_name().into())
-                })
-                .collect()
-        });
-        let new_history_matches = matching_history_items(
-            history_items,
-            currently_opened,
-            worktree_name_by_id,
-            query,
-            path_style,
-        );
+
+        let new_history_matches = matching_history_items(history_items, currently_opened, query);
         let new_search_matches: Vec<Match> = new_search_matches
             .filter(|path_match| {
                 !new_history_matches.contains_key(&ProjectPath {
@@ -716,9 +694,7 @@ impl Matches {
 fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
-    worktree_name_by_id: Option<HashMap<WorktreeId, Arc<RelPath>>>,
     query: &FileSearchQuery,
-    path_style: PathStyle,
 ) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
@@ -758,18 +734,13 @@ fn matching_history_items<'a>(
     let mut matching_history_paths = HashMap::default();
     for (worktree, candidates) in history_items_by_worktrees {
         let max_results = candidates.len() + 1;
-        let worktree_root_name = worktree_name_by_id
-            .as_ref()
-            .and_then(|w| w.get(&worktree).cloned());
         matching_history_paths.extend(
             fuzzy::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
-                worktree_root_name,
                 query.path_query(),
                 false,
                 max_results,
-                path_style,
             )
             .into_iter()
             .filter_map(|path_match| {
@@ -895,9 +866,7 @@ impl FileFinderDelegate {
         let worktrees = self
             .project
             .read(cx)
-            .worktree_store()
-            .read(cx)
-            .visible_worktrees_and_single_files(cx)
+            .visible_worktrees(cx)
             .collect::<Vec<_>>();
         let include_root_name = worktrees.len() > 1;
         let candidate_sets = worktrees
@@ -966,18 +935,15 @@ impl FileFinderDelegate {
                 self.matches.get(self.selected_index).cloned()
             };
 
-            let path_style = self.project.read(cx).path_style(cx);
             self.matches.push_new_matches(
-                self.project.read(cx).worktree_store(),
-                cx,
                 &self.history_items,
                 self.currently_opened_path.as_ref(),
                 Some(&query),
                 matches.into_iter(),
                 extend_old_matches,
-                path_style,
             );
 
+            let path_style = self.project.read(cx).path_style(cx);
             let query_path = query.raw_query.as_str();
             if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
@@ -1397,11 +1363,7 @@ impl PickerDelegate for FileFinderDelegate {
                     separate_history: self.separate_history,
                     ..Matches::default()
                 };
-                let path_style = self.project.read(cx).path_style(cx);
-
                 self.matches.push_new_matches(
-                    project.worktree_store(),
-                    cx,
                     self.history_items.iter().filter(|history_item| {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
@@ -1413,7 +1375,6 @@ impl PickerDelegate for FileFinderDelegate {
                     None,
                     None.into_iter(),
                     false,
-                    path_style,
                 );
 
                 self.first_update = false;

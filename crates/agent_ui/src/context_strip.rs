@@ -4,11 +4,12 @@ use crate::{
     context_picker::ContextPicker,
     ui::{AddedContext, ContextPill},
 };
-use crate::{
+use agent::context_store::SuggestedContext;
+use agent::{
     context::AgentContextHandle,
-    context_store::{ContextStore, SuggestedContext},
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
 };
-use agent::HistoryStore;
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
@@ -17,7 +18,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use project::ProjectItem;
-use prompt_store::PromptStore;
 use rope::Point;
 use std::rc::Rc;
 use text::ToPoint as _;
@@ -33,7 +33,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakEntity<Workspace>,
-    prompt_store: Option<WeakEntity<PromptStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
@@ -44,8 +44,8 @@ impl ContextStrip {
     pub fn new(
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
         model_usage_context: ModelUsageContext,
@@ -56,7 +56,7 @@ impl ContextStrip {
             ContextPicker::new(
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_store.clone(),
+                text_thread_store,
                 context_store.downgrade(),
                 window,
                 cx,
@@ -79,7 +79,7 @@ impl ContextStrip {
             focus_handle,
             suggest_context_kind,
             workspace,
-            prompt_store,
+            thread_store,
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
@@ -96,7 +96,11 @@ impl ContextStrip {
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
         if let Some(workspace) = self.workspace.upgrade() {
             let project = workspace.read(cx).project().read(cx);
-            let prompt_store = self.prompt_store.as_ref().and_then(|p| p.upgrade());
+            let prompt_store = self
+                .thread_store
+                .as_ref()
+                .and_then(|thread_store| thread_store.upgrade())
+                .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
 
             let current_model = self.model_usage_context.language_model(cx);
 
@@ -106,7 +110,7 @@ impl ContextStrip {
                 .flat_map(|context| {
                     AddedContext::new_pending(
                         context.clone(),
-                        prompt_store.as_ref(),
+                        prompt_store,
                         project,
                         current_model.as_ref(),
                         cx,
@@ -335,7 +339,7 @@ impl ContextStrip {
                         let context = text_thread_context.context.clone();
                         window.defer(cx, move |window, cx| {
                             panel.update(cx, |panel, cx| {
-                                panel.open_text_thread(context, window, cx)
+                                panel.open_prompt_editor(context, window, cx)
                             });
                         });
                     }

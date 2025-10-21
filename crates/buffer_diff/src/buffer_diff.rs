@@ -85,7 +85,7 @@ struct PendingHunk {
     new_status: DiffHunkSecondaryStatus,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
 }
@@ -114,17 +114,15 @@ impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
     fn zero(_cx: Self::Context<'_>) -> Self {
-        DiffHunkSummary {
-            buffer_range: Anchor::MIN..Anchor::MIN,
-        }
+        Default::default()
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
-        self.buffer_range.start = *self
+        self.buffer_range.start = self
             .buffer_range
             .start
             .min(&other.buffer_range.start, buffer);
-        self.buffer_range.end = *self.buffer_range.end.max(&other.buffer_range.end, buffer);
+        self.buffer_range.end = self.buffer_range.end.max(&other.buffer_range.end, buffer);
     }
 }
 
@@ -939,9 +937,7 @@ impl BufferDiff {
 
     pub fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
         if self.secondary_diff.is_some() {
-            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
-                buffer_range: Anchor::MIN..Anchor::MIN,
-            });
+            self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary::default());
             cx.emit(BufferDiffEvent::DiffChanged {
                 changed_range: Some(Anchor::MIN..Anchor::MAX),
             });
@@ -1072,8 +1068,8 @@ impl BufferDiff {
                 self.range_to_hunk_range(secondary_changed_range, buffer, cx)
         {
             if let Some(range) = &mut changed_range {
-                range.start = *secondary_hunk_range.start.min(&range.start, buffer);
-                range.end = *secondary_hunk_range.end.max(&range.end, buffer);
+                range.start = secondary_hunk_range.start.min(&range.start, buffer);
+                range.end = secondary_hunk_range.end.max(&range.end, buffer);
             } else {
                 changed_range = Some(secondary_hunk_range);
             }
@@ -1087,8 +1083,8 @@ impl BufferDiff {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
-                    range.start = *range.start.min(&first.buffer_range.start, buffer);
-                    range.end = *range.end.max(&last.buffer_range.end, buffer);
+                    range.start = range.start.min(&first.buffer_range.start, buffer);
+                    range.end = range.end.max(&last.buffer_range.end, buffer);
                 } else {
                     changed_range = Some(first.buffer_range.start..last.buffer_range.end);
                 }
@@ -1372,7 +1368,7 @@ mod tests {
     use gpui::TestAppContext;
     use pretty_assertions::{assert_eq, assert_ne};
     use rand::{Rng as _, rngs::StdRng};
-    use text::{Buffer, BufferId, ReplicaId, Rope};
+    use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;
     use util::test::marked_text_ranges;
 
@@ -1397,7 +1393,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiffSnapshot::new_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
@@ -1471,7 +1467,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
@@ -1540,7 +1536,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let diff = cx
             .update(|cx| {
                 BufferDiffSnapshot::new_with_base_text(
@@ -1803,7 +1799,7 @@ mod tests {
 
         for example in table {
             let (buffer_text, ranges) = marked_text_ranges(&example.buffer_marked_text, false);
-            let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+            let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
             let hunk_range =
                 buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
 
@@ -1876,11 +1872,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            BufferId::new(1).unwrap(),
-            buffer_text.clone(),
-        );
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text.clone());
         let unstaged = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let uncommitted = BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
         let unstaged_diff = cx.new(|cx| {
@@ -1953,7 +1945,7 @@ mod tests {
         "
         .unindent();
 
-        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
+        let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = cx.update(|cx| BufferDiffSnapshot::empty(&buffer, cx));
         let diff_1 = BufferDiffSnapshot::new_sync(buffer.clone(), base_text.clone(), cx);

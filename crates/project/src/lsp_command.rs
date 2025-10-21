@@ -1834,20 +1834,13 @@ impl LspCommand for GetSignatureHelp {
         message: Option<lsp::SignatureHelp>,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        id: LanguageServerId,
+        _: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(message) = message else {
             return Ok(None);
         };
-        cx.update(|cx| {
-            SignatureHelp::new(
-                message,
-                Some(lsp_store.read(cx).languages.clone()),
-                Some(id),
-                cx,
-            )
-        })
+        cx.update(|cx| SignatureHelp::new(message, Some(lsp_store.read(cx).languages.clone()), cx))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1907,12 +1900,7 @@ impl LspCommand for GetSignatureHelp {
                 .signature_help
                 .map(proto_to_lsp_signature)
                 .and_then(|signature| {
-                    SignatureHelp::new(
-                        signature,
-                        Some(lsp_store.read(cx).languages.clone()),
-                        None,
-                        cx,
-                    )
+                    SignatureHelp::new(signature, Some(lsp_store.read(cx).languages.clone()), cx)
                 })
         })
     }

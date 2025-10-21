@@ -79,7 +79,7 @@ impl SlashCommand for SelectionCommand {
                 editor.update(cx, |editor, cx| {
                     let selection_ranges = editor
                         .selections
-                        .all_adjusted(&editor.display_snapshot(cx))
+                        .all_adjusted(cx)
                         .iter()
                         .map(|selection| selection.range())
                         .collect::<Vec<_>>();

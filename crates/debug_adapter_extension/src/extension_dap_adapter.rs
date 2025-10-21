@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use collections::HashMap;
 use dap::{
     StartDebuggingRequestArgumentsRequest,
     adapters::{
@@ -92,8 +91,6 @@ impl DebugAdapter for ExtensionDapAdapter {
         user_installed_path: Option<PathBuf>,
         // TODO support user args in the extension API
         _user_args: Option<Vec<String>>,
-        // TODO support user env in the extension API
-        _user_env: Option<HashMap<String, String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         self.extension

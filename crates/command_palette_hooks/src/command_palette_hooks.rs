@@ -2,16 +2,16 @@
 
 #![deny(missing_docs)]
 
-use std::{any::TypeId, rc::Rc};
+use std::any::TypeId;
 
 use collections::HashSet;
 use derive_more::{Deref, DerefMut};
-use gpui::{Action, App, BorrowAppContext, Global, Task, WeakEntity};
-use workspace::Workspace;
+use gpui::{Action, App, BorrowAppContext, Global};
 
 /// Initializes the command palette hooks.
 pub fn init(cx: &mut App) {
     cx.set_global(GlobalCommandPaletteFilter::default());
+    cx.set_global(GlobalCommandPaletteInterceptor::default());
 }
 
 /// A filter for the command palette.
@@ -94,7 +94,7 @@ impl CommandPaletteFilter {
 
 /// The result of intercepting a command palette command.
 #[derive(Debug)]
-pub struct CommandInterceptItem {
+pub struct CommandInterceptResult {
     /// The action produced as a result of the interception.
     pub action: Box<dyn Action>,
     /// The display string to show in the command palette for this result.
@@ -104,50 +104,50 @@ pub struct CommandInterceptItem {
     pub positions: Vec<usize>,
 }
 
-/// The result of intercepting a command palette command.
-#[derive(Default, Debug)]
-pub struct CommandInterceptResult {
-    /// The items
-    pub results: Vec<CommandInterceptItem>,
-    /// Whether or not to continue to show the normal matches
-    pub exclusive: bool,
-}
-
 /// An interceptor for the command palette.
-#[derive(Clone)]
-pub struct GlobalCommandPaletteInterceptor(
-    Rc<dyn Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>>,
+#[derive(Default)]
+pub struct CommandPaletteInterceptor(
+    Option<Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>>,
 );
+
+#[derive(Default)]
+struct GlobalCommandPaletteInterceptor(CommandPaletteInterceptor);
 
 impl Global for GlobalCommandPaletteInterceptor {}
 
-impl GlobalCommandPaletteInterceptor {
-    /// Sets the global interceptor.
-    ///
-    /// This will override the previous interceptor, if it exists.
-    pub fn set(
-        cx: &mut App,
-        interceptor: impl Fn(&str, WeakEntity<Workspace>, &mut App) -> Task<CommandInterceptResult>
-        + 'static,
-    ) {
-        cx.set_global(Self(Rc::new(interceptor)));
+impl CommandPaletteInterceptor {
+    /// Returns the global [`CommandPaletteInterceptor`], if one is set.
+    pub fn try_global(cx: &App) -> Option<&CommandPaletteInterceptor> {
+        cx.try_global::<GlobalCommandPaletteInterceptor>()
+            .map(|interceptor| &interceptor.0)
     }
 
-    /// Clears the global interceptor.
-    pub fn clear(cx: &mut App) {
-        if cx.has_global::<Self>() {
-            cx.remove_global::<Self>();
-        }
+    /// Updates the global [`CommandPaletteInterceptor`] using the given closure.
+    pub fn update_global<F, R>(cx: &mut App, update: F) -> R
+    where
+        F: FnOnce(&mut Self, &mut App) -> R,
+    {
+        cx.update_global(|this: &mut GlobalCommandPaletteInterceptor, cx| update(&mut this.0, cx))
     }
 
     /// Intercepts the given query from the command palette.
-    pub fn intercept(
-        query: &str,
-        workspace: WeakEntity<Workspace>,
-        cx: &mut App,
-    ) -> Option<Task<CommandInterceptResult>> {
-        let interceptor = cx.try_global::<Self>()?;
-        let handler = interceptor.0.clone();
-        Some(handler(query, workspace, cx))
+    pub fn intercept(&self, query: &str, cx: &App) -> Vec<CommandInterceptResult> {
+        if let Some(handler) = self.0.as_ref() {
+            (handler)(query, cx)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Clears the global interceptor.
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+
+    /// Sets the global interceptor.
+    ///
+    /// This will override the previous interceptor, if it exists.
+    pub fn set(&mut self, handler: Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>) {
+        self.0 = Some(handler);
     }
 }

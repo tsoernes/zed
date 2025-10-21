@@ -322,9 +322,6 @@ pub struct LanguageModel {
     pub supports_images: bool,
     pub supports_thinking: bool,
     pub supports_max_mode: bool,
-    // only used by OpenAI and xAI
-    #[serde(default)]
-    pub supports_parallel_tool_calls: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

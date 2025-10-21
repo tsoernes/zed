@@ -669,7 +669,11 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text: string_match.string.clone(),
-                        label: CodeLabel::plain(string_match.string.clone(), None),
+                        label: CodeLabel {
+                            filter_range: 0..string_match.string.len(),
+                            text: string_match.string.clone(),
+                            runs: Vec::new(),
+                        },
                         icon_path: None,
                         documentation: Some(CompletionDocumentation::MultiLineMarkdown(
                             variable_value.into(),
@@ -778,7 +782,11 @@ impl ConsoleQueryBarCompletionProvider {
                             &snapshot,
                         ),
                         new_text,
-                        label: CodeLabel::plain(completion.label, None),
+                        label: CodeLabel {
+                            filter_range: 0..completion.label.len(),
+                            text: completion.label,
+                            runs: Vec::new(),
+                        },
                         icon_path: None,
                         documentation: completion.detail.map(|detail| {
                             CompletionDocumentation::MultiLineMarkdown(detail.into())
@@ -963,12 +971,8 @@ mod tests {
     ) {
         cx.set_state(input);
 
-        let buffer_position = cx.editor(|editor, _, cx| {
-            editor
-                .selections
-                .newest::<Point>(&editor.display_snapshot(cx))
-                .start
-        });
+        let buffer_position =
+            cx.editor(|editor, _, cx| editor.selections.newest::<Point>(cx).start);
 
         let snapshot = &cx.buffer_snapshot();
 

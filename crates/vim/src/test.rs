@@ -13,7 +13,6 @@ use editor::{
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
-use itertools::Itertools;
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
@@ -973,21 +972,6 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.assert_state("jˇhello", Mode::Insert);
     cx.simulate_keystrokes("k j k");
     cx.assert_state("jˇkhello", Mode::Normal);
-}
-
-#[perf]
-#[gpui::test]
-async fn test_jk_max_count(cx: &mut gpui::TestAppContext) {
-    let mut cx = NeovimBackedTestContext::new(cx).await;
-
-    cx.set_shared_state("1\nˇ2\n3").await;
-    cx.simulate_shared_keystrokes("9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 j")
-        .await;
-    cx.shared_state().await.assert_eq("1\n2\nˇ3");
-
-    let number: String = usize::MAX.to_string().split("").join(" ");
-    cx.simulate_shared_keystrokes(&format!("{number} k")).await;
-    cx.shared_state().await.assert_eq("ˇ1\n2\n3");
 }
 
 #[perf]
@@ -2295,10 +2279,7 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
 
     let mut pixel_position = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let current_head = editor
-            .selections
-            .newest_display(&snapshot.display_snapshot)
-            .end;
+        let current_head = editor.selections.newest_display(cx).end;
         editor.last_bounds().unwrap().origin
             + editor
                 .display_to_pixel_point(current_head, &snapshot, window)

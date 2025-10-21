@@ -68,9 +68,7 @@ Compared to launching, attaching to an existing process might seem inferior, but
 
 ## Configuration
 
-Zed requires the `adapter` and `label` fields for all debug tasks. In addition, Zed will use the `build` field to run any necessary setup steps before the debugger starts [(see below)](#build-tasks), and can accept a `tcp_connection` field to connect to an existing process.
-
-All other fields are provided by the debug adapter and can contain [task variables](./tasks.md#variables). Most adapters support `request`, `program`, and `cwd`:
+While configuration fields are debug adapter-dependent, most adapters support the following fields:
 
 ```json [debug]
 [
@@ -91,11 +89,11 @@ All other fields are provided by the debug adapter and can contain [task variabl
 ]
 ```
 
-Check your debug adapter's documentation for more information on the fields it supports.
+All configuration fields support [task variables](./tasks.md#variables).
 
 ### Build tasks
 
-Zed allows embedding a Zed task in the `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
 ```json [debug]
 [

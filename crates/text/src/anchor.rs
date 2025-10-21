@@ -6,7 +6,7 @@ use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
 pub struct Anchor {
     pub timestamp: clock::Lamport,
     /// The byte offset in the buffer
@@ -45,19 +45,19 @@ impl Anchor {
             .then_with(|| self.bias.cmp(&other.bias))
     }
 
-    pub fn min<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
+    pub fn min(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
         if self.cmp(other, buffer).is_le() {
-            self
+            *self
         } else {
-            other
+            *other
         }
     }
 
-    pub fn max<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
+    pub fn max(&self, other: &Self, buffer: &BufferSnapshot) -> Self {
         if self.cmp(other, buffer).is_ge() {
-            self
+            *self
         } else {
-            other
+            *other
         }
     }
 
@@ -99,14 +99,13 @@ impl Anchor {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
                 return false;
             };
-            let (.., item) = buffer
+            let mut fragment_cursor = buffer
                 .fragments
-                .find::<Dimensions<Option<&Locator>, usize>, _>(
-                    &None,
-                    &Some(fragment_id),
-                    Bias::Left,
-                );
-            item.is_some_and(|fragment| fragment.visible)
+                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
+            fragment_cursor.seek(&Some(fragment_id), Bias::Left);
+            fragment_cursor
+                .item()
+                .is_some_and(|fragment| fragment.visible)
         }
     }
 }

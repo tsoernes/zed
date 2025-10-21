@@ -67,8 +67,7 @@ struct MacTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
-    /// UTF-16 indices of ZWNJS
-    zwnjs_scratch_space: Vec<usize>,
+    zwnjs_scratch_space: Vec<(usize, usize)>,
 }
 
 impl MacTextSystem {
@@ -450,22 +449,23 @@ impl MacTextSystemState {
                 // to prevent core text from forming ligatures between them
                 let needs_zwnj = last_font_run.replace(run.font_id) == Some(run.font_id);
 
-                let utf16_start = string.char_len(); // insert at end of string
+                let n_zwnjs = self.zwnjs_scratch_space.len();
+                let utf16_start = ix_converter.utf16_ix + n_zwnjs * ZWNJ_SIZE_16;
                 ix_converter.advance_to_utf8_ix(ix_converter.utf8_ix + run.len);
 
-                // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
-                string.replace_str(&CFString::new(text), CFRange::init(utf16_start, 0));
+                string.replace_str(&CFString::new(text), CFRange::init(utf16_start as isize, 0));
                 if needs_zwnj {
                     let zwnjs_pos = string.char_len();
-                    self.zwnjs_scratch_space.push(zwnjs_pos as usize);
+                    self.zwnjs_scratch_space.push((n_zwnjs, zwnjs_pos as usize));
                     string.replace_str(
                         &CFString::from_static_string(ZWNJ_STR),
                         CFRange::init(zwnjs_pos, 0),
                     );
                 }
-                let utf16_end = string.char_len();
+                let utf16_end = string.char_len() as usize;
 
-                let cf_range = CFRange::init(utf16_start, utf16_end - utf16_start);
+                let cf_range =
+                    CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
                 let font = &self.fonts[run.font_id.0];
 
                 let font_metrics = font.metrics();
@@ -516,7 +516,7 @@ impl MacTextSystemState {
                 let mut glyph_utf16_ix = usize::try_from(glyph_utf16_ix).unwrap();
                 let r = self
                     .zwnjs_scratch_space
-                    .binary_search_by(|&it| it.cmp(&glyph_utf16_ix));
+                    .binary_search_by(|&(_, it)| it.cmp(&glyph_utf16_ix));
                 match r {
                     // this glyph is a ZWNJ, skip it
                     Ok(_) => continue,
@@ -548,12 +548,10 @@ impl MacTextSystemState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct StringIndexConverter<'a> {
     text: &'a str,
-    /// Index in UTF-8 bytes
     utf8_ix: usize,
-    /// Index in UTF-16 code units
     utf16_ix: usize,
 }
 
@@ -733,25 +731,6 @@ mod tests {
         assert_eq!(layout.runs[0].glyphs.len(), 2);
         assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
         // There's no glyph for \u{feff}
-        assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
-
-        let line = "\u{feff}ab";
-        let font_runs = &[
-            FontRun {
-                len: "\u{feff}".len(),
-                font_id,
-            },
-            FontRun {
-                len: "ab".len(),
-                font_id,
-            },
-        ];
-        let layout = fonts.layout_line(line, px(16.), font_runs);
-        assert_eq!(layout.len, line.len());
-        assert_eq!(layout.runs.len(), 1);
-        assert_eq!(layout.runs[0].glyphs.len(), 2);
-        // There's no glyph for \u{feff}
-        assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
         assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
     }
 

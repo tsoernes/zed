@@ -13,12 +13,6 @@ use uuid::Uuid;
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(Uuid);
 
-impl Into<Uuid> for EditPredictionId {
-    fn into(self) -> Uuid {
-        self.0
-    }
-}
-
 impl From<EditPredictionId> for gpui::ElementId {
     fn from(value: EditPredictionId) -> Self {
         gpui::ElementId::Uuid(value.0)
@@ -39,7 +33,7 @@ pub struct EditPrediction {
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
-    pub buffer: Entity<Buffer>,
+    _buffer: Entity<Buffer>,
 }
 
 impl EditPrediction {
@@ -114,7 +108,7 @@ impl EditPrediction {
             edits,
             snapshot,
             edit_preview,
-            buffer,
+            _buffer: buffer,
         })
     }
 
@@ -190,10 +184,6 @@ pub fn interpolate_edits(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-pub fn line_range_to_point_range(range: Range<predict_edits_v3::Line>) -> Range<language::Point> {
-    language::Point::new(range.start.0, 0)..language::Point::new(range.end.0, 0)
-}
-
 fn edits_from_response(
     edits: &[predict_edits_v3::Edit],
     snapshot: &TextBufferSnapshot,
@@ -201,14 +191,12 @@ fn edits_from_response(
     edits
         .iter()
         .flat_map(|edit| {
-            let point_range = line_range_to_point_range(edit.range.clone());
-            let offset = point_range.to_offset(snapshot).start;
-            let old_text = snapshot.text_for_range(point_range);
+            let old_text = snapshot.text_for_range(edit.range.clone());
 
             excerpt_edits_from_response(
                 old_text.collect::<Cow<str>>(),
                 &edit.content,
-                offset,
+                edit.range.start,
                 &snapshot,
             )
         })
@@ -264,7 +252,6 @@ mod tests {
 
     use super::*;
     use cloud_llm_client::predict_edits_v3;
-    use edit_prediction_context::Line;
     use gpui::{App, Entity, TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{Buffer, ToOffset as _};
@@ -291,7 +278,7 @@ mod tests {
         // TODO cover more cases when multi-file is supported
         let big_edits = vec![predict_edits_v3::Edit {
             path: PathBuf::from("test.txt").into(),
-            range: Line(0)..Line(old.lines().count() as u32),
+            range: 0..old.len(),
             content: new.into(),
         }];
 
@@ -330,7 +317,7 @@ mod tests {
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             path: Path::new("test.txt").into(),
-            buffer: buffer.clone(),
+            _buffer: buffer.clone(),
             edit_preview,
         };
 

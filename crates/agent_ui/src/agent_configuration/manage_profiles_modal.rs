@@ -2,8 +2,8 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent::ContextServerRegistry;
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
+use assistant_tool::ToolWorkingSet;
 use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
@@ -16,6 +16,8 @@ use workspace::{ModalView, Workspace};
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AgentPanel, ManageProfiles};
+
+use super::tool_picker::ToolPickerMode;
 
 enum Mode {
     ChooseProfile(ChooseProfileMode),
@@ -95,7 +97,7 @@ pub struct NewProfileMode {
 
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
-    context_server_registry: Entity<ContextServerRegistry>,
+    tools: Entity<ToolWorkingSet>,
     focus_handle: FocusHandle,
     mode: Mode,
 }
@@ -109,9 +111,10 @@ impl ManageProfilesModal {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 let fs = workspace.app_state().fs.clone();
-                let context_server_registry = panel.read(cx).context_server_registry().clone();
+                let thread_store = panel.read(cx).thread_store();
+                let tools = thread_store.read(cx).tools();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut this = Self::new(fs, context_server_registry, window, cx);
+                    let mut this = Self::new(fs, tools, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
                         this.configure_builtin_tools(profile_id, window, cx);
@@ -125,7 +128,7 @@ impl ManageProfilesModal {
 
     pub fn new(
         fs: Arc<dyn Fs>,
-        context_server_registry: Entity<ContextServerRegistry>,
+        tools: Entity<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -133,7 +136,7 @@ impl ManageProfilesModal {
 
         Self {
             fs,
-            context_server_registry,
+            tools,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
         }
@@ -190,9 +193,10 @@ impl ManageProfilesModal {
         };
 
         let tool_picker = cx.new(|cx| {
-            let delegate = ToolPickerDelegate::mcp_tools(
-                &self.context_server_registry,
+            let delegate = ToolPickerDelegate::new(
+                ToolPickerMode::McpTools,
                 self.fs.clone(),
+                self.tools.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -226,12 +230,10 @@ impl ManageProfilesModal {
         };
 
         let tool_picker = cx.new(|cx| {
-            let delegate = ToolPickerDelegate::builtin_tools(
-                //todo: This causes the web search tool to show up even it only works when using zed hosted models
-                agent::built_in_tool_names()
-                    .map(|s| s.into())
-                    .collect::<Vec<_>>(),
+            let delegate = ToolPickerDelegate::new(
+                ToolPickerMode::BuiltinTools,
                 self.fs.clone(),
+                self.tools.clone(),
                 profile_id.clone(),
                 profile,
                 cx,

@@ -106,7 +106,7 @@ impl Vim {
             true,
             editor
                 .selections
-                .all_adjusted(&editor.display_snapshot(cx))
+                .all_adjusted(cx)
                 .iter()
                 .map(|s| s.range())
                 .collect(),
@@ -128,7 +128,7 @@ impl Vim {
             false,
             editor
                 .selections
-                .all_adjusted(&editor.display_snapshot(cx))
+                .all_adjusted(cx)
                 .iter()
                 .map(|s| s.range())
                 .collect(),

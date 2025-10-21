@@ -266,18 +266,8 @@ impl Render for QuickActionBar {
                             )
                             .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
                             .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                            .action(
-                                "Add Cursor Above",
-                                Box::new(AddSelectionAbove {
-                                    skip_soft_wrap: true,
-                                }),
-                            )
-                            .action(
-                                "Add Cursor Below",
-                                Box::new(AddSelectionBelow {
-                                    skip_soft_wrap: true,
-                                }),
-                            )
+                            .action("Add Cursor Above", Box::new(AddSelectionAbove))
+                            .action("Add Cursor Below", Box::new(AddSelectionBelow))
                             .separator()
                             .action("Go to Symbol", Box::new(ToggleOutline))
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))

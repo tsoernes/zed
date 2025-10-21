@@ -9,8 +9,6 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent::{HistoryEntry, HistoryEntryId, HistoryStore};
-use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
@@ -29,7 +27,9 @@ use project::ProjectPath;
 use prompt_store::PromptStore;
 use rules_context_picker::{RulesContextEntry, RulesContextPicker};
 use symbol_context_picker::SymbolContextPicker;
-use thread_context_picker::render_thread_context_entry;
+use thread_context_picker::{
+    ThreadContextEntry, ThreadContextPicker, render_thread_context_entry, unordered_thread_entries,
+};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
@@ -37,8 +37,12 @@ use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::context_picker::thread_context_picker::ThreadContextPicker;
-use crate::{context::RULES_ICON, context_store::ContextStore};
+use agent::{
+    ThreadId,
+    context::RULES_ICON,
+    context_store::ContextStore,
+    thread_store::{TextThreadStore, ThreadStore},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextPickerEntry {
@@ -164,16 +168,17 @@ pub(super) struct ContextPicker {
     mode: ContextPickerState,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    thread_store: Option<WeakEntity<HistoryStore>>,
-    prompt_store: Option<WeakEntity<PromptStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
+    prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ContextPicker {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<HistoryStore>>,
-        prompt_store: Option<WeakEntity<PromptStore>>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_store: WeakEntity<ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -194,6 +199,13 @@ impl ContextPicker {
             )
             .collect::<Vec<Subscription>>();
 
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
+
         ContextPicker {
             mode: ContextPickerState::Default(ContextMenu::build(
                 window,
@@ -203,6 +215,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            text_thread_store,
             prompt_store,
             _subscriptions: subscriptions,
         }
@@ -342,13 +355,17 @@ impl ContextPicker {
                     }));
                 }
                 ContextPickerMode::Thread => {
-                    if let Some(thread_store) = self.thread_store.clone() {
+                    if let Some((thread_store, text_thread_store)) = self
+                        .thread_store
+                        .as_ref()
+                        .zip(self.text_thread_store.as_ref())
+                    {
                         self.mode = ContextPickerState::Thread(cx.new(|cx| {
                             ThreadContextPicker::new(
-                                thread_store,
+                                thread_store.clone(),
+                                text_thread_store.clone(),
                                 context_picker.clone(),
                                 self.context_store.clone(),
-                                self.workspace.clone(),
                                 window,
                                 cx,
                             )
@@ -463,23 +480,16 @@ impl ContextPicker {
 
     fn add_recent_thread(
         &self,
-        entry: HistoryEntry,
-        _window: &mut Window,
+        entry: ThreadContextEntry,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
             return Task::ready(Err(anyhow!("context store not available")));
         };
-        let Some(project) = self
-            .workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
-        else {
-            return Task::ready(Err(anyhow!("project not available")));
-        };
 
         match entry {
-            HistoryEntry::AcpThread(thread) => {
+            ThreadContextEntry::Thread { id, .. } => {
                 let Some(thread_store) = self
                     .thread_store
                     .as_ref()
@@ -487,28 +497,28 @@ impl ContextPicker {
                 else {
                     return Task::ready(Err(anyhow!("thread store not available")));
                 };
-                let load_thread_task =
-                    agent::load_agent_thread(thread.id, thread_store, project, cx);
+
+                let open_thread_task =
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, window, cx));
                 cx.spawn(async move |this, cx| {
-                    let thread = load_thread_task.await?;
+                    let thread = open_thread_task.await?;
                     context_store.update(cx, |context_store, cx| {
                         context_store.add_thread(thread, true, cx);
                     })?;
                     this.update(cx, |_this, cx| cx.notify())
                 })
             }
-            HistoryEntry::TextThread(thread) => {
-                let Some(thread_store) = self
-                    .thread_store
+            ThreadContextEntry::Context { path, .. } => {
+                let Some(text_thread_store) = self
+                    .text_thread_store
                     .as_ref()
                     .and_then(|thread_store| thread_store.upgrade())
                 else {
                     return Task::ready(Err(anyhow!("text thread store not available")));
                 };
 
-                let task = thread_store.update(cx, |this, cx| {
-                    this.load_text_thread(thread.path.clone(), cx)
-                });
+                let task = text_thread_store
+                    .update(cx, |this, cx| this.open_local_context(path.clone(), cx));
                 cx.spawn(async move |this, cx| {
                     let thread = task.await?;
                     context_store.update(cx, |context_store, cx| {
@@ -532,6 +542,7 @@ impl ContextPicker {
         recent_context_picker_entries_with_store(
             context_store,
             self.thread_store.clone(),
+            self.text_thread_store.clone(),
             workspace,
             None,
             cx,
@@ -588,12 +599,12 @@ pub(crate) enum RecentEntry {
         project_path: ProjectPath,
         path_prefix: Arc<RelPath>,
     },
-    Thread(HistoryEntry),
+    Thread(ThreadContextEntry),
 }
 
 pub(crate) fn available_context_picker_entries(
-    prompt_store: &Option<WeakEntity<PromptStore>>,
-    thread_store: &Option<WeakEntity<HistoryStore>>,
+    prompt_store: &Option<Entity<PromptStore>>,
+    thread_store: &Option<WeakEntity<ThreadStore>>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) -> Vec<ContextPickerEntry> {
@@ -606,11 +617,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .is_some_and(|editor| {
-            editor.update(cx, |editor, cx| {
-                editor.has_non_empty_selection(&editor.display_snapshot(cx))
-            })
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -632,7 +639,8 @@ pub(crate) fn available_context_picker_entries(
 
 fn recent_context_picker_entries_with_store(
     context_store: Entity<ContextStore>,
-    thread_store: Option<WeakEntity<HistoryStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     workspace: Entity<Workspace>,
     exclude_path: Option<ProjectPath>,
     cx: &App,
@@ -649,14 +657,22 @@ fn recent_context_picker_entries_with_store(
 
     let exclude_threads = context_store.read(cx).thread_ids();
 
-    recent_context_picker_entries(thread_store, workspace, &exclude_paths, exclude_threads, cx)
+    recent_context_picker_entries(
+        thread_store,
+        text_thread_store,
+        workspace,
+        &exclude_paths,
+        exclude_threads,
+        cx,
+    )
 }
 
 pub(crate) fn recent_context_picker_entries(
-    thread_store: Option<WeakEntity<HistoryStore>>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     workspace: Entity<Workspace>,
     exclude_paths: &HashSet<PathBuf>,
-    exclude_threads: &HashSet<acp::SessionId>,
+    _exclude_threads: &HashSet<ThreadId>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
@@ -682,21 +698,30 @@ pub(crate) fn recent_context_picker_entries(
             }),
     );
 
-    if let Some(thread_store) = thread_store.and_then(|store| store.upgrade()) {
-        const RECENT_THREADS_COUNT: usize = 2;
+    if let Some((thread_store, text_thread_store)) = thread_store
+        .and_then(|store| store.upgrade())
+        .zip(text_thread_store.and_then(|store| store.upgrade()))
+    {
+        let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
+            .filter(|(_, thread)| match thread {
+                ThreadContextEntry::Thread { .. } => false,
+                ThreadContextEntry::Context { .. } => true,
+            })
+            .collect::<Vec<_>>();
+
+        const RECENT_COUNT: usize = 2;
+        if threads.len() > RECENT_COUNT {
+            threads.select_nth_unstable_by_key(RECENT_COUNT - 1, |(updated_at, _)| {
+                std::cmp::Reverse(*updated_at)
+            });
+            threads.truncate(RECENT_COUNT);
+        }
+        threads.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
+
         recent.extend(
-            thread_store
-                .read(cx)
-                .recently_opened_entries(cx)
-                .iter()
-                .filter(|e| match e.id() {
-                    HistoryEntryId::AcpThread(session_id) => !exclude_threads.contains(&session_id),
-                    HistoryEntryId::TextThread(path) => {
-                        !exclude_paths.contains(&path.to_path_buf())
-                    }
-                })
-                .take(RECENT_THREADS_COUNT)
-                .map(|thread| RecentEntry::Thread(thread.clone())),
+            threads
+                .into_iter()
+                .map(|(_, thread)| RecentEntry::Thread(thread)),
         );
     }
 
@@ -729,7 +754,7 @@ pub(crate) fn selection_ranges(
     };
 
     editor.update(cx, |editor, cx| {
-        let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
+        let selections = editor.selections.all_adjusted(cx);
 
         let buffer = editor.buffer().clone().read(cx);
         let snapshot = buffer.snapshot(cx);
@@ -890,21 +915,17 @@ impl MentionLink {
         )
     }
 
-    pub fn for_thread(thread: &HistoryEntry) -> String {
+    pub fn for_thread(thread: &ThreadContextEntry) -> String {
         match thread {
-            HistoryEntry::AcpThread(thread) => {
-                format!("[@{}]({}:{})", thread.title, Self::THREAD, thread.id)
+            ThreadContextEntry::Thread { id, title } => {
+                format!("[@{}]({}:{})", title, Self::THREAD, id)
             }
-            HistoryEntry::TextThread(thread) => {
-                let filename = thread
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy();
+            ThreadContextEntry::Context { path, title } => {
+                let filename = path.file_name().unwrap_or_default().to_string_lossy();
                 let escaped_filename = urlencoding::encode(&filename);
                 format!(
                     "[@{}]({}:{}{})",
-                    thread.title,
+                    title,
                     Self::THREAD,
                     Self::TEXT_THREAD_URL_PREFIX,
                     escaped_filename

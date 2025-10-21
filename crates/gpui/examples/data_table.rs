@@ -374,6 +374,7 @@ impl DataTable {
 impl Render for DataTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .text_sm()
             .size_full()

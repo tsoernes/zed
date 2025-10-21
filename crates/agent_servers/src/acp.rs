@@ -9,7 +9,6 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
-use settings::{Settings as _, SettingsLocation};
 use task::Shell;
 use util::{ResultExt as _, get_default_system_shell_preferring_bash};
 
@@ -23,7 +22,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
@@ -40,7 +39,7 @@ pub struct AcpConnection {
     // NB: Don't move this into the wait_task, since we need to ensure the process is
     // killed on drop (setting kill_on_drop on the command seems to not always work).
     child: smol::process::Child,
-    _io_task: Task<Result<(), acp::Error>>,
+    _io_task: Task<Result<()>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
 }
@@ -98,7 +97,7 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::debug!(
+        log::info!(
             "Spawning external agent server: {:?}, {:?}",
             command.path,
             command.args
@@ -169,10 +168,7 @@ impl AcpConnection {
                         meta: None,
                     },
                     terminal: true,
-                    meta: Some(serde_json::json!({
-                        // Experimental: Allow for rendering terminal output from the agents
-                        "terminal_output": true,
-                    })),
+                    meta: None,
                 },
                 meta: None,
             })
@@ -819,25 +815,13 @@ impl acp::Client for ClientDelegate {
         let mut env = if let Some(dir) = &args.cwd {
             project
                 .update(&mut self.cx.clone(), |project, cx| {
-                    let worktree = project.find_worktree(dir.as_path(), cx);
-                    let shell = TerminalSettings::get(
-                        worktree.as_ref().map(|(worktree, path)| SettingsLocation {
-                            worktree_id: worktree.read(cx).id(),
-                            path: &path,
-                        }),
-                        cx,
-                    )
-                    .shell
-                    .clone();
-                    project.directory_environment(&shell, dir.clone().into(), cx)
+                    project.directory_environment(&task::Shell::System, dir.clone().into(), cx)
                 })?
                 .await
                 .unwrap_or_default()
         } else {
             Default::default()
         };
-        // Disables paging for `git` and hopefully other commands
-        env.insert("PAGER".into(), "".into());
         for var in args.env {
             env.insert(var.name, var.value);
         }

@@ -72,17 +72,17 @@ impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
-            return div().hidden();
+            return div();
         }
 
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
-            EditPredictionProvider::None => div().hidden(),
+            EditPredictionProvider::None => div(),
 
             EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
-                    return div().hidden();
+                    return div();
                 };
                 let status = copilot.read(cx).status();
 

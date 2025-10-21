@@ -318,10 +318,9 @@ impl Render for CommitTooltip {
                                             .on_click(
                                                 move |_, window, cx| {
                                                     CommitView::open(
-                                                        commit_summary.sha.to_string(),
+                                                        commit_summary.clone(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
-                                                        None,
                                                         window,
                                                         cx,
                                                     );

@@ -386,7 +386,6 @@ pub(crate) fn new_debugger_pane(
             Default::default(),
             None,
             NoAction.boxed_clone(),
-            true,
             window,
             cx,
         );

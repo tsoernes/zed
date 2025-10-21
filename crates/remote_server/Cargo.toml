@@ -75,7 +75,8 @@ minidumper.workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-agent = { workspace = true, features = ["test-support"] }
+assistant_tool.workspace = true
+assistant_tools.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections.workspace = true

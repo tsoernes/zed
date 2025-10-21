@@ -29,4 +29,6 @@ impl Settings for ZlogSettings {
             scopes: content.log.clone().unwrap(),
         }
     }
+
+    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut settings::SettingsContent) {}
 }

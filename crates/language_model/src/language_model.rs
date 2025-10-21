@@ -19,7 +19,8 @@ use http_client::{StatusCode, http};
 use icons::IconName;
 use open_router::OpenRouterError;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 pub use settings::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
@@ -667,6 +668,11 @@ pub trait LanguageModelExt: LanguageModel {
     }
 }
 impl LanguageModelExt for dyn LanguageModel {}
+
+pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
+    fn name() -> String;
+    fn description() -> String;
+}
 
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]

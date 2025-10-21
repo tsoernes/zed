@@ -154,7 +154,7 @@ pub fn hover_at_inlay(
             hide_hover(editor, cx);
         }
 
-        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
+        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
@@ -275,7 +275,7 @@ fn show_hover(
         return None;
     }
 
-    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
+    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
     let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
     let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
         Some(group.group_id)
@@ -467,10 +467,13 @@ fn show_hover(
                 let range = hover_result
                     .range
                     .and_then(|range| {
-                        let range = snapshot
+                        let start = snapshot
                             .buffer_snapshot()
-                            .anchor_range_in_excerpt(excerpt_id, range)?;
-                        Some(range)
+                            .anchor_in_excerpt(excerpt_id, range.start)?;
+                        let end = snapshot
+                            .buffer_snapshot()
+                            .anchor_in_excerpt(excerpt_id, range.end)?;
+                        Some(start..end)
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot();
@@ -1004,7 +1007,7 @@ mod tests {
     use text::Bias;
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
-        cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
+        cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
     }
 
     impl InfoPopover {

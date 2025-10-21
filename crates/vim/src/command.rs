@@ -1,15 +1,13 @@
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
-use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
+use command_palette_hooks::CommandInterceptResult;
 use editor::{
     Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
 use futures::AsyncWriteExt as _;
-use gpui::{
-    Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
-};
+use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Task, Window, actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -22,7 +20,7 @@ use settings::{Settings, SettingsStore};
 use std::{
     iter::Peekable,
     ops::{Deref, Range},
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     str::Chars,
     sync::OnceLock,
@@ -30,12 +28,8 @@ use std::{
 };
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
-use util::{
-    ResultExt,
-    paths::PathStyle,
-    rel_path::{RelPath, RelPathBuf},
-};
-use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
+use util::{ResultExt, rel_path::RelPath};
+use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
@@ -91,7 +85,7 @@ pub enum VimOption {
 }
 
 impl VimOption {
-    fn possible_commands(query: &str) -> Vec<CommandInterceptItem> {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
         let mut prefix_of_options = Vec::new();
         let mut options = query.split(" ").collect::<Vec<_>>();
         let prefix = options.pop().unwrap_or_default();
@@ -108,7 +102,7 @@ impl VimOption {
                 let mut options = prefix_of_options.clone();
                 options.push(possible);
 
-                CommandInterceptItem {
+                CommandInterceptResult {
                     string: format!(
                         ":set {}",
                         options.iter().map(|opt| opt.to_string()).join(" ")
@@ -606,9 +600,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let result = vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
-            let current = editor
-                .selections
-                .newest::<Point>(&editor.display_snapshot(cx));
+            let current = editor.selections.newest::<Point>(cx);
             let target = snapshot
                 .buffer_snapshot()
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
@@ -733,13 +725,6 @@ struct VimCommand {
         >,
     >,
     has_count: bool,
-    has_filename: bool,
-}
-
-struct ParsedQuery {
-    args: String,
-    has_bang: bool,
-    has_space: bool,
 }
 
 impl VimCommand {
@@ -775,15 +760,6 @@ impl VimCommand {
         self
     }
 
-    fn filename(
-        mut self,
-        f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
-    ) -> Self {
-        self.args = Some(Box::new(f));
-        self.has_filename = true;
-        self
-    }
-
     fn range(
         mut self,
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -797,80 +773,14 @@ impl VimCommand {
         self
     }
 
-    fn generate_filename_completions(
-        parsed_query: &ParsedQuery,
-        workspace: WeakEntity<Workspace>,
-        cx: &mut App,
-    ) -> Task<Vec<String>> {
-        let ParsedQuery {
-            args,
-            has_bang: _,
-            has_space: _,
-        } = parsed_query;
-        let Some(workspace) = workspace.upgrade() else {
-            return Task::ready(Vec::new());
-        };
-
-        let (task, args_path) = workspace.update(cx, |workspace, cx| {
-            let prefix = workspace
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .next()
-                .or_else(std::env::home_dir)
-                .unwrap_or_else(|| PathBuf::from(""));
-
-            let rel_path = match RelPath::new(Path::new(&args), PathStyle::local()) {
-                Ok(path) => path.to_rel_path_buf(),
-                Err(_) => {
-                    return (Task::ready(Ok(Vec::new())), RelPathBuf::new());
-                }
-            };
-
-            let rel_path = if args.ends_with(PathStyle::local().separator()) {
-                rel_path
-            } else {
-                rel_path
-                    .parent()
-                    .map(|rel_path| rel_path.to_rel_path_buf())
-                    .unwrap_or(RelPathBuf::new())
-            };
-
-            let task = workspace.project().update(cx, |project, cx| {
-                let path = prefix
-                    .join(rel_path.as_std_path())
-                    .to_string_lossy()
-                    .to_string();
-                project.list_directory(path, cx)
-            });
-
-            (task, rel_path)
-        });
-
-        cx.background_spawn(async move {
-            let directories = task.await.unwrap_or_default();
-            directories
-                .iter()
-                .map(|dir| {
-                    let path = RelPath::new(dir.path.as_path(), PathStyle::local())
-                        .map(|cow| cow.into_owned())
-                        .unwrap_or(RelPathBuf::new());
-                    let mut path_string = args_path
-                        .join(&path)
-                        .display(PathStyle::local())
-                        .to_string();
-                    if dir.is_dir {
-                        path_string.push_str(PathStyle::local().separator());
-                    }
-                    path_string
-                })
-                .collect()
-        })
-    }
-
-    fn get_parsed_query(&self, query: String) -> Option<ParsedQuery> {
+    fn parse(
+        &self,
+        query: &str,
+        range: &Option<CommandRange>,
+        cx: &App,
+    ) -> Option<Box<dyn Action>> {
         let rest = query
+            .to_string()
             .strip_prefix(self.prefix)?
             .to_string()
             .chars()
@@ -879,7 +789,6 @@ impl VimCommand {
             .filter_map(|e| e.left())
             .collect::<String>();
         let has_bang = rest.starts_with('!');
-        let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
             rest.strip_prefix('!')?.trim().to_string()
         } else if rest.is_empty() {
@@ -887,24 +796,7 @@ impl VimCommand {
         } else {
             rest.strip_prefix(' ')?.trim().to_string()
         };
-        Some(ParsedQuery {
-            args,
-            has_bang,
-            has_space,
-        })
-    }
 
-    fn parse(
-        &self,
-        query: &str,
-        range: &Option<CommandRange>,
-        cx: &App,
-    ) -> Option<Box<dyn Action>> {
-        let ParsedQuery {
-            args,
-            has_bang,
-            has_space: _,
-        } = self.get_parsed_query(query.to_string())?;
         let action = if has_bang && self.bang_action.is_some() {
             self.bang_action.as_ref().unwrap().boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
@@ -1164,43 +1056,18 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         .bang(workspace::Save {
             save_intent: Some(SaveIntent::Overwrite),
         })
-        .filename(|action, filename| {
+        .args(|action, args| {
             Some(
                 VimSave {
                     save_intent: action
                         .as_any()
                         .downcast_ref::<workspace::Save>()
                         .and_then(|action| action.save_intent),
-                    filename,
+                    filename: args,
                 }
                 .boxed_clone(),
             )
         }),
-        VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
-            .bang(editor::actions::ReloadFile)
-            .filename(|_, filename| Some(VimEdit { filename }.boxed_clone())),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).filename(|_, filename| {
-            Some(
-                VimSplit {
-                    vertical: false,
-                    filename,
-                }
-                .boxed_clone(),
-            )
-        }),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical).filename(|_, filename| {
-            Some(
-                VimSplit {
-                    vertical: true,
-                    filename,
-                }
-                .boxed_clone(),
-            )
-        }),
-        VimCommand::new(("tabe", "dit"), workspace::NewFile)
-            .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
-        VimCommand::new(("tabnew", ""), workspace::NewFile)
-            .filename(|_action, filename| Some(VimEdit { filename }.boxed_clone())),
         VimCommand::new(
             ("q", "uit"),
             workspace::CloseActiveItem {
@@ -1297,6 +1164,24 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: false,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: true,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
         VimCommand::new(
             ("bd", "elete"),
             workspace::CloseActiveItem {
@@ -1339,6 +1224,10 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
+        VimCommand::new(("tabe", "dit"), workspace::NewFile)
+            .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone())),
+        VimCommand::new(("tabnew", ""), workspace::NewFile)
+            .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone())),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
@@ -1438,6 +1327,9 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),
+        VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
+            .bang(editor::actions::ReloadFile)
+            .args(|_, args| Some(VimEdit { filename: args }.boxed_clone())),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
@@ -1491,30 +1383,18 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(
-    mut input: &str,
-    workspace: WeakEntity<Workspace>,
-    cx: &mut App,
-) -> Task<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptResult> {
+    // NOTE: We also need to support passing arguments to commands like :w
+    // (ideally with filename autocompletion).
     while input.starts_with(':') {
         input = &input[1..];
     }
 
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
-    let has_trailing_space = query.ends_with(" ");
-    let mut query = query.as_str().trim();
+    let query = query.as_str().trim();
 
-    let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
-        .then(|| {
-            let (pattern, range, search, invert) = OnMatchingLines::parse(query, &range)?;
-            let start_idx = query.len() - pattern.len();
-            query = query[start_idx..].trim();
-            Some((range, search, invert))
-        })
-        .flatten();
-
-    let mut action = if range.is_some() && query.is_empty() {
+    let action = if range.is_some() && query.is_empty() {
         Some(
             GoToLine {
                 range: range.clone().unwrap(),
@@ -1538,10 +1418,7 @@ pub fn command_interceptor(
                 command.positions = generate_positions(&command.string, &query);
             }
         }
-        return Task::ready(CommandInterceptResult {
-            results: commands,
-            exclusive: false,
-        });
+        return commands;
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -1561,138 +1438,58 @@ pub fn command_interceptor(
         } else {
             None
         }
+    } else if query.starts_with('g') || query.starts_with('v') {
+        let mut global = "global".chars().peekable();
+        let mut query = query.chars().peekable();
+        let mut invert = false;
+        if query.peek() == Some(&'v') {
+            invert = true;
+            query.next();
+        }
+        while global.peek().is_some_and(|char| Some(char) == query.peek()) {
+            global.next();
+            query.next();
+        }
+        if !invert && query.peek() == Some(&'!') {
+            invert = true;
+            query.next();
+        }
+        let range = range.clone().unwrap_or(CommandRange {
+            start: Position::Line { row: 0, offset: 0 },
+            end: Some(Position::LastLine { offset: 0 }),
+        });
+        OnMatchingLines::parse(query, invert, range, cx).map(|action| action.boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
-    } else if on_matching_lines.is_some() {
-        commands(cx)
-            .iter()
-            .find_map(|command| command.parse(query, &range, cx))
     } else {
         None
     };
-
-    if let Some((range, search, invert)) = on_matching_lines
-        && let Some(ref inner) = action
-    {
-        action = Some(Box::new(OnMatchingLines {
-            range,
-            search,
-            action: WrappedAction(inner.boxed_clone()),
-            invert,
-        }));
-    };
-
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Task::ready(CommandInterceptResult {
-            results: vec![CommandInterceptItem {
-                action,
-                string,
-                positions,
-            }],
-            exclusive: false,
-        });
+        return vec![CommandInterceptResult {
+            action,
+            string,
+            positions,
+        }];
     }
 
-    let Some((mut results, filenames)) =
-        commands(cx).iter().enumerate().find_map(|(idx, command)| {
-            let action = command.parse(query, &range, cx)?;
-            let parsed_query = command.get_parsed_query(query.into())?;
-            let display_string = ":".to_owned()
-                + &range_prefix
-                + command.prefix
-                + command.suffix
-                + if parsed_query.has_bang { "!" } else { "" };
-            let space = if parsed_query.has_space { " " } else { "" };
+    for command in commands(cx).iter() {
+        if let Some(action) = command.parse(query, &range, cx) {
+            let mut string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+            if query.contains('!') {
+                string.push('!');
+            }
+            let positions = generate_positions(&string, &(range_prefix + query));
 
-            let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
-            let positions = generate_positions(&string, &(range_prefix.clone() + query));
-
-            let results = vec![CommandInterceptItem {
+            return vec![CommandInterceptResult {
                 action,
                 string,
                 positions,
             }];
-
-            let no_args_positions =
-                generate_positions(&display_string, &(range_prefix.clone() + query));
-
-            // The following are valid autocomplete scenarios:
-            // :w!filename.txt
-            // :w filename.txt
-            // :w[space]
-            if !command.has_filename
-                || (!has_trailing_space && !parsed_query.has_bang && parsed_query.args.is_empty())
-            {
-                return Some((results, None));
-            }
-
-            Some((
-                results,
-                Some((idx, parsed_query, display_string, no_args_positions)),
-            ))
-        })
-    else {
-        return Task::ready(CommandInterceptResult::default());
-    };
-
-    if let Some((cmd_idx, parsed_query, display_string, no_args_positions)) = filenames {
-        let filenames = VimCommand::generate_filename_completions(&parsed_query, workspace, cx);
-        cx.spawn(async move |cx| {
-            let filenames = filenames.await;
-            const MAX_RESULTS: usize = 100;
-            let executor = cx.background_executor().clone();
-            let mut candidates = Vec::with_capacity(filenames.len());
-
-            for (idx, filename) in filenames.iter().enumerate() {
-                candidates.push(fuzzy::StringMatchCandidate::new(idx, &filename));
-            }
-            let filenames = fuzzy::match_strings(
-                &candidates,
-                &parsed_query.args,
-                false,
-                true,
-                MAX_RESULTS,
-                &Default::default(),
-                executor,
-            )
-            .await;
-
-            for fuzzy::StringMatch {
-                candidate_id: _,
-                score: _,
-                positions,
-                string,
-            } in filenames
-            {
-                let offset = display_string.len() + 1;
-                let mut positions: Vec<_> = positions.iter().map(|&pos| pos + offset).collect();
-                positions.splice(0..0, no_args_positions.clone());
-                let string = format!("{display_string} {string}");
-                let action = match cx
-                    .update(|cx| commands(cx).get(cmd_idx)?.parse(&string[1..], &range, cx))
-                {
-                    Ok(Some(action)) => action,
-                    _ => continue,
-                };
-                results.push(CommandInterceptItem {
-                    action,
-                    string,
-                    positions,
-                });
-            }
-            CommandInterceptResult {
-                results,
-                exclusive: true,
-            }
-        })
-    } else {
-        Task::ready(CommandInterceptResult {
-            results,
-            exclusive: false,
-        })
+        }
     }
+    Vec::default()
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -1733,40 +1530,19 @@ impl OnMatchingLines {
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
     // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
     pub(crate) fn parse(
-        query: &str,
-        range: &Option<CommandRange>,
-    ) -> Option<(String, CommandRange, String, bool)> {
-        let mut global = "global".chars().peekable();
-        let mut query_chars = query.chars().peekable();
-        let mut invert = false;
-        if query_chars.peek() == Some(&'v') {
-            invert = true;
-            query_chars.next();
-        }
-        while global
-            .peek()
-            .is_some_and(|char| Some(char) == query_chars.peek())
-        {
-            global.next();
-            query_chars.next();
-        }
-        if !invert && query_chars.peek() == Some(&'!') {
-            invert = true;
-            query_chars.next();
-        }
-        let range = range.clone().unwrap_or(CommandRange {
-            start: Position::Line { row: 0, offset: 0 },
-            end: Some(Position::LastLine { offset: 0 }),
-        });
-
-        let delimiter = query_chars.next().filter(|c| {
+        mut chars: Peekable<Chars>,
+        invert: bool,
+        range: CommandRange,
+        cx: &App,
+    ) -> Option<Self> {
+        let delimiter = chars.next().filter(|c| {
             !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
         })?;
 
         let mut search = String::new();
         let mut escaped = false;
 
-        for c in query_chars.by_ref() {
+        for c in chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
@@ -1787,7 +1563,21 @@ impl OnMatchingLines {
             }
         }
 
-        Some((query_chars.collect::<String>(), range, search, invert))
+        let command: String = chars.collect();
+
+        let action = WrappedAction(
+            command_interceptor(&command, cx)
+                .first()?
+                .action
+                .boxed_clone(),
+        );
+
+        Some(Self {
+            range,
+            search,
+            invert,
+            action,
+        })
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
@@ -1905,9 +1695,7 @@ impl OnMatchingLines {
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
-                            let newest = editor
-                                .selections
-                                .newest::<Point>(&editor.display_snapshot(cx));
+                            let newest = editor.selections.newest::<Point>(cx);
                             editor.change_selections(
                                 SelectionEffects::no_scroll(),
                                 window,
@@ -2004,9 +1792,7 @@ impl Vim {
         };
         let command = self.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let start = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
+            let start = editor.selections.newest_display(cx);
             let text_layout_details = editor.text_layout_details(window);
             let (mut range, _) = motion
                 .range(
@@ -2053,9 +1839,7 @@ impl Vim {
         };
         let command = self.update_editor(cx, |_, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let start = editor
-                .selections
-                .newest_display(&editor.display_snapshot(cx));
+            let start = editor.selections.newest_display(cx);
             let range = object
                 .range(&snapshot, start.clone(), around, None)
                 .unwrap_or(start.range());
@@ -2164,11 +1948,7 @@ impl ShellExec {
                 Point::new(range.start.0, 0)
                     ..snapshot.clip_point(Point::new(range.end.0 + 1, 0), Bias::Right)
             } else {
-                let mut end = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx))
-                    .range()
-                    .end;
+                let mut end = editor.selections.newest::<Point>(cx).range().end;
                 end = snapshot.clip_point(Point::new(end.row + 1, 0), Bias::Right);
                 needs_newline_prefix = end == snapshot.max_point();
                 end..end
@@ -2404,8 +2184,7 @@ mod test {
 
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        cx.simulate_keystrokes(": w !");
-        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
@@ -2563,7 +2342,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_command_write_filename(cx: &mut TestAppContext) {
+    async fn test_w_command(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.workspace(|workspace, _, cx| {

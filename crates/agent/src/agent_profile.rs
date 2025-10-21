@@ -77,22 +77,12 @@ impl AgentProfile {
             return Vec::new();
         };
 
-        let enabled: Vec<_> = self
-            .tool_set
+        self.tool_set
             .read(cx)
             .tools(cx)
             .into_iter()
             .filter(|(_, tool)| Self::is_enabled(settings, tool.source(), tool.name()))
-            .collect();
-
-        // Log once to help debug tool availability issues
-        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            let tool_names: Vec<_> = enabled.iter().map(|(_, tool)| tool.name()).collect();
-            log::info!("Enabled tools for profile '{}': {:?}", self.id, tool_names);
-        }
-
-        enabled
+            .collect()
     }
 
     pub fn is_tool_enabled(&self, source: ToolSource, tool_name: String, cx: &App) -> bool {

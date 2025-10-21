@@ -245,10 +245,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
             let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor
-                    .selections
-                    .newest::<usize>(&editor.display_snapshot(cx))
-                    .head();
+                let cursor_offset = editor.selections.newest::<usize>(cx).head();
                 (buffer, cursor_offset)
             });
             selected_index = self
@@ -676,7 +673,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(&editor.display_snapshot(cx))
+                .all::<rope::Point>(cx)
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()
