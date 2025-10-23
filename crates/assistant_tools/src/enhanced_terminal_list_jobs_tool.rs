@@ -41,7 +41,7 @@ impl Tool for EnhancedTerminalListJobsTool {
     }
 
     fn description(&self) -> String {
-        "List all known async terminal jobs with structured JSON (job_id, state, exit_code, success, truncated, canceled, runtime_secs, preview, command, used_sudo, dangerous, started_at).".into()
+        include_str!("./enhanced_terminal_list_jobs/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {

@@ -50,8 +50,7 @@ impl Tool for EnhancedTerminalJobStatusTool {
     }
 
     fn description(&self) -> String {
-        "Fetch status for an async terminal job. Supports full output retrieval and best‑effort cancellation. Returns structured JSON with fields like state, exit_code, success, truncated, canceled, runtime_secs, and output or full_output."
-            .into()
+        include_str!("./enhanced_terminal_job_status/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {

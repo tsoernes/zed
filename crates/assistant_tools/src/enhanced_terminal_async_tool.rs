@@ -1,10 +1,10 @@
 use crate::schema::json_schema_for;
 use action_log::ActionLog;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::Project;
 
 use agent_settings::AgentSettings;
@@ -22,8 +22,8 @@ use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
 use super::enhanced_terminal_tool::{
-    build_effective_denylist, command_is_dangerous, command_matches_any, jobs, new_job_id,
-    JobRecord, DEFAULT_OUTPUT_LIMIT, LARGE_OUTPUT_LIMIT,
+    DEFAULT_OUTPUT_LIMIT, JobRecord, LARGE_OUTPUT_LIMIT, build_effective_denylist,
+    command_is_dangerous, command_matches_any, jobs, new_job_id,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -85,10 +85,7 @@ impl Tool for EnhancedTerminalAsyncTool {
     }
 
     fn description(&self) -> String {
-        // Dedicated description for the async variant can be added here if desired.
-        // For now, keep it succinct.
-        "Execute shell commands asynchronously with optional timeout-based immediate result or job id, structured JSON responses, and environment variable whitelisting."
-            .into()
+        include_str!("./enhanced_terminal_async/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {
@@ -109,7 +106,9 @@ impl Tool for EnhancedTerminalAsyncTool {
                 match rest {
                     0 => MarkdownInlineCode(&format!("{prefix}{first}")).to_string(),
                     1 => MarkdownInlineCode(&format!("{prefix}{first} - 1 more line")).to_string(),
-                    n => MarkdownInlineCode(&format!("{prefix}{first} - {n} more lines")).to_string(),
+                    n => {
+                        MarkdownInlineCode(&format!("{prefix}{first} - {n} more lines")).to_string()
+                    }
                 }
             }
             Err(_) => "Run enhanced terminal command (async)".into(),
@@ -318,14 +317,12 @@ impl Tool for EnhancedTerminalAsyncTool {
         let timeout_secs = input.timeout_seconds.unwrap_or(0);
         let task = cx.background_spawn(async move {
             if timeout_secs == 0 {
-                return Ok(
-                    serde_json::json!({
-                        "job_id": job_id,
-                        "state": "running"
-                    })
-                    .to_string()
-                    .into(),
-                );
+                return Ok(serde_json::json!({
+                    "job_id": job_id,
+                    "state": "running"
+                })
+                .to_string()
+                .into());
             }
 
             let start = Instant::now();
@@ -345,7 +342,10 @@ impl Tool for EnhancedTerminalAsyncTool {
                             .unwrap_or(0);
 
                         let output_preview = rec.output.clone();
-                        let exit = rec.exit_code.map(|c| serde_json::Value::from(c)).unwrap_or(serde_json::Value::Null);
+                        let exit = rec
+                            .exit_code
+                            .map(|c| serde_json::Value::from(c))
+                            .unwrap_or(serde_json::Value::Null);
 
                         let json = serde_json::json!({
                             "job_id": job_id,
@@ -363,25 +363,21 @@ impl Tool for EnhancedTerminalAsyncTool {
 
                     // Still running, check timeout
                     if start.elapsed() >= Duration::from_secs(timeout_secs) {
-                        return Ok(
-                            serde_json::json!({
-                                "job_id": job_id,
-                                "state": "running"
-                            })
-                            .to_string()
-                            .into(),
-                        );
+                        return Ok(serde_json::json!({
+                            "job_id": job_id,
+                            "state": "running"
+                        })
+                        .to_string()
+                        .into());
                     }
                 } else {
                     // Job disappeared from registry (unlikely): report not_found
-                    return Ok(
-                        serde_json::json!({
-                            "job_id": job_id,
-                            "state": "not_found"
-                        })
-                        .to_string()
-                        .into(),
-                    );
+                    return Ok(serde_json::json!({
+                        "job_id": job_id,
+                        "state": "not_found"
+                    })
+                    .to_string()
+                    .into());
                 }
 
                 std::thread::sleep(Duration::from_millis(100));
