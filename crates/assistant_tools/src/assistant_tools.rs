@@ -113,7 +113,10 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
             .iter()
             .map(|t| t.name().to_string())
             .collect();
-        log::debug!("assistant_tools registered tools: {:?}", tool_names);
+        log::debug!(
+            "assistant_tools registered tools: {}",
+            tool_names.join(", ")
+        );
     }
 }
 
