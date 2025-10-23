@@ -145,6 +145,10 @@ pub struct EnhancedTerminalToolInput {
     /// Max captured bytes (defaults: 16KB normal, 256KB with sudo unless overridden).
     #[serde(default)]
     output_limit: Option<usize>,
+    /// Optional timeout (seconds) for synchronous execution before detaching.
+    /// Default 0: no early detachment. If the command exceeds this duration, a job_id is returned.
+    #[serde(default)]
+    timeout_seconds: Option<u64>,
     /// If true, run the command detached and return immediately with a job id.
     #[serde(default)]
     detach: bool,
@@ -158,6 +162,9 @@ pub struct EnhancedTerminalToolInput {
     /// Cancellation attempts a SIGTERM followed by SIGKILL (Unix) best-effort; on non-Unix it marks the job canceled.
     #[serde(default)]
     cancel: bool,
+    /// When true and the command is empty, list all known detached jobs and their statuses.
+    #[serde(default)]
+    list_jobs: bool,
     /// Allow execution to continue even if the command matches a denylisted dangerous pattern.
     #[serde(default)]
     allow_dangerous: bool,
@@ -240,8 +247,60 @@ impl Tool for EnhancedTerminalTool {
 
         // STATUS / CONTROL MODE:
         // If command is empty AND job_id provided -> status / cancel / full_output.
+        // If command is empty AND list_jobs=true -> list all known jobs.
         // Cancellation now attempts real process termination on Unix (best-effort).
         if input.command.trim().is_empty() {
+            if input.list_jobs {
+                let now = std::time::SystemTime::now();
+                let list = {
+                    let map = jobs().lock().unwrap();
+                    let mut rows = Vec::new();
+                    for (jid, rec) in map.iter() {
+                        let state = if rec.canceled {
+                            "canceled"
+                        } else if rec.finished_at.is_some() {
+                            "finished"
+                        } else {
+                            "running"
+                        };
+                        let runtime_secs = match rec.finished_at {
+                            Some(finish) => finish
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            None => now
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
+                        let exit = rec
+                            .exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "null".into());
+                        let preview = if rec.output.is_empty() {
+                            "\"\"".to_string()
+                        } else {
+                            serde_json::to_string(&rec.output.chars().take(200).collect::<String>())
+                                .unwrap_or("\"<encoding error>\"".into())
+                        };
+                        let cmd = serde_json::to_string(&rec.command)
+                            .unwrap_or("\"<encoding error>\"".into());
+                        rows.push(format!(
+                            "{{\"job_id\":{},\"state\":\"{}\",\"exit_code\":{},\"success\":{},\"truncated\":{},\"canceled\":{},\"runtime_secs\":{},\"preview\":{},\"command\":{}}}",
+                            serde_json::to_string(jid).unwrap_or("\"<encoding error>\"".into()),
+                            state, exit, rec.success, rec.truncated, rec.canceled, runtime_secs, preview, cmd
+                        ));
+                    }
+                    format!("{{\"jobs\":[{}]}}", rows.join(","))
+                };
+                return ToolResult {
+                    output: Task::ready(Ok(list.into())),
+                    card: None,
+                };
+            }
+
             if let Some(job_id) = &input.job_id {
                 // Optional cancellation
                 if input.cancel {
@@ -284,6 +343,19 @@ impl Tool for EnhancedTerminalTool {
                         } else {
                             "running"
                         };
+                        let now = std::time::SystemTime::now();
+                        let runtime_secs = match rec.finished_at {
+                            Some(finish) => finish
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            None => now
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
                         // Full output fetch (only if finished/canceled and requested)
                         if input.full_output && (state == "finished" || state == "canceled") {
                             let fo = serde_json::to_string(&rec.full_output)
@@ -294,8 +366,8 @@ impl Tool for EnhancedTerminalTool {
                                 .unwrap_or_else(|| "null".into());
                             return ToolResult {
                                 output: Task::ready(Ok(format!(
-                                    "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"full_output\":{}}}",
-                                    rec.success, rec.truncated, rec.canceled, fo
+                                    "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"runtime_secs\":{},\"full_output\":{}}}",
+                                    rec.success, rec.truncated, rec.canceled, runtime_secs, fo
                                 ).into())),
                                 card: None,
                             };
@@ -325,8 +397,14 @@ impl Tool for EnhancedTerminalTool {
                         let used_sudo = rec.used_sudo;
                         let dangerous = rec.dangerous;
                         format!(
-                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{},\"command\":{command_json},\"started_at\":{started},\"used_sudo\":{},\"dangerous\":{}}}",
-                            success, truncated, rec.canceled, preview, used_sudo, dangerous
+                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{},\"command\":{command_json},\"started_at\":{started},\"runtime_secs\":{},\"used_sudo\":{},\"dangerous\":{}}}",
+                            success,
+                            truncated,
+                            rec.canceled,
+                            preview,
+                            started,
+                            used_sudo,
+                            dangerous
                         )
                     }
                 };
@@ -558,6 +636,171 @@ impl Tool for EnhancedTerminalTool {
         });
 
         let final_script = build_final_command(&input);
+
+        // Timeout-based detachment: if timeout_seconds > 0, run in background and return job_id if not finished by timeout.
+        let timeout_secs = input.timeout_seconds.unwrap_or(0);
+        if timeout_secs > 0 {
+            let job_id = new_job_id();
+
+            {
+                let mut map = jobs().lock().unwrap();
+                map.insert(
+                    job_id.clone(),
+                    JobRecord {
+                        command: input.command.clone(),
+                        started_at: std::time::SystemTime::now(),
+                        finished_at: None,
+                        exit_code: None,
+                        success: false,
+                        used_sudo: input.use_sudo,
+                        output: String::new(),
+                        truncated: false,
+                        full_output: String::new(),
+                        canceled: false,
+                        dangerous: command_is_dangerous(&input.command),
+                        #[cfg(unix)]
+                        pid: None,
+                    },
+                );
+            }
+
+            cx.background_spawn({
+                let job_id = job_id.clone();
+                async move {
+                    let pty_system = native_pty_system();
+                    let (program, args) = shell_command_parts(&final_script, &input.shell);
+                    let mut cmd = CommandBuilder::new(program);
+                    cmd.args(args);
+                    if let Some(cwd) = &working_dir {
+                        cmd.cwd(cwd);
+                    }
+                    if cfg!(unix) {
+                        cmd.env("PAGER", "cat");
+                    }
+                    if let Ok(home) = env::var("HOME") {
+                        cmd.env("HOME", home);
+                    }
+                    let pair = pty_system.openpty(PtySize {
+                        rows: 24,
+                        cols: 80,
+                        ..Default::default()
+                    })?;
+
+                    let mut child = pair.slave.spawn_command(cmd)?;
+                    #[cfg(unix)]
+                    {
+                        if let Some(pid) = child.process_id() {
+                            let mut map = jobs().lock().unwrap();
+                            if let Some(rec) = map.get_mut(&job_id) {
+                                rec.pid = Some(pid);
+                            }
+                        }
+                    }
+                    let mut reader = pair.master.try_clone_reader()?;
+                    drop(pair);
+
+                    let mut buf = [0u8; 4096];
+                    let mut full_raw = String::new();
+                    loop {
+                        match reader.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                let chunk = String::from_utf8_lossy(&buf[..n]);
+                                full_raw.push_str(&chunk);
+                                let mut map = jobs().lock().unwrap();
+                                if let Some(rec) = map.get_mut(&job_id) {
+                                    if rec.finished_at.is_none() {
+                                        if full_raw.len() > effective_limit {
+                                            let mut preview = full_raw.clone();
+                                            let mut end_ix = effective_limit;
+                                            while !preview.is_char_boundary(end_ix) && end_ix > 0 {
+                                                end_ix -= 1;
+                                            }
+                                            preview.truncate(end_ix);
+                                            rec.output = preview;
+                                            rec.truncated = true;
+                                        } else {
+                                            rec.output = full_raw.clone();
+                                            rec.truncated = false;
+                                        }
+                                        rec.full_output = full_raw.clone();
+                                    }
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+
+                    let status = child.wait()?;
+                    let (exit_code, success) = {
+                        #[cfg(unix)]
+                        {
+                            (Some(status.exit_code() as i32), status.success())
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            (None, status.success())
+                        }
+                    };
+
+                    {
+                        let mut map = jobs().lock().unwrap();
+                        if let Some(rec) = map.get_mut(&job_id) {
+                            if !rec.canceled {
+                                rec.exit_code = exit_code;
+                                rec.success = success && exit_code.unwrap_or(1) == 0;
+                                if rec.full_output.len() <= effective_limit {
+                                    rec.output = rec.full_output.clone();
+                                }
+                                rec.finished_at = Some(std::time::SystemTime::now());
+                            }
+                        }
+                    }
+
+                    Ok::<(), anyhow::Error>(())
+                }
+            })
+            .detach();
+
+            let task = cx.background_spawn(async move {
+                let start = std::time::Instant::now();
+                loop {
+                    let rec_opt = {
+                        let map = jobs().lock().unwrap();
+                        map.get(&job_id).cloned()
+                    };
+                    if let Some(rec) = rec_opt {
+                        if rec.finished_at.is_some() {
+                            let out = process_output(
+                                &rec.full_output,
+                                &rec.command,
+                                rec.exit_code,
+                                rec.success,
+                                rec.used_sudo,
+                                effective_limit,
+                            );
+                            return Ok(out.into());
+                        }
+                    } else {
+                        return Ok(
+                            format!("{{\"job_id\":\"{job_id}\",\"state\":\"not_found\"}}").into(),
+                        );
+                    }
+
+                    if start.elapsed() >= std::time::Duration::from_secs(timeout_secs) {
+                        return Ok(
+                            format!("{{\"job_id\":\"{job_id}\",\"state\":\"running\"}}").into()
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
+
+            return ToolResult {
+                output: task,
+                card: None,
+            };
+        }
 
         let task = cx.background_spawn(async move {
             let pty_system = native_pty_system();
