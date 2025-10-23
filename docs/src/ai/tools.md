@@ -73,3 +73,28 @@ Moves or renames a file or directory in the project, performing a rename if only
 ### `terminal`
 
 Executes shell commands and returns the combined output, creating a new shell process for each invocation.
+
+For multitasking and parallel execution, prefer the async terminal tool `enhanced_terminal_async`. It starts the process in the background and returns a `job_id` immediately (or after waiting up to `timeout_seconds` if provided). Use `enhanced_terminal_job_status` to poll state, optionally cancel or fetch full output, and `enhanced_terminal_list_jobs` to enumerate all jobs.
+
+Examples:
+
+- Start async and return immediately with a job ID:
+  - Tool: `enhanced_terminal_async`
+  - Input: `{ "command": "sleep 30 && echo done", "cwd": ".", "timeout_seconds": 0 }`
+
+- Start async and wait up to 5 seconds for completion before returning a job ID:
+  - Tool: `enhanced_terminal_async`
+  - Input: `{ "command": "long_task.sh", "timeout_seconds": 5 }`
+
+- Poll status and fetch full output when finished:
+  - Tool: `enhanced_terminal_job_status`
+  - Input: `{ "job_id": "enhterm-job-1", "full_output": true }`
+
+- Cancel a running job (best-effort, signal-based on Unix):
+  - Tool: `enhanced_terminal_job_status`
+  - Input: `{ "job_id": "enhterm-job-1", "cancel": true }`
+
+- List all known jobs:
+  - Tool: `enhanced_terminal_list_jobs`
+  - Input: `{}`
+

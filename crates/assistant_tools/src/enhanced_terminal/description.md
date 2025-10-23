@@ -1,4 +1,4 @@
-Execute shell commands with advanced capabilities including optional sudo elevation, flexible working directory selection (inside or outside project roots), custom shell choice, larger output limits, timeout-based detachment, detachable background execution with status polling, real signal-based cancellation, full output retrieval, job listing, and incremental streaming preview of long-running output.
+Execute shell commands with advanced capabilities including optional sudo elevation, flexible working directory selection (inside or outside project roots), custom shell choice, larger output limits, timeout-based detachment, detachable background execution with status polling, real signal-based cancellation, full output retrieval, job listing, and incremental streaming preview of long-running output. For multitasking and parallel execution, prefer the async terminal tool enhanced_terminal_async.
 
 
 
