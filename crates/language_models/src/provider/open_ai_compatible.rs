@@ -322,6 +322,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let original_request = request.clone();
         let request = into_open_ai(
             request,
             &self.model.name,
@@ -331,9 +332,32 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             None,
         );
         let completions = self.stream_completion(request, cx);
+        // Prepare an initial token count future using the foreground App context.
+        let initial_token_count_future = cx
+            .update(|app| self.count_tokens(original_request.clone(), app))
+            .ok();
         async move {
             let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            let mapped = mapper.map_stream(completions.await?).boxed();
+            if let Some(fut) = initial_token_count_future {
+                match fut.await {
+                    Ok(tokens) => {
+                        let usage = language_model::TokenUsage {
+                            input_tokens: tokens,
+                            output_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        };
+                        let head = futures::stream::iter(vec![Ok(
+                            language_model::LanguageModelCompletionEvent::UsageUpdate(usage),
+                        )]);
+                        Ok(head.chain(mapped).boxed())
+                    }
+                    Err(_) => Ok(mapped),
+                }
+            } else {
+                Ok(mapped)
+            }
         }
         .boxed()
     }
