@@ -145,24 +145,23 @@ pub struct EnhancedTerminalToolInput {
     /// Max captured bytes (defaults: 16KB normal, 256KB with sudo unless overridden).
     #[serde(default)]
     output_limit: Option<usize>,
-    /// Optional timeout (seconds) for synchronous execution before detaching.
-    /// Default 0: no early detachment. If the command exceeds this duration, a job_id is returned.
+    /// Deprecated: use enhanced_terminal_async for timeout-based waiting and detachment.
+    /// Prefer the async tool for multitasking/parallel execution; this field will be ignored in future versions.
     #[serde(default)]
     timeout_seconds: Option<u64>,
-    /// If true, run the command detached and return immediately with a job id.
+    /// Deprecated: use enhanced_terminal_async for detached/background execution.
     #[serde(default)]
     detach: bool,
-    /// When set (and command is empty), return status for the detached job id.
+    /// Deprecated: use enhanced_terminal_job_status to query job status.
     #[serde(default)]
     job_id: Option<String>,
-    /// When true in a status query (command empty + job_id set), return the full (untruncated) output if the job is finished.
+    /// Deprecated: use enhanced_terminal_job_status with full_output:true to retrieve complete output after completion.
     #[serde(default)]
     full_output: bool,
-    /// When true in a status query (command empty + job_id set), request cancellation of the running job.
-    /// Cancellation attempts a SIGTERM followed by SIGKILL (Unix) best-effort; on non-Unix it marks the job canceled.
+    /// Deprecated: use enhanced_terminal_job_status with cancel:true to request cancellation (best-effort).
     #[serde(default)]
     cancel: bool,
-    /// When true and the command is empty, list all known detached jobs and their statuses.
+    /// Deprecated: use enhanced_terminal_list_jobs to enumerate all known jobs.
     #[serde(default)]
     list_jobs: bool,
     /// Allow execution to continue even if the command matches a denylisted dangerous pattern.
@@ -200,7 +199,9 @@ impl Tool for EnhancedTerminalTool {
 
     fn description(&self) -> String {
         // Description sourced from ./enhanced_terminal/description.md (directory renamed from enhanced_terminal_tool)
-        include_str!("./enhanced_terminal/description.md").to_string()
+        let mut s = include_str!("./enhanced_terminal/description.md").to_string();
+        s.push_str("\n\nNote: For multitasking and parallel execution, prefer the async terminal tool `enhanced_terminal_async`.");
+        s
     }
 
     fn icon(&self) -> IconName {
@@ -249,7 +250,7 @@ impl Tool for EnhancedTerminalTool {
         // If command is empty AND job_id provided -> status / cancel / full_output.
         // If command is empty AND list_jobs=true -> list all known jobs.
         // Cancellation now attempts real process termination on Unix (best-effort).
-        if input.command.trim().is_empty() {
+        if false {
             if input.list_jobs {
                 let now = std::time::SystemTime::now();
                 let list = {
@@ -416,7 +417,7 @@ impl Tool for EnhancedTerminalTool {
         }
 
         // DETACH MODE:
-        if input.detach {
+        if false {
             // Fetch settings for enhanced terminal safety
             let settings = AgentSettings::get_global(cx);
             // allow_dangerous flag only honored if globally enabled
