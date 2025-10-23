@@ -733,7 +733,7 @@ impl NativeAgentConnection {
             while let Some(result) = events.next().await {
                 match result {
                     Ok(event) => {
-                        log::trace!("Received completion event: {:?}", event);
+
 
                         match event {
                             ThreadEvent::UserMessage(message) => {
@@ -811,7 +811,7 @@ impl NativeAgentConnection {
                                 })?;
                             }
                             ThreadEvent::Stop(stop_reason) => {
-                                log::debug!("Assistant message complete: {:?}", stop_reason);
+                                log::trace!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse {
                                     stop_reason,
                                     meta: None,
@@ -826,7 +826,7 @@ impl NativeAgentConnection {
                 }
             }
 
-            log::debug!("Response stream completed");
+            log::trace!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
                 meta: None,

@@ -1747,7 +1747,7 @@ impl Thread {
         self.messages.push(Message::Resume);
         cx.notify();
 
-        log::debug!("Total messages in thread: {}", self.messages.len());
+        log::trace!("Total messages in thread: {}", self.messages.len());
         self.run_turn(cx)
     }
 
@@ -1769,13 +1769,13 @@ impl Thread {
         self.advance_prompt_id();
 
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
-        log::debug!("Thread::send content: {:?}", content);
+        log::trace!("Thread::send content: {:?}", content);
 
         self.messages
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
-        log::debug!("Total messages in thread: {}", self.messages.len());
+        log::trace!("Total messages in thread: {}", self.messages.len());
         // Kick off (non-blocking) precise token usage computation.
         self.spawn_compute_precise_usage(cx);
         self.run_turn(cx)
@@ -1801,14 +1801,14 @@ impl Thread {
             event_stream: event_stream.clone(),
             tools: self.enabled_tools(profile, &model, cx),
             _task: cx.spawn(async move |this, cx| {
-                log::debug!("Starting agent turn execution");
+                log::trace!("Starting agent turn execution");
 
                 let turn_result = Self::run_turn_internal(&this, model, &event_stream, cx).await;
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
 
                 match turn_result {
                     Ok(()) => {
-                        log::debug!("Turn execution completed");
+                        log::trace!("Turn execution completed");
                         event_stream.send_stop(acp::StopReason::EndTurn);
                     }
                     Err(error) => {
@@ -1855,7 +1855,7 @@ impl Thread {
                 attempt
             );
 
-            log::debug!("Calling model.stream_completion, attempt {}", attempt);
+            log::trace!("Calling model.stream_completion, attempt {}", attempt);
             let mut events = model
                 .stream_completion(request, cx)
                 .await
@@ -1879,7 +1879,7 @@ impl Thread {
 
             let end_turn = tool_results.is_empty();
             while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
+                log::trace!("Tool finished {:?}", tool_result);
 
                 event_stream.update_tool_call_fields(
                     &tool_result.tool_use_id,
@@ -1962,7 +1962,7 @@ impl Thread {
             }
             RetryStrategy::Fixed { delay, .. } => *delay,
         };
-        log::debug!("Retry attempt {attempt} with delay {delay:?}");
+        log::trace!("Retry attempt {attempt} with delay {delay:?}");
 
         Ok(acp_thread::RetryStatus {
             last_error: error.to_string().into(),
@@ -2171,7 +2171,7 @@ impl Thread {
         });
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
-        log::debug!("Running tool {}", tool_use.name);
+        log::trace!("Running tool {}", tool_use.name);
         Some(cx.foreground_executor().spawn(async move {
             let tool_result = tool_result.await.and_then(|output| {
                 if let LanguageModelToolResultContent::Image(_) = &output.llm_output
@@ -2283,7 +2283,7 @@ impl Thread {
                 summary.extend(lines.next());
             }
 
-            log::debug!("Setting summary: {}", summary);
+            log::trace!("Setting summary: {}", summary);
             let summary = SharedString::from(summary);
 
             this.update(cx, |this, cx| {
@@ -2300,7 +2300,7 @@ impl Thread {
             return;
         };
 
-        log::debug!(
+        log::trace!(
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
@@ -2437,13 +2437,13 @@ impl Thread {
             Vec::new()
         };
 
-        log::debug!("Building completion request");
-        log::debug!("Completion intent: {:?}", completion_intent);
-        log::debug!("Completion mode: {:?}", self.completion_mode);
+        log::trace!("Building completion request");
+        log::trace!("Completion intent: {:?}", completion_intent);
+        log::trace!("Completion mode: {:?}", self.completion_mode);
 
         let messages = self.build_request_messages(cx);
-        log::debug!("Request will include {} messages", messages.len());
-        log::debug!("Request includes {} tools", tools.len());
+        log::trace!("Request will include {} messages", messages.len());
+        log::trace!("Request includes {} tools", tools.len());
 
         // Enumerate tool names for debugging (visibility into which tools, including "memory", are offered)
         if log::log_enabled!(log::Level::Info) {
