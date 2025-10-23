@@ -2446,10 +2446,9 @@ impl Thread {
         log::trace!("Request includes {} tools", tools.len());
 
         // Enumerate tool names for debugging (visibility into which tools, including "memory", are offered)
-        if log::log_enabled!(log::Level::Info) {
-            for tool_name in tools.iter().map(|t| &t.name) {
-                log::info!("Thread {} including tool: {}", self.id, tool_name);
-            }
+        if log::log_enabled!(log::Level::Debug) {
+            let tool_names: Vec<&String> = tools.iter().map(|t| &t.name).collect();
+            log::debug!("Thread {} including tools: {:?}", self.id, tool_names);
         }
 
         let request = LanguageModelRequest {
