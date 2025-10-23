@@ -2574,7 +2574,7 @@ impl Thread {
         // Token usage (precise only): only surface when available; otherwise omit.
         // Prefix these with underscores to indicate intentional unused bindings
         // when the precise values are not needed by the template rendering.
-        let (_active_tokens_opt, _max_tokens_opt, _usage_pct_opt) =
+        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) =
             if let (Some(precise), Some(max)) =
                 (self.precise_active_tokens, self.precise_max_tokens)
             {
