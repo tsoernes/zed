@@ -1,11 +1,11 @@
 use collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::{
-    OnceLock, RwLock,
     atomic::{AtomicU8, Ordering},
+    OnceLock, RwLock,
 };
 
-use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
+use crate::{env_config, private, Scope, ScopeAlloc, SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR};
 
 use log;
 
@@ -41,6 +41,9 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     ("blade_graphics", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
+    // Suppress pet crate INFO logs by default
+    ("pet", log::LevelFilter::Warn),
+    ("pet::locators", log::LevelFilter::Warn),
 ];
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
