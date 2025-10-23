@@ -5,6 +5,9 @@ mod detect_binaries_tool;
 mod diagnostics_tool;
 pub mod edit_agent;
 mod edit_file_tool;
+mod enhanced_terminal_async_tool;
+mod enhanced_terminal_job_status_tool;
+mod enhanced_terminal_list_jobs_tool;
 mod enhanced_terminal_tool; // EnhancedTerminalTool registered under tool name "enhanced_terminal"
 mod fetch_tool;
 mod find_path_tool;
@@ -45,6 +48,9 @@ use crate::thinking_tool::ThinkingTool;
 
 pub use detect_binaries_tool::DetectBinariesTool;
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
+pub use enhanced_terminal_async_tool::EnhancedTerminalAsyncTool;
+pub use enhanced_terminal_job_status_tool::EnhancedTerminalJobStatusTool;
+pub use enhanced_terminal_list_jobs_tool::EnhancedTerminalListJobsTool;
 pub use enhanced_terminal_tool::EnhancedTerminalTool;
 pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
@@ -59,6 +65,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
     registry.register_tool(EnhancedTerminalTool);
+    registry.register_tool(EnhancedTerminalAsyncTool);
+    registry.register_tool(EnhancedTerminalJobStatusTool);
+    registry.register_tool(EnhancedTerminalListJobsTool);
     registry.register_tool(DetectBinariesTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);

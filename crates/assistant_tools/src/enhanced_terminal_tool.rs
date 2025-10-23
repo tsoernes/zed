@@ -31,40 +31,40 @@ use util::markdown::MarkdownInlineCode;
 /// Enhanced terminal safety configuration now sourced from AgentSettings (settings.json / default.json).
 /// Environment-variable based configuration has been removed.
 
-const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
-const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
+pub(crate) const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
+pub(crate) const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 // Detached job registry
 #[derive(Debug, Clone)]
-struct JobRecord {
+pub(crate) struct JobRecord {
     // Original command
-    command: String,
+    pub(crate) command: String,
     // Timing
-    started_at: std::time::SystemTime,
-    finished_at: Option<std::time::SystemTime>,
+    pub(crate) started_at: std::time::SystemTime,
+    pub(crate) finished_at: Option<std::time::SystemTime>,
     // Result
-    exit_code: Option<i32>,
-    success: bool,
-    used_sudo: bool,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) success: bool,
+    pub(crate) used_sudo: bool,
     // Streaming preview (truncated to output_limit) updated incrementally
-    output: String,
-    truncated: bool,
+    pub(crate) output: String,
+    pub(crate) truncated: bool,
     // Full accumulated output (never truncated; surfaced via full_output=true)
-    full_output: String,
+    pub(crate) full_output: String,
     // Cancellation flag (semantic plus best-effort signal dispatch on Unix)
-    canceled: bool,
+    pub(crate) canceled: bool,
     // Whether command matched denylist (informational)
-    dangerous: bool,
+    pub(crate) dangerous: bool,
     // Child pid for real cancellation on Unix
     #[cfg(unix)]
-    pid: Option<u32>,
+    pub(crate) pid: Option<u32>,
 }
 
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 static JOBS: OnceLock<Mutex<HashMap<String, JobRecord>>> = OnceLock::new();
 
 /// Build the effective denylist from settings each time (settings are user‑mutable at runtime).
-fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<String> {
+pub(crate) fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
     if !settings.enhanced_terminal_disable_default_denylist {
         for pat in &[
@@ -88,23 +88,23 @@ fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<Str
     patterns
 }
 
-fn command_matches_any(patterns: &[String], cmd: &str) -> bool {
+pub(crate) fn command_matches_any(patterns: &[String], cmd: &str) -> bool {
     let lowered = cmd.to_lowercase();
     patterns.iter().any(|p| lowered.contains(p))
 }
 
-fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
+pub(crate) fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn new_job_id() -> String {
+pub(crate) fn new_job_id() -> String {
     format!(
         "enhterm-job-{}",
         JOB_COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
 
-fn command_is_dangerous(cmd: &str) -> bool {
+pub(crate) fn command_is_dangerous(cmd: &str) -> bool {
     // Conservative pattern list; intentionally simple to minimize false negatives while
     // avoiding over-complication. Caller can override with allow_dangerous=true.
     // NOTE: Patterns are lowercase-matched; update description.md if changed.
