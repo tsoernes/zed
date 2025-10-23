@@ -107,8 +107,13 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     .detach();
 
     // Log all registered tools after initialization for harness export verification.
-    for t in ToolRegistry::global(cx).tools() {
-        log::info!("assistant_tools registered tool: {}", t.name());
+    if log::log_enabled!(log::Level::Debug) {
+        let tool_names: Vec<String> = ToolRegistry::global(cx)
+            .tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        log::debug!("assistant_tools registered tools: {:?}", tool_names);
     }
 }
 
