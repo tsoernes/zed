@@ -206,14 +206,17 @@ impl AgentTool for ListHistoryTool {
             let idx = input.start + offset;
             let role = &pm.role;
             let full = pm.markdown.as_str();
-            let chars = full.len();
-            let preview = if full.len() <= input.max_chars_per_message {
-                full
+            let char_count = full.chars().count();
+            let mut preview: String = if char_count <= input.max_chars_per_message {
+                full.to_owned()
             } else {
-                &full[..input.max_chars_per_message]
+                full.chars().take(input.max_chars_per_message).collect()
             };
-            let mut preview = preview.replace('|', "\\|").replace('\n', " ");
-            if chars > input.max_chars_per_message {
+            preview = preview.replace('|', "\\|").replace('\n', " ");
+            if char_count > input.max_chars_per_message {
+                preview.push_str("...");
+            }
+            let chars = char_count;
                 preview.push_str("...");
             }
             output.push_str(&format!(
