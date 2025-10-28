@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 //  - Embeddings entity mirror (if not already available in scope)
 //  - Query joining message_embeddings -> embeddings to populate real vectors
 //  - Replacement of placeholder empty vectors with real dimension data.
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+
 use sea_orm::{
     ActiveModelTrait, IntoActiveModel, ConnectionTrait, QuerySelect, QueryTrait, EntityOrSelect, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     Set, TransactionTrait,
@@ -379,8 +379,8 @@ impl ChatHistoryDb {
 	            }
 	            RetrievalMode::Embedding => Vec::new(),
 	        };
-	        let mut lexical_map =
-	            std::collections::HashMap::<MessageId, f32>::from_iter(lexical.into_iter());
+	            let lexical_map =
+		            std::collections::HashMap::<MessageId, f32>::from_iter(lexical.into_iter());
 
 	        // Embedding similarity (query vs message vectors).
 	        let mut embedding_map = std::collections::HashMap::<MessageId, f32>::new();
@@ -498,32 +498,20 @@ pub fn new_chat_message(
 /// For remote (OpenAI/Azure) we delegate to embedding_backend directly.
 pub struct EmbeddingStore {
     model_name: String,
+    cache: crate::fastembed_cache::FastEmbedCache,
 }
 
 impl EmbeddingStore {
     pub fn new(model_name: String) -> Self {
-        Self { model_name }
+        let model_enum = crate::fastembed_cache::FastEmbedCache::resolve_model_name(&model_name);
+        Self {
+            model_name,
+            cache: crate::fastembed_cache::FastEmbedCache::new(model_enum),
+        }
     }
 
     pub fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        if texts.is_empty() {
-            return Ok(Vec::new());
-        }
-        let model_enum = match self.model_name.as_str() {
-            "BGESmallENV15" | "bge-small-en-v1.5" => EmbeddingModel::BGESmallENV15,
-            "BGEBaseENV15" | "bge-base-en-v1.5" => EmbeddingModel::BGEBaseENV15,
-            "BGELargeENV15" | "bge-large-en-v1.5" => EmbeddingModel::BGELargeENV15,
-            _ => EmbeddingModel::BGESmallENV15,
-        };
-        let mut options = InitOptions::default();
-        options.model_name = model_enum;
-        options.show_download_progress = false;
-        let mut model = TextEmbedding::try_new(options)
-            .map_err(|e| anyhow!("fastembed init failed: {e:?}"))?;
-        let embeddings = model
-            .embed(texts.to_vec(), None)
-            .map_err(|e| anyhow!("embed failed: {e:?}"))?;
-        Ok(embeddings)
+        self.cache.embed(texts)
     }
 }
 
@@ -586,45 +574,7 @@ impl ChatHistoryDb {
             }
         }
 
-        /// Hybrid scoring using embedded query (placeholder: embedding similarity not yet integrated with stored message vectors).
-        pub async fn search_messages_with_embedding(
-            &self,
-            query: &str,
-            project_id: Option<&str>,
-            chat_id: Option<&ChatId>,
-            top_k: usize,
-            mode: RetrievalMode,
-            alpha: f32,
-        ) -> Result<Vec<(ChatMessage, f32)>> {
-            // First perform lexical/hybrid base search.
-            let base = self.search_messages(query, project_id, chat_id, top_k * 2, mode.clone(), alpha).await?;
 
-            if !matches!(mode, RetrievalMode::Embedding | RetrievalMode::Hybrid) {
-                return Ok(base);
-            }
-
-            // Embed query (if fails, fall back to lexical results).
-            let query_vec = match self.embed_query(query).await? {
-                Some(v) => v,
-                None => return Ok(base),
-            };
-
-            // Placeholder: in full implementation we will fetch each message vector.
-            // For now, reuse lexical score as keyword_score and treat embedding contribution as zero.
-            let mut out = Vec::new();
-            for (msg, lexical_score) in base {
-                let embedding_score = 0.0; // TODO: compute cosine(query_vec, message_vec)
-                let fused = match mode {
-                    RetrievalMode::Embedding => embedding_score,
-                    RetrievalMode::Hybrid => crate::fuse_scores(embedding_score, lexical_score, alpha),
-                    RetrievalMode::Bm25 => lexical_score,
-                };
-                out.push((msg, fused));
-            }
-            out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            out.truncate(top_k);
-            Ok(out)
-        }
     }
 
 impl ChatHistoryDb {

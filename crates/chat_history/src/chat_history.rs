@@ -1,4 +1,5 @@
 //! Chat history persistence, retrieval, similarity search, and RAG over prior conversations.
+pub mod fastembed_cache;
 
 #[cfg(test)]
 mod tests {
@@ -526,13 +527,16 @@ pub enum RetrievalMode {
 /// FastEmbed local backend stub.
 pub struct FastEmbedBackend {
     model_name: String,
-    // TODO: store fastembed model handle once integrated.
+    cache: crate::fastembed_cache::FastEmbedCache,
 }
 
 impl FastEmbedBackend {
     pub fn new(model_name: impl Into<String>) -> Self {
+        let name_string = model_name.into();
+        let model_enum = crate::fastembed_cache::FastEmbedCache::resolve_model_name(&name_string);
         Self {
-            model_name: model_name.into(),
+            model_name: name_string,
+            cache: crate::fastembed_cache::FastEmbedCache::new(model_enum),
         }
     }
 }
@@ -544,29 +548,8 @@ impl EmbeddingBackend for FastEmbedBackend {
     }
 
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-
-        // Resolve model enum from configured name (fallback to small model).
-        let model_name = match self.model_name.as_str() {
-            "BGESmallENV15" | "bge-small-en-v1.5" => EmbeddingModel::BGESmallENV15,
-            "BGEBaseENV15" | "bge-base-en-v1.5" => EmbeddingModel::BGEBaseENV15,
-            "BGELargeENV15" | "bge-large-en-v1.5" => EmbeddingModel::BGELargeENV15,
-            _ => EmbeddingModel::BGESmallENV15,
-        };
-
-        // Avoid non-exhaustive struct literal; use mutable default then set needed fields.
-        let mut options = InitOptions::default();
-        options.model_name = model_name;
-        options.show_download_progress = false;
-
-        // Construct a fresh embedding model each call (can be optimized later with a cache guarded
-        // by interior mutability; correctness and clarity prioritized here).
-        let mut model = TextEmbedding::try_new(options)
-            .map_err(|e| anyhow!("fastembed init failed: {e:?}"))?;
-
-        model
-            .embed(texts.to_vec(), None)
-            .map_err(|e| anyhow!("fastembed embed failed: {e:?}"))
+        // Delegate to shared cache (lazy init + mutex for interior mutability).
+        self.cache.embed(texts)
     }
 }
 
@@ -846,20 +829,7 @@ impl ChatStore {
         items.into_iter().take(5).map(|(t,_)| t).collect()
     }
 
-    /// Combined convenience method for summary/tag refresh in bulk contexts.
-    fn maybe_refresh_summary_and_tags(&self, meta: &mut ChatMetadata, messages: &[ChatMessage]) {
-        if self.should_refresh_summary(meta) {
-            self.refresh_summary(meta, messages);
-        }
-        if self.config.auto_tag {
-            let new_tags = self.suggest_tags(messages);
-            for t in new_tags {
-                if !meta.tags.contains(&t) {
-                    meta.tags.push(t);
-                }
-            }
-        }
-    }
+
 
     /// Retrieve chat metadata + messages.
     pub async fn get_chat(
