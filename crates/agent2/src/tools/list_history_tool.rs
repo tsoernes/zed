@@ -216,12 +216,9 @@ impl AgentTool for ListHistoryTool {
             if char_count > input.max_chars_per_message {
                 preview.push_str("...");
             }
-            let chars = char_count;
-                preview.push_str("...");
-            }
             output.push_str(&format!(
                 "| {} | {} | {} | {} |\n",
-                idx, role, chars, preview
+                idx, role, char_count, preview
             ));
         }
 

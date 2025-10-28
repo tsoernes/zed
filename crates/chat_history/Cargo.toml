@@ -1,0 +1,47 @@
+[package]
+name = "chat_history"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Chat history persistence and retrieval with hybrid (BM25 + embedding) search and RAG for prior conversations."
+
+[lib]
+# Follow workspace guideline: avoid lib.rs; use descriptive filename.
+path = "src/chat_history.rs"
+
+[features]
+default = ["fastembed", "openai"]
+# Enable using OpenAI embeddings if the workspace's open_ai crate is available.
+openai = ["dep:open_ai"]
+# Placeholder for Azure OpenAI integration (if/when an azure crate is added).
+azure_openai = []
+
+[dependencies]
+anyhow = "*"
+async-trait = "*"
+serde = { version = "*", features = ["derive"] }
+time = "*"
+sha2 = "*"
+once_cell = "*"
+http = "*"
+reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = { version = "*", features = ["raw_value"] }
+
+# Workspace internal crates (path dependencies use workspace resolution).
+collections = { path = "../collections" }
+telemetry = { path = "../telemetry", optional = true }
+open_ai = { path = "../open_ai", optional = true }
+search = { path = "../search" }
+
+# FastEmbed (open-source embedding backend). Version wildcard used because exact version not queried yet.
+fastembed = { version = "*", optional = true }
+
+# SeaORM for persistence (Postgres features; SQLite added in dev-dependencies for tests)
+sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+
+[dev-dependencies]
+# (moved to main dependencies for runtime use)
+tokio = { version = "1", features = ["rt", "macros"] }
+# SQLite feature for SeaORM in tests/local development
+sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
