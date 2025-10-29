@@ -14,6 +14,8 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
+    "crates/chat_history",
+    "crates/chat_history_tools",
     "crates/assistant_context",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -319,6 +321,8 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
+chat_history = { path = "crates/chat_history" }
+chat_history_tools = { path = "crates/chat_history_tools" }
 zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }

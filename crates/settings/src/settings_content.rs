@@ -30,7 +30,7 @@ use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::{ActiveSettingsProfileName, merge_from};
+use crate::{merge_from, ActiveSettingsProfileName};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -161,6 +161,85 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
+
+    /// Chat history and retrieval-augmented generation settings.
+    ///
+    /// Controls embedding backend/model, retrieval parameters, summary refresh thresholds,
+    /// auto tag suggestion, and remote embedding provider (OpenAI / Azure OpenAI) configuration.
+    pub chat_history: Option<ChatHistorySettingsContent>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ChatHistorySettingsContent {
+    /// Embedding backend selection: "fastembed", "openai", or "azure_openai".
+    ///
+    /// Default: fastembed
+    pub embedding_backend: Option<String>,
+    /// Base embedding model identifier (used for fastembed or as fallback).
+    ///
+    /// Default: bge-base-en-v1.5
+    pub embedding_model: Option<String>,
+    /// Hybrid score interpolation alpha (0=lexical only, 1=embedding only).
+    ///
+    /// Default: 0.55
+    pub hybrid_alpha: Option<f32>,
+    /// Number of similar chats to retrieve when suggesting related history.
+    ///
+    /// Default: 10
+    pub similar_chats_k: Option<usize>,
+    /// Character threshold for triggering a summary recomputation.
+    ///
+    /// Default: 4000
+    pub summary_refresh_chars: Option<usize>,
+    /// Minimum character delta since last summary to trigger a refresh.
+    ///
+    /// Default: 1500
+    pub summary_delta_chars: Option<usize>,
+    /// Default maximum number of contexts to retrieve for RAG answers.
+    ///
+    /// Default: 6
+    pub rag_top_k: Option<usize>,
+    /// Whether automatic tag extraction is enabled.
+    ///
+    /// Default: true
+    pub auto_tag: Option<bool>,
+    /// Default retrieval mode: "bm25", "embedding", or "hybrid".
+    ///
+    /// Default: hybrid
+    pub default_retrieval_mode: Option<String>,
+    /// OpenAI remote embedding configuration.
+    pub openai: Option<ChatHistoryOpenAiSettingsContent>,
+    /// Azure OpenAI embedding configuration.
+    pub azure_openai: Option<ChatHistoryAzureOpenAiSettingsContent>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ChatHistoryOpenAiSettingsContent {
+    /// API key (will be redacted in UI when displayed).
+    pub api_key: Option<String>,
+    /// Override API base URL.
+    ///
+    /// Default: https://api.openai.com/v1
+    pub api_url: Option<String>,
+    /// Embedding model (e.g. text-embedding-3-small).
+    pub model: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ChatHistoryAzureOpenAiSettingsContent {
+    /// Azure OpenAI API key (redacted in display).
+    pub api_key: Option<String>,
+    /// Endpoint, e.g. https://your-resource.openai.azure.com
+    pub endpoint: Option<String>,
+    /// API version string (e.g. 2024-02-15-preview).
+    pub api_version: Option<String>,
+    /// Deployment name (sometimes called engine).
+    pub deployment: Option<String>,
+    /// Embedding model identifier if distinct from deployment.
+    pub embedding_model: Option<String>,
 }
 
 impl SettingsContent {

@@ -40,3 +40,4 @@ xcuserdata/
 .env.secret.toml
 /.repo_summarize_mcp_logs/
 /.shell_mcp_logs/
+**/.fastembed_cache/

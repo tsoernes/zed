@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 // NOTE: Pending edit: need precise line numbers for fetch_message_vectors implementation block to insert
 // actual embedding retrieval join against global embeddings table. Please provide a numbered excerpt
 // (e.g. 20 lines before and after fetch_message_vectors) so I can add:
@@ -441,12 +441,81 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     for i in 0..a.len() {
         let x = a[i];
         let y = b[i];
-        dot += (x * y) as f32;
-        norm_a += (x * x) as f32;
-        norm_b += (y * y) as f32;
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
     }
     let denom = (norm_a.sqrt() * norm_b.sqrt()).max(1e-8);
     dot / denom
+}
+
+/// Encode a slice of f32 embeddings into little-endian bytes.
+fn encode_embedding_vector(vec: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(vec.len() * 4);
+    for &v in vec {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes
+}
+
+/// Decode little-endian f32 bytes back into a vector.
+fn decode_embedding_vector(bytes: &[u8]) -> anyhow::Result<Vec<f32>> {
+    if bytes.len() % 4 != 0 {
+        return Err(anyhow::anyhow!("embedding byte length not divisible by 4"));
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4);
+    for chunk in bytes.chunks(4) {
+        let mut arr = [0u8; 4];
+        arr.copy_from_slice(chunk);
+        out.push(f32::from_le_bytes(arr));
+    }
+    Ok(out)
+}
+
+/// Persist (model,digest,vector) if not already stored.
+async fn persist_embedding_vector(
+    conn: &sea_orm::DatabaseConnection,
+    model: &str,
+    digest: &[u8],
+    vector: &[f32],
+) -> anyhow::Result<()> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, ActiveModelTrait, Set};
+    use crate::entities::{EmbeddingModelEntity, EmbeddingColumn, EmbeddingActiveModel};
+    let existing = EmbeddingModelEntity::find()
+        .filter(EmbeddingColumn::Model.eq(model.to_string()))
+        .filter(EmbeddingColumn::Digest.eq(digest.to_vec()))
+        .one(conn)
+        .await?;
+    if existing.is_some() {
+        return Ok(());
+    }
+    let active = EmbeddingActiveModel {
+        model: Set(model.to_string()),
+        digest: Set(digest.to_vec()),
+        dimensions: Set(encode_embedding_vector(vector)),
+        created_at: Set(time::OffsetDateTime::now_utc()),
+    };
+    active.insert(conn).await?;
+    Ok(())
+}
+
+/// Fetch embedding vector for (model,digest) if present.
+async fn fetch_embedding_vector(
+    conn: &sea_orm::DatabaseConnection,
+    model: &str,
+    digest: &[u8],
+) -> anyhow::Result<Option<Vec<f32>>> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    use crate::entities::{EmbeddingModelEntity, EmbeddingColumn};
+    if let Some(row) = EmbeddingModelEntity::find()
+        .filter(EmbeddingColumn::Model.eq(model.to_string()))
+        .filter(EmbeddingColumn::Digest.eq(digest.to_vec()))
+        .one(conn)
+        .await?
+    {
+        return Ok(Some(decode_embedding_vector(&row.dimensions)?));
+    }
+    Ok(None)
 }
 
 /// Creates initial chat metadata for a new chat.
@@ -497,7 +566,7 @@ pub fn new_chat_message(
 /// Simple local embedding store wrapper for fastembed fallback + caching.
 /// For remote (OpenAI/Azure) we delegate to embedding_backend directly.
 pub struct EmbeddingStore {
-    model_name: String,
+    _model_name: String,
     cache: crate::fastembed_cache::FastEmbedCache,
 }
 
@@ -505,7 +574,7 @@ impl EmbeddingStore {
     pub fn new(model_name: String) -> Self {
         let model_enum = crate::fastembed_cache::FastEmbedCache::resolve_model_name(&model_name);
         Self {
-            model_name,
+            _model_name: model_name,
             cache: crate::fastembed_cache::FastEmbedCache::new(model_enum),
         }
     }
@@ -542,16 +611,17 @@ impl ChatHistoryDb {
                 _ => self.embedding_backend.embed(&texts).await?,
             };
 
-            // Persist message_embeddings rows.
-            for ((msg_id, _, digest), _) in to_compute.iter().zip(vectors.iter()) {
-                self.insert_message_embedding(msg_id, &self.config.embedding_model, digest)
-                    .await?;
+            // Persist message_embeddings rows and embedding vectors (deduplicated by (model,digest)).
+            for ((msg_id, _content, digest), vec) in to_compute.iter().zip(vectors.iter()) {
+                // Store association (message -> (model,digest))
+                self.insert_message_embedding(msg_id, &self.config.embedding_model, digest).await?;
+                // Store vector if not already present
+                persist_embedding_vector(&self.conn, &self.config.embedding_model, digest, vec).await?;
             }
 
             // Return map of newly computed embeddings.
             let mut out = HashMap::new();
-            for (entry, vec) in to_compute.into_iter().zip(vectors.into_iter()) {
-                let (msg_id, _content, _digest) = entry;
+            for ((msg_id, _content, _digest), vec) in to_compute.into_iter().zip(vectors.into_iter()) {
                 out.insert(msg_id, vec);
             }
             Ok(out)
@@ -582,7 +652,7 @@ impl ChatHistoryDb {
         &self,
         message_ids: &[MessageId],
     ) -> Result<std::collections::HashMap<MessageId, Vec<f32>>> {
-            use sea_orm::{FromQueryResult, Statement, DatabaseBackend, Value};
+            // removed unused sea_orm imports (FromQueryResult, Statement, DatabaseBackend, Value)
             if message_ids.is_empty() {
                 return Ok(std::collections::HashMap::new());
             }
@@ -607,37 +677,18 @@ impl ChatHistoryDb {
                     .push(MessageId(r.message_id.clone()));
             }
 
-            #[derive(Debug, FromQueryResult)]
-            struct EmbRow {
-                dimensions: Vec<f32>,
-            }
 
-            let backend = self.conn.get_database_backend();
+            // removed unused EmbRow struct
+
+            let _backend = self.conn.get_database_backend();
             let mut result = std::collections::HashMap::<MessageId, Vec<f32>>::new();
 
-            // For simplicity (and to avoid constructing large dynamic IN clauses with binary params across
-            // backends) query each (model,digest) pair individually. This is O(n) queries; if performance
-            // becomes an issue, batch by model with a temporary table or parameterized IN expansion.
+            // Fetch vectors via helper; avoids backend-specific raw SQL construction here.
             for ((model, digest), msg_ids) in digest_map {
-                let (sql, values): (&str, Vec<Value>) = match backend {
-                    DatabaseBackend::Postgres => (
-                        "SELECT dimensions FROM embeddings WHERE model = $1 AND digest = $2",
-                        vec![Value::from(model.clone()), Value::from(digest.clone())],
-                    ),
-                    DatabaseBackend::Sqlite => (
-                        "SELECT dimensions FROM embeddings WHERE model = ? AND digest = ?",
-                        vec![Value::from(model.clone()), Value::from(digest.clone())],
-                    ),
-                    DatabaseBackend::MySql => (
-                        "SELECT dimensions FROM embeddings WHERE model = ? AND digest = ?",
-                        vec![Value::from(model.clone()), Value::from(digest.clone())],
-                    ),
-                };
-                let stmt = Statement::from_sql_and_values(backend, sql, values);
-                if let Ok(rows) = EmbRow::find_by_statement(stmt).all(&self.conn).await {
-                    if let Some(first) = rows.first() {
+                if let Ok(opt_vec) = fetch_embedding_vector(&self.conn, &model, &digest).await {
+                    if let Some(vec) = opt_vec {
                         for mid in msg_ids {
-                            result.insert(mid, first.dimensions.clone());
+                            result.insert(mid, vec.clone());
                         }
                     }
                 }

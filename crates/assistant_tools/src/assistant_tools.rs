@@ -45,8 +45,8 @@ use crate::test_context_tool::TestContextTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use context_management::{
-    CallContextTool, CallContextToolInput, ContextToolName, ListHistoryTool, ListHistoryToolInput,
-    MemoryOperation, MemoryTool, MemoryToolInput,
+    CallContextTool, CallContextToolInput, ChatHistoryTool, ChatHistoryToolInput, ContextToolName,
+    ListHistoryTool, ListHistoryToolInput, MemoryOperation, MemoryTool, MemoryToolInput,
 };
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::*;
@@ -83,9 +83,10 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(TestContextTool);
 
     // Context management tools
-    log::info!("Registering context management tools: list_history, memory, call_context_tool");
+    log::info!("Registering context management tools: list_history, memory, call_context_tool, chat_history");
     registry.register_tool(ListHistoryTool);
     registry.register_tool(MemoryTool);
+    registry.register_tool(ChatHistoryTool);
     if registry.tools().iter().any(|t| t.name() == "memory") {
         log::info!(
             "assistant_tools registered MemoryTool (native); backend will be noop until thread integration sets a real backend"
@@ -222,6 +223,47 @@ mod tests {
         assert!(
             names.contains(&"call_context_tool".to_string()),
             "CallContextTool not registered"
+        );
+    }
+
+    #[gpui::test]
+    fn chat_history_tool_registered(cx: &mut App) {
+        assistant_tool::init(cx);
+        let registry = ToolRegistry::global(cx);
+        registry.register_tool(ChatHistoryTool);
+
+        let names: Vec<String> = registry.tools().iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"chat_history".to_string()),
+            "ChatHistoryTool not registered"
+        );
+    }
+
+    #[gpui::test]
+    fn chat_history_tool_schema_has_operation_object(cx: &mut App) {
+        assistant_tool::init(cx);
+        let tool = ChatHistoryTool;
+        let schema = tool
+            .input_schema(language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset)
+            .expect("schema generation");
+
+        assert!(
+            schema.get("properties").is_some(),
+            "schema missing top-level properties object"
+        );
+        let props = schema
+            .get("properties")
+            .and_then(|p| p.get("operation"))
+            .expect("schema.properties.operation missing");
+        assert_eq!(
+            props.get("type").and_then(|t| t.as_str()),
+            Some("object"),
+            "operation must be an object"
+        );
+        let op_required = props.get("required");
+        assert!(
+            op_required.is_none() || op_required.unwrap().is_array(),
+            "operation.required should be an array if present"
         );
     }
 }

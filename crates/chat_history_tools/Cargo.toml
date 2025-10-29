@@ -1,0 +1,26 @@
+[package]
+name = "chat_history_tools"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Tool adapter layer exposing snake_case chat history & RAG functions to the agent runtime."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+async-trait = "*"
+time = "*"
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+
+# Internal crates
+chat_history = { path = "../chat_history" }
+settings = { path = "../settings" }
+
+
+[features]
+default = []

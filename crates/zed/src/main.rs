@@ -582,7 +582,45 @@ pub fn main() {
             false,
             cx,
         );
-        assistant_tools::init(app_state.client.http_client(), cx);
+        {
+            // Initialize chat history tools before registering assistant tools so the adapter is available.
+            // Uses default (FastEmbed local) configuration; override via settings or extend here if needed.
+            use chat_history_tools::init::init_chat_history_tools;
+            if let Ok(chat_history_handles) = init_chat_history_tools(Default::default()) {
+                assistant_tools::context_management::install_chat_history_adapter(&chat_history_handles);
+                // Log effective embedding model asynchronously (tokio mutex requires await).
+                cx.spawn({
+                    let store = chat_history_handles.store.clone();
+                    async move |_cx| {
+                        let guard = store.lock().await;
+                        ::log::info!(
+                            "ChatHistoryTools initialized (embedding_model={})",
+                            guard.config().embedding_model
+                        );
+                    }
+                }).detach();
+            } else {
+                ::log::warn!(
+                    "ChatHistoryTools initialization failed; chat_history tool will be unavailable"
+                );
+            }
+
+            // Migration: ensure 'chat_history' tool enabled for existing profiles if missing.
+            // This only inserts the boolean flag when absent; it does not alter existing values.
+            {
+                use settings::update_settings_file;
+                update_settings_file(app_state.fs.clone(), cx, |settings, _| {
+                    let agent = settings.agent.get_or_insert_default();
+                    if let Some(profiles) = agent.profiles.as_mut() {
+                        for (_pid, profile) in profiles.iter_mut() {
+                            profile.tools.entry("chat_history".into()).or_insert(true);
+                        }
+                    }
+                });
+            }
+
+            assistant_tools::init(app_state.client.http_client(), cx);
+        }
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
 

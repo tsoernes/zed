@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::context_management::{ListHistoryTool, MemoryTool};
+use crate::context_management::{ChatHistoryTool, ListHistoryTool, MemoryTool};
 use crate::schema::json_schema_for;
 use action_log::ActionLog;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_tool::{Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -18,6 +18,7 @@ use ui::IconName;
 pub enum ContextToolName {
     ListHistory,
     Memory,
+    ChatHistory,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -55,6 +56,13 @@ impl Tool for CallContextTool {
                     let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
                     memory_tool.needs_confirmation(&args, project, cx)
                 }
+                ContextToolName::ChatHistory => {
+                    // ChatHistory tool may mutate stored state (append / update).
+                    // Delegate confirmation (e.g., for config set) by instantiating a ChatHistoryTool.
+                    let chat_history_tool = crate::context_management::ChatHistoryTool;
+                    let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
+                    chat_history_tool.needs_confirmation(&args, project, cx)
+                }
             }
         } else {
             false
@@ -66,7 +74,7 @@ impl Tool for CallContextTool {
     }
 
     fn description(&self) -> String {
-        "A unified entry point for context management tools (list_history, memory) using a generic schema."
+        "A unified entry point for context management tools (list_history, memory, chat_history) using a generic schema."
             .into()
     }
 
@@ -91,9 +99,14 @@ impl Tool for CallContextTool {
                     let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
                     format!("Context: {}", memory_tool.ui_text(&args))
                 }
+                ContextToolName::ChatHistory => {
+                    let chat_history_tool = ChatHistoryTool;
+                    let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
+                    format!("Context: {}", chat_history_tool.ui_text(&args))
+                }
             }
         } else {
-            "Context tool operation".to_string()
+            "Context tool invocation".into()
         }
     }
 
@@ -109,9 +122,15 @@ impl Tool for CallContextTool {
     ) -> ToolResult {
         let input: CallContextToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid input: {}", err))).into(),
+            Err(err) => {
+                return ToolResult {
+                    output: gpui::Task::ready(Err(anyhow!(err))),
+                    card: None,
+                }
+            }
         };
 
+        // Direct delegation (foreground). Underlying tools decide if they spawn background tasks.
         match input.name {
             ContextToolName::ListHistory => {
                 let list_history_tool = Arc::new(ListHistoryTool);
@@ -122,6 +141,11 @@ impl Tool for CallContextTool {
                 let memory_tool = Arc::new(MemoryTool);
                 let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
                 memory_tool.run(args, request, project, action_log, model, window, cx)
+            }
+            ContextToolName::ChatHistory => {
+                let chat_history_tool = Arc::new(ChatHistoryTool);
+                let args = input.arguments.unwrap_or_else(|| serde_json::json!({}));
+                chat_history_tool.run(args, request, project, action_log, model, window, cx)
             }
         }
     }

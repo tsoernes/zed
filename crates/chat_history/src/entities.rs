@@ -61,7 +61,9 @@ pub mod chats {
     impl RelationTrait for Relation {
         fn def(&self) -> RelationDef {
             match self {
+                // chats has many chat_messages
                 Relation::Messages => Entity::has_many(super::chat_messages::Entity).into(),
+                // chats has many chat_tags
                 Relation::Tags => Entity::has_many(super::chat_tags::Entity).into(),
             }
         }
@@ -139,7 +141,7 @@ pub mod chat_tags {
 
     impl ActiveModelBehavior for ActiveModel {}
 
-    // Provide has_many relations by implementing Related<Self> for child entities.
+    // Implement Related so has_many works for chats -> chat_messages / chat_tags.
     impl Related<chats::Entity> for chat_messages::Entity {
         fn to() -> RelationDef {
             chat_messages::Relation::Chat.def()
@@ -151,10 +153,43 @@ pub mod chat_tags {
             chat_tags::Relation::Chat.def()
         }
     }
+
+    // (Removed extraneous impl Related<chats::Entity> blocks for chat_messages and chat_tags to avoid confusion.)
 }
 
 // -----------------------------------------------------------------------------
-// Message Embeddings
+// Embeddings (vector storage)
+// -----------------------------------------------------------------------------
+pub mod embeddings {
+    use super::*;
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "embeddings")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub model: String,
+        #[sea_orm(primary_key)]
+        pub digest: Vec<u8>,
+        pub dimensions: Vec<u8>,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter)]
+    pub enum Relation {}
+
+    impl RelationTrait for Relation {
+        fn def(&self) -> RelationDef {
+            // Embeddings has no outbound relations; unreachable by design.
+            match self {
+                _ => unreachable!("embeddings::Relation has no variants"),
+            }
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+// -----------------------------------------------------------------------------
+// Message Embeddings (associations message -> (model,digest))
 // -----------------------------------------------------------------------------
 pub mod message_embeddings {
     use super::*;
@@ -170,6 +205,7 @@ pub mod message_embeddings {
     #[derive(Copy, Clone, Debug, EnumIter)]
     pub enum Relation {
         Message,
+        Embedding,
     }
 
     impl RelationTrait for Relation {
@@ -178,6 +214,10 @@ pub mod message_embeddings {
                 Relation::Message => Entity::belongs_to(super::chat_messages::Entity)
                     .from(Column::MessageId)
                     .to(super::chat_messages::Column::Id)
+                    .into(),
+                Relation::Embedding => Entity::belongs_to(super::embeddings::Entity)
+                    .from(Column::Model)
+                    .to(super::embeddings::Column::Model)
                     .into(),
             }
         }
@@ -200,6 +240,10 @@ pub use chat_tags::{
 pub use chats::{
     ActiveModel as ChatActiveModel, Column as ChatColumn, Entity as ChatModelEntity,
     Model as ChatModel,
+};
+pub use embeddings::{
+    ActiveModel as EmbeddingActiveModel, Column as EmbeddingColumn, Entity as EmbeddingModelEntity,
+    Model as EmbeddingModel,
 };
 pub use message_embeddings::{
     ActiveModel as MessageEmbeddingActiveModel, Column as MessageEmbeddingColumn,

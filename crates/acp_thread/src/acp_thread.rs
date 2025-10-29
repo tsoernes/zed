@@ -38,6 +38,84 @@ use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
+mod chat_history_integration {
+    use super::*;
+    use std::sync::{Arc, OnceLock};
+    use chat_history_tools::{ChatHistoryTools, ChatHistoryToolApi};
+    use serde_json::json;
+
+    static TOOLS: OnceLock<Arc<ChatHistoryTools>> = OnceLock::new();
+
+    #[allow(dead_code)]
+    pub fn init(tools: ChatHistoryTools) {
+        let _ = TOOLS.set(Arc::new(tools));
+    }
+
+    pub fn append_user_chunk(chunk: &acp::ContentBlock, project_id: Option<String>, cx: &mut Context<AcpThread>) {
+        if let Some(adapter) = TOOLS.get() {
+            let text = extract_block_text(chunk);
+            if text.is_empty() {
+                return;
+            }
+            let payload = json!({
+                "chat_id": current_thread_chat_id(cx),
+                "project_id": project_id,
+                "role": "User",
+                "content": text
+            }).to_string();
+            let adapter = adapter.clone();
+            cx.spawn(async move |_this, _cx| {
+                let _ = adapter.chat_append(&payload).await;
+            }).detach();
+        }
+    }
+
+    pub fn append_assistant_chunk(chunk: &acp::ContentBlock, project_id: Option<String>, is_thought: bool, cx: &mut Context<AcpThread>) {
+        if is_thought {
+            // Skip storing assistant thoughts.
+            return;
+        }
+        if let Some(adapter) = TOOLS.get() {
+            let text = extract_block_text(chunk);
+            if text.is_empty() {
+                return;
+            }
+            let payload = json!({
+                "chat_id": current_thread_chat_id(cx),
+                "project_id": project_id,
+                "role": "Assistant",
+                "content": text
+            }).to_string();
+            let adapter = adapter.clone();
+            cx.spawn(async move |_this, _cx| {
+                let _ = adapter.chat_append(&payload).await;
+            }).detach();
+        }
+    }
+
+    fn extract_block_text(block: &acp::ContentBlock) -> String {
+        match block {
+            acp::ContentBlock::Text(t) => t.text.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn current_thread_chat_id(cx: &mut Context<AcpThread>) -> String {
+        use uuid::Uuid;
+        static IDS: OnceLock<std::sync::Mutex<std::collections::HashMap<usize, String>>> = OnceLock::new();
+        let map = IDS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let key = cx as *mut _ as usize;
+        if let Some(existing) = map.lock().unwrap().get(&key) {
+            return existing.clone();
+        }
+        let new_id = format!("thread_{}", Uuid::new_v4());
+        map.lock().unwrap().insert(key, new_id.clone());
+        new_id
+    }
+
+
+}
+
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
@@ -1127,6 +1205,7 @@ impl AcpThread {
     ) {
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
+        let saved_chunk = chunk.clone();
 
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
@@ -1153,6 +1232,9 @@ impl AcpThread {
                 cx,
             );
         }
+
+        // chat_history auto-save hook (user message):
+        chat_history_integration::append_user_chunk(&saved_chunk, None, cx);
     }
 
     pub fn push_assistant_content_block(
@@ -1161,8 +1243,10 @@ impl AcpThread {
         is_thought: bool,
         cx: &mut Context<Self>,
     ) {
+        let original_chunk = chunk.clone();
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
+
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
         {
@@ -1183,8 +1267,8 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(chunk, &language_registry, cx);
-            let chunk = if is_thought {
+            let block = ContentBlock::new(chunk.clone(), &language_registry, cx);
+            let assistant_chunk = if is_thought {
                 AssistantMessageChunk::Thought { block }
             } else {
                 AssistantMessageChunk::Message { block }
@@ -1192,11 +1276,14 @@ impl AcpThread {
 
             self.push_entry(
                 AgentThreadEntry::AssistantMessage(AssistantMessage {
-                    chunks: vec![chunk],
+                    chunks: vec![assistant_chunk],
                 }),
                 cx,
             );
         }
+
+        // chat_history auto-save hook (assistant message):
+        chat_history_integration::append_assistant_chunk(&original_chunk, None, is_thought, cx);
     }
 
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
@@ -1384,6 +1471,8 @@ impl AcpThread {
                 }
             })
     }
+
+    // Chat history integration handled by top-level chat_history_integration module.
 
     pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
         let project = self.project.clone();
