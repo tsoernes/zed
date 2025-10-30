@@ -69,12 +69,25 @@ mod tests {
         });
         let cfg = ChatHistoryConfig::from_settings_root(&root);
         assert_eq!(cfg.azure_openai.api_key.as_deref(), Some("az-abc"));
-        assert_eq!(cfg.azure_openai.endpoint.as_deref(), Some("https://example.openai.azure.com"));
-        assert_eq!(cfg.azure_openai.api_version.as_deref(), Some("2024-02-15-preview"));
+        assert_eq!(
+            cfg.azure_openai.endpoint.as_deref(),
+            Some("https://example.openai.azure.com")
+        );
+        assert_eq!(
+            cfg.azure_openai.api_version.as_deref(),
+            Some("2024-02-15-preview")
+        );
         assert_eq!(cfg.azure_openai.deployment.as_deref(), Some("embed-prod"));
-        assert_eq!(cfg.azure_openai.embedding_model.as_deref(), Some("azure-embed-1"));
+        assert_eq!(
+            cfg.azure_openai.embedding_model.as_deref(),
+            Some("azure-embed-1")
+        );
         match cfg.embedding_backend {
-            EmbeddingBackendKind::AzureOpenAI { api_key, endpoint, model } => {
+            EmbeddingBackendKind::AzureOpenAI {
+                api_key,
+                endpoint,
+                model,
+            } => {
                 assert_eq!(api_key, "az-abc");
                 assert_eq!(endpoint, "https://example.openai.azure.com");
                 assert_eq!(model, "azure-embed-1");
@@ -147,31 +160,19 @@ mod tests {
 // Added `prelude` module for convenient bulk import of common types.
 pub mod prelude {
     pub use crate::{
-        ChatId,
-        MessageId,
-        MessageRole,
-        ChatMessage,
-        ChatMetadata,
-        RetrievedContext,
-        RagAnswer,
-        ChatHistoryConfig,
-        EmbeddingBackend,
-        EmbeddingBackendKind,
-        ChatStore,
-        pool_chat_embedding,
-        fuse_scores,
-        normalize_keyword_score,
-        InMemoryIndex,
+        ChatHistoryConfig, ChatId, ChatMessage, ChatMetadata, ChatStore, EmbeddingBackend,
+        EmbeddingBackendKind, InMemoryIndex, MessageId, MessageRole, RagAnswer, RetrievedContext,
+        fuse_scores, normalize_keyword_score, pool_chat_embedding,
     };
 }
-pub mod entities;
 pub mod db;
+pub mod entities;
 // Removed duplicate `pub mod tools;` declaration—inline tools module follows.
 
 // Tool module providing lightweight, serializable request/response structures for external agent usage.
 pub mod tools {
     use super::*;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
     pub struct ToolSearchRequest {
@@ -208,11 +209,11 @@ pub mod tools {
 //
 // Persistence backend (DB vs file) and indexing will be added in subsequent iterations.
 
-use anyhow::{anyhow, Result};
 use crate::db::ChatHistoryDb;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc, fs};
+use std::{collections::HashMap, fs, sync::Arc};
 use time::OffsetDateTime;
 
 /// Unique identifier for a chat.
@@ -390,17 +391,26 @@ impl ChatHistoryConfig {
         // Embedding backend selection (string form)
         if let Some(backend_str) = value.get("embedding_backend").and_then(|v| v.as_str()) {
             self.embedding_backend = match backend_str {
-                "fastembed" | "fast_embed" => EmbeddingBackendKind::FastEmbedLocal { model_path: None },
+                "fastembed" | "fast_embed" => {
+                    EmbeddingBackendKind::FastEmbedLocal { model_path: None }
+                }
                 // These variants require keys; they will be filled in below if provided.
                 "openai" => {
-                    let model = self.openai.model.clone().unwrap_or(self.embedding_model.clone());
+                    let model = self
+                        .openai
+                        .model
+                        .clone()
+                        .unwrap_or(self.embedding_model.clone());
                     EmbeddingBackendKind::OpenAI {
                         api_key: self.openai.api_key.clone().unwrap_or_default(),
                         model,
                     }
                 }
                 "azure_openai" | "azure-openai" | "azure" => {
-                    let model = self.azure_openai.embedding_model.clone()
+                    let model = self
+                        .azure_openai
+                        .embedding_model
+                        .clone()
                         .or(self.openai.model.clone())
                         .unwrap_or(self.embedding_model.clone());
                     EmbeddingBackendKind::AzureOpenAI {
@@ -481,7 +491,11 @@ impl ChatHistoryConfig {
                     *model = m.clone();
                 }
             }
-            EmbeddingBackendKind::AzureOpenAI { api_key, endpoint, model } => {
+            EmbeddingBackendKind::AzureOpenAI {
+                api_key,
+                endpoint,
+                model,
+            } => {
                 if let Some(k) = &self.azure_openai.api_key {
                     *api_key = k.clone();
                 }
@@ -511,9 +525,18 @@ pub trait EmbeddingBackend: Send + Sync {
 /// Supported backend kinds (configuration surface).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum EmbeddingBackendKind {
-    FastEmbedLocal { model_path: Option<String> },
-    OpenAI { api_key: String, model: String },
-    AzureOpenAI { api_key: String, endpoint: String, model: String },
+    FastEmbedLocal {
+        model_path: Option<String>,
+    },
+    OpenAI {
+        api_key: String,
+        model: String,
+    },
+    AzureOpenAI {
+        api_key: String,
+        endpoint: String,
+        model: String,
+    },
 }
 /// Retrieval strategy for search / RAG.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -522,7 +545,6 @@ pub enum RetrievalMode {
     Embedding,
     Hybrid,
 }
-
 
 /// FastEmbed local backend stub.
 pub struct FastEmbedBackend {
@@ -591,13 +613,7 @@ impl AzureOpenAIEmbeddingBackend {
     pub fn new(model_name: impl Into<String>) -> Self {
         // Delegate to new_with_config with empty defaults so all struct fields are initialized.
         // Callers that need real Azure values should use new_with_config directly.
-        Self::new_with_config(
-            model_name,
-            "",
-            "",
-            "",
-            "",
-        )
+        Self::new_with_config(model_name, "", "", "", "")
     }
 
     /// Temporary constructor used by initialization code to pass Azure specifics.
@@ -677,14 +693,16 @@ impl EmbeddingBackend for AzureOpenAIEmbeddingBackend {
         }
 
         if !status.is_success() {
-            return Err(anyhow!("azure embedding error status {} body: {}", status, raw));
+            return Err(anyhow!(
+                "azure embedding error status {} body: {}",
+                status,
+                raw
+            ));
         }
         let parsed: AzureEmbeddingResponse = serde_json::from_str(&raw)
             .map_err(|e| anyhow!("failed to parse azure embedding response: {e}; body={raw}"))?;
         Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
     }
-
-
 }
 
 /// Core store for chats and messages (persistence + retrieval + search).
@@ -701,7 +719,11 @@ impl ChatStore {
         config: ChatHistoryConfig,
         db: Option<Arc<ChatHistoryDb>>,
     ) -> Self {
-        Self { backend, config, db }
+        Self {
+            backend,
+            config,
+            db,
+        }
     }
 
     /// Create a new chat.
@@ -777,7 +799,9 @@ impl ChatStore {
         if meta.total_characters < self.config.summary_refresh_chars {
             return false;
         }
-        let delta = meta.total_characters.saturating_sub(meta.summary_refreshed_characters);
+        let delta = meta
+            .total_characters
+            .saturating_sub(meta.summary_refreshed_characters);
         delta >= self.config.summary_delta_chars
     }
 
@@ -807,9 +831,10 @@ impl ChatStore {
     fn suggest_tags(&self, messages: &[ChatMessage]) -> Vec<String> {
         use std::collections::HashMap;
         const STOPWORDS: &[&str] = &[
-            "the","and","for","with","this","that","from","into","over","when","were","have",
-            "has","had","are","was","will","shall","would","could","should","can","a","an","of",
-            "in","on","to","at","by","it","is","as","or","be","we","you","our","your","but","not"
+            "the", "and", "for", "with", "this", "that", "from", "into", "over", "when", "were",
+            "have", "has", "had", "are", "was", "will", "shall", "would", "could", "should", "can",
+            "a", "an", "of", "in", "on", "to", "at", "by", "it", "is", "as", "or", "be", "we",
+            "you", "our", "your", "but", "not",
         ];
         let mut freq: HashMap<String, usize> = HashMap::new();
         for m in messages {
@@ -825,17 +850,12 @@ impl ChatStore {
             }
         }
         let mut items: Vec<(String, usize)> = freq.into_iter().collect();
-        items.sort_by(|a,b| b.1.cmp(&a.1));
-        items.into_iter().take(5).map(|(t,_)| t).collect()
+        items.sort_by(|a, b| b.1.cmp(&a.1));
+        items.into_iter().take(5).map(|(t, _)| t).collect()
     }
 
-
-
     /// Retrieve chat metadata + messages.
-    pub async fn get_chat(
-        &self,
-        chat_id: &ChatId,
-    ) -> Result<(ChatMetadata, Vec<ChatMessage>)> {
+    pub async fn get_chat(&self, chat_id: &ChatId) -> Result<(ChatMetadata, Vec<ChatMessage>)> {
         if let Some(db) = &self.db {
             db.fetch_chat_with_messages(chat_id).await
         } else {
@@ -908,7 +928,6 @@ impl ChatStore {
         Ok(contexts)
     }
 
-
     /// RAG question answering over retrieved prior messages.
     /// This placeholder implementation uses retrieved contexts directly to synthesize a lightweight answer.
     /// Future improvement: delegate to an LLM with a constructed prompt including citations.
@@ -965,21 +984,80 @@ impl ChatStore {
         }
         Ok(())
     }
-
-    /// Update metadata fields.
+    /// Update metadata fields (title, summary, tags, archived, pinned).
+    /// Returns an error if persistence (db) is unavailable.
     pub async fn update_metadata(
         &self,
-        _chat_id: &ChatId,
-        _title: Option<String>,
-        _summary: Option<String>,
-        _tags_add: &[String],
-        _tags_remove: &[String],
-        _archived: Option<bool>,
-        _pinned: Option<bool>,
+        chat_id: &ChatId,
+        title: Option<String>,
+        summary: Option<String>,
+        tags_add: &[String],
+        tags_remove: &[String],
+        archived: Option<bool>,
+        pinned: Option<bool>,
     ) -> Result<ChatMetadata> {
-        Err(anyhow!("update_metadata not implemented"))
-    }
+        let db = self
+            .db
+            .as_ref()
+            .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
+        // Fetch current metadata (messages not needed here, ignore second tuple element)
+        let (mut meta, _messages) = db.fetch_chat_with_messages(chat_id).await?;
+        let mut changed = false;
 
+        if let Some(t) = title {
+            if meta.title.as_ref() != Some(&t) {
+                meta.title = Some(t);
+                changed = true;
+            }
+        }
+        if let Some(s) = summary {
+            if meta.summary.as_ref() != Some(&s) {
+                meta.summary = Some(s);
+                // Mark summary refresh point
+                meta.summary_refreshed_characters = meta.total_characters;
+                changed = true;
+            }
+        }
+
+        // Tags: additions
+        if !tags_add.is_empty() {
+            for tag in tags_add {
+                if !meta.tags.contains(tag) {
+                    meta.tags.push(tag.clone());
+                    changed = true;
+                }
+            }
+        }
+        // Tags: removals
+        if !tags_remove.is_empty() {
+            let before = meta.tags.len();
+            meta.tags.retain(|t| !tags_remove.contains(t));
+            if meta.tags.len() != before {
+                changed = true;
+            }
+        }
+
+        if let Some(a) = archived {
+            if meta.archived != a {
+                meta.archived = a;
+                changed = true;
+            }
+        }
+        if let Some(p) = pinned {
+            if meta.pinned != p {
+                meta.pinned = p;
+                changed = true;
+            }
+        }
+
+        if changed {
+            meta.updated_at = OffsetDateTime::now_utc();
+            db.update_chat(&meta).await?;
+            db.set_tags(chat_id, &meta.tags).await?;
+        }
+
+        Ok(meta)
+    }
     /// Current config snapshot.
     pub fn config(&self) -> &ChatHistoryConfig {
         &self.config
@@ -1030,7 +1108,6 @@ impl ChatStore {
         Ok(rag)
     }
 
-
     /// Tool-facing append wrapper: creates chat if needed and appends message.
     pub async fn tool_append(
         &self,
@@ -1056,7 +1133,9 @@ impl ChatStore {
         &self,
         req: tools::ToolSearchRequest,
     ) -> Result<tools::ToolSearchResult> {
-        let mode = req.mode.unwrap_or(self.config.default_retrieval_mode.clone());
+        let mode = req
+            .mode
+            .unwrap_or(self.config.default_retrieval_mode.clone());
         let alpha = req.alpha.unwrap_or(self.config.hybrid_alpha);
         let owned_chat_id = req.chat_id.as_ref().map(|id| ChatId(id.clone()));
         let chat_id_ref = owned_chat_id.as_ref();
@@ -1072,8 +1151,6 @@ impl ChatStore {
             .await?;
         Ok(tools::ToolSearchResult { contexts })
     }
-
-
 }
 
 /// Helper to compute pooled chat vector from message embeddings (mean pooling).
