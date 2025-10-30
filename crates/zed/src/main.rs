@@ -588,8 +588,18 @@ pub fn main() {
             use chat_history_tools::init::{init_chat_history_tools_async, ChatHistoryInitOptions};
             // Async initialization so that persistence (db_conn) can be added later without blocking startup.
             cx.spawn({
+                let app_state = app_state.clone();
                 async move |_cx| {
-                    match init_chat_history_tools_async(ChatHistoryInitOptions::default()).await {
+                    // Acquire a DatabaseConnection for chat history persistence if available.
+                    // Adjust accessor to match actual AppState API if different.
+                    let db_conn = app_state
+                        .collab_database()
+                        .map(|db| db.pool().clone()); // TODO: replace with real method to obtain sea_orm::DatabaseConnection
+                    let options = ChatHistoryInitOptions {
+                        db_conn,
+                        ..Default::default()
+                    };
+                    match init_chat_history_tools_async(options).await {
                         Ok(chat_history_handles) => {
                             assistant_tools::install_chat_history_adapter(&chat_history_handles);
                             let store = chat_history_handles.store.clone();

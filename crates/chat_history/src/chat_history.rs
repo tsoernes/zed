@@ -797,7 +797,7 @@ impl ChatStore {
 
         if let Some(db_arc) = &self.db {
             let db = &mut *db_arc.lock().await;
-            // Upsert chat row.
+            // Upsert chat row (insert if missing).
             match db.update_chat(chat).await {
                 Ok(_) => {}
                 Err(e) if e.to_string().contains("chat not found for update") => {
@@ -805,9 +805,46 @@ impl ChatStore {
                 }
                 Err(e) => return Err(e),
             }
+            // Persist tags after any auto-tag additions.
             db.set_tags(&chat.chat_id, &chat.tags).await?;
             // Persist message and index for lexical search.
             db.insert_message(&message).await?;
+
+            // Incremental chat vector update:
+            // Every append we embed the new message (unless already cached) and
+            // merge its vector into the existing pooled chat vector. Every 30th
+            // message we perform a full recompute to avoid drift from incremental rounding.
+            let new_vec_map = db.embed_messages_if_needed(&[message.clone()]).await?;
+            if let Some(new_vec) = new_vec_map.get(&message.id) {
+                if chat.total_messages % 30 == 0 {
+                    // Periodic full recompute for numerical stability.
+                    if let Some(pooled) = db.recompute_chat_embedding(&chat.chat_id).await? {
+                        chat.chat_vector = Some(pooled);
+                        // Persist updated chat metadata with new pooled vector.
+                        db.update_chat(chat).await?;
+                    }
+                } else {
+                    // Incremental mean pooling: new_avg = (old * (n-1) + new) / n
+                    let n = chat.total_messages as f32;
+                    if let Some(old_vec) = chat.chat_vector.take() {
+                        if old_vec.len() == new_vec.len() && !old_vec.is_empty() {
+                            let mut merged = old_vec;
+                            for (i, v) in new_vec.iter().enumerate() {
+                                merged[i] = (merged[i] * (n - 1.0) + *v) / n;
+                            }
+                            chat.chat_vector = Some(merged);
+                        } else {
+                            // Dimension mismatch or empty -> fallback to new vector only.
+                            chat.chat_vector = Some(new_vec.clone());
+                        }
+                    } else {
+                        // First vector.
+                        chat.chat_vector = Some(new_vec.clone());
+                    }
+                    // Persist updated metadata (chat_vector changed).
+                    db.update_chat(chat).await?;
+                }
+            }
         }
 
         Ok(message)
