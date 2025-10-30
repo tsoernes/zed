@@ -799,7 +799,7 @@ impl ChatStore {
         }
 
         if let Some(db_arc) = &self.db {
-            let db_lock = db_arc
+            let mut db_lock = db_arc
                 .lock()
                 .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
             let db = &mut *db_lock;
