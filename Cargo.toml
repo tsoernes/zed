@@ -204,6 +204,8 @@ members = [
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
+    "crates/chat_history",
+    "crates/chat_history_tools",
 
     #
     # Extensions

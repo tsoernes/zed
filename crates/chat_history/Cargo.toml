@@ -1,0 +1,35 @@
+[package]
+name = "chat_history"
+version = "0.1.0"
+edition = "2024"
+description = "Conceptual chat history core: persistent metadata, message storage, retrieval, and summary triggers."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+# Use a descriptive root file instead of lib.rs per workspace guidelines.
+path = "src/chat_history.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"            # For future JSON schema exposure (kept minimal here).
+thiserror = "1"           # For structured error enums if expanded.
+parking_lot = "0.12"      # Lightweight locking for internal store structures.
+chrono = { version = "0.4", default-features = false, features = ["clock","serde"] }
+uuid = { version = "1", features = ["v4","serde"] }
+
+[features]
+# Minimal feature gates for future expansion; kept skeletal.
+default = []
+embed-openai = []         # Placeholder: enable OpenAI embedding backend.
+embed-azure = []          # Placeholder: enable Azure embedding backend.
+embed-fastembed = []      # Placeholder: enable local FastEmbed backend.
+rag = []                  # Placeholder: retrieval-augmented answer construction.
+
+[package.metadata.docs]
+# Internal crate; not published. This section hints at conceptual scope.
+categories = ["llm", "search", "assistant"]
+keywords = ["chat", "history", "retrieval", "rag"]

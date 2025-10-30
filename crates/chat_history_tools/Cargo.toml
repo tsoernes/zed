@@ -1,0 +1,33 @@
+[package]
+name = "chat_history_tools"
+version = "0.1.0"
+edition = "2024"
+description = "Conceptual tool adapter exposing snake_case JSON operations over chat_history core."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+path = "src/chat_history_tools.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+async-trait = "0.1"
+thiserror = "1"
+chat_history = { path = "../chat_history" }
+parking_lot = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt","macros"] }
+
+[features]
+default = []
+rag = []            # Placeholder feature flag for answer (RAG) operations.
+embed = []          # Placeholder to enable embedding-related operations.
+
+[package.metadata.docs]
+categories = ["llm", "assistant", "tooling"]
+keywords = ["chat", "history", "tools", "adapter"]
