@@ -590,13 +590,9 @@ pub fn main() {
             cx.spawn({
                 let app_state = app_state.clone();
                 async move |_cx| {
-                    // Acquire a DatabaseConnection for chat history persistence if available.
-                    // Adjust accessor to match actual AppState API if different.
-                    let db_conn = app_state
-                        .collab_database()
-                        .map(|db| db.pool().clone()); // TODO: replace with real method to obtain sea_orm::DatabaseConnection
+                    // TODO: provide a real DatabaseConnection (db_conn) once collab AppState handle is accessible here.
                     let options = ChatHistoryInitOptions {
-                        db_conn,
+                        db_conn: None,
                         ..Default::default()
                     };
                     match init_chat_history_tools_async(options).await {
