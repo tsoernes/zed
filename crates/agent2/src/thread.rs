@@ -1036,8 +1036,14 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
-            request.messages.extend(message.to_request());
+        for (i, message) in self.messages.iter().enumerate() {
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.get_mut(0) {
+                first
+                    .content
+                    .insert(0, language_model::MessageContent::Text(format!("[@{}]", i)));
+            }
+            request.messages.extend(reqs);
         }
 
         // Use the detailed prompt (same as existing summary generation path).
@@ -1179,7 +1185,20 @@ impl Thread {
         let active_used = if let Some(precise) = self.precise_active_tokens {
             precise
         } else {
-            let req: Vec<_> = self.messages.iter().flat_map(|m| m.to_request()).collect();
+            let req: Vec<_> = self
+                .messages
+                .iter()
+                .enumerate()
+                .flat_map(|(i, m)| {
+                    let mut reqs = m.to_request();
+                    if let Some(first) = reqs.get_mut(0) {
+                        first
+                            .content
+                            .insert(0, language_model::MessageContent::Text(format!("[@{}]", i)));
+                    }
+                    reqs
+                })
+                .collect();
             crate::token_usage::heuristic_token_count(&req) as u64
         };
 
@@ -2395,8 +2414,14 @@ impl Thread {
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
-        for message in &self.messages {
-            full_request.messages.extend(message.to_request());
+        for (i, message) in self.messages.iter().enumerate() {
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.get_mut(0) {
+                first
+                    .content
+                    .insert(0, language_model::MessageContent::Text(format!("[@{}]", i)));
+            }
+            full_request.messages.extend(reqs);
         }
         full_request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
@@ -2732,8 +2757,14 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
-            request.messages.extend(message.to_request());
+        for (i, message) in self.messages.iter().enumerate() {
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.get_mut(0) {
+                first
+                    .content
+                    .insert(0, language_model::MessageContent::Text(format!("[@{}]", i)));
+            }
+            request.messages.extend(reqs);
         }
 
         request.messages.push(LanguageModelRequestMessage {
@@ -3049,8 +3080,14 @@ impl Thread {
             cache: false,
         }];
 
-        for message in &self.messages {
-            messages.extend(message.to_request());
+        for (i, message) in self.messages.iter().enumerate() {
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.get_mut(0) {
+                first
+                    .content
+                    .insert(0, language_model::MessageContent::Text(format!("[@{}]", i)));
+            }
+            messages.extend(reqs);
         }
 
         if let Some(last_message) = messages.last_mut() {
@@ -3058,7 +3095,14 @@ impl Thread {
         }
 
         if let Some(message) = self.pending_message.as_ref() {
-            messages.extend(message.to_request());
+            let mut reqs = message.to_request();
+            if let Some(first) = reqs.get_mut(0) {
+                first.content.insert(
+                    0,
+                    language_model::MessageContent::Text(format!("[@{}]", messages.len())),
+                );
+            }
+            messages.extend(reqs);
         }
 
         messages
