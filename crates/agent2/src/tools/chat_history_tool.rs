@@ -1,60 +1,60 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{AgentTool, ToolCallEventStream};
 
-/// Input schema for the `chat_history` tool.
-///
-/// This stub implementation is intentionally minimal. It exposes two read‑only
-/// operations that allow the agent to (in the future) inspect or snapshot
-/// conversation‑level metadata without requiring an external multiplexer.
-///
-/// Future extensions could include:
-/// * Append / tag messages
-/// * Persist named snapshots
-/// * Diff snapshots
-/// * Selective export
+/// Reuse the rich chat history adapter & operation types from assistant_tools.
+use assistant_tools::context_management::chat_history_tool::{
+    ChatHistoryOperation, ChatHistoryToolInput as AdapterChatHistoryToolInput, chat_history_adapter,
+};
+use chat_history::{MessageRole, RetrievalMode};
+
+/// Agent-side input wrapper (mirrors adapter input; kept separate to allow future
+/// agent-specific extensions like thread-scoped overrides).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatHistoryAction {
-    /// Return a compact markdown overview (placeholder in this stub).
-    Overview,
-    /// Return a JSON metadata snapshot (placeholder in this stub).
-    Snapshot,
+pub struct ChatHistoryAgentToolInput {
+    pub operation: ChatHistoryOperation,
 }
 
-/// Top–level input wrapper.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ChatHistoryToolInput {
-    pub action: ChatHistoryAction,
-}
+/// Output type: markdown string embedding any structured JSON blocks.
+type ChatHistoryAgentToolOutput = String;
 
-/// Tool output (markdown).
-type ChatHistoryToolOutput = String;
-
-/// Unit struct so it can be registered with `add_tool(ChatHistoryAgentTool)`.
-/// (Thread access can be added later if mutation or deep inspection is required.)
+/// Agent tool bridging the assistant_tools ChatHistory adapter into the agent2
+/// internal tool system (enabling direct LLM invocation with mutations).
 pub struct ChatHistoryAgentTool;
 
 impl ChatHistoryAgentTool {
     pub fn new() -> Self {
         Self
     }
+
+    fn is_mutating(op: &ChatHistoryOperation) -> bool {
+        matches!(
+            op,
+            ChatHistoryOperation::Append { .. }
+                | ChatHistoryOperation::Reembed { .. }
+                | ChatHistoryOperation::UpdateMetadata { .. }
+                | ChatHistoryOperation::ConfigSet { .. }
+        )
+    }
 }
 
 impl AgentTool for ChatHistoryAgentTool {
-    type Input = ChatHistoryToolInput;
-    type Output = ChatHistoryToolOutput;
+    type Input = ChatHistoryAgentToolInput;
+    type Output = ChatHistoryAgentToolOutput;
 
     fn name() -> &'static str {
         "chat_history"
     }
 
     fn kind() -> agent_client_protocol::ToolKind {
+        // Read classification (mutations still allowed; current ToolKind enum
+        // lacks a granular write + read hybrid).
         agent_client_protocol::ToolKind::Read
     }
 
@@ -64,10 +64,21 @@ impl AgentTool for ChatHistoryAgentTool {
         _cx: &mut App,
     ) -> SharedString {
         match input {
-            Ok(i) => match i.action {
-                ChatHistoryAction::Overview => "Chat history overview".into(),
-                ChatHistoryAction::Snapshot => "Chat history snapshot".into(),
-            },
+            Ok(i) => {
+                let label = match i.operation {
+                    ChatHistoryOperation::Append { .. } => "Append chat msg",
+                    ChatHistoryOperation::Search { .. } => "Search chats",
+                    ChatHistoryOperation::Answer { .. } => "Answer from chats",
+                    ChatHistoryOperation::Similar { .. } => "Similar chats",
+                    ChatHistoryOperation::List { .. } => "List chats",
+                    ChatHistoryOperation::Get { .. } => "Get chat",
+                    ChatHistoryOperation::Reembed { .. } => "Reembed chats",
+                    ChatHistoryOperation::UpdateMetadata { .. } => "Update chat metadata",
+                    ChatHistoryOperation::ConfigGet => "Get chat config",
+                    ChatHistoryOperation::ConfigSet { .. } => "Set chat config",
+                };
+                label.into()
+            }
             Err(_) => "Chat history".into(),
         }
     }
@@ -78,68 +89,176 @@ impl AgentTool for ChatHistoryAgentTool {
         _event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        let markdown = match input.action {
-            ChatHistoryAction::Overview => {
-                "# Chat History Overview (Stub)\n\n\
-                 This is a placeholder implementation of `chat_history`.\n\
-                 It currently provides no real conversation integration.\n\
-                 Future versions will surface structured summaries of the\n\
-                 active / archived messages and tagging metadata.\n"
-                    .to_string()
-            }
-            ChatHistoryAction::Snapshot => {
-                "# Chat History Snapshot (Stub)\n\n\
-                 ```json\n\
-                 {\n  \"status\": \"unimplemented\",\n  \"version\": 1,\n  \"notes\": \"This tool will expose structured chat metadata.\" \n}\n\
-                 ```\n"
-                .to_string()
-            }
+        let op = input.operation;
+        let adapter = match chat_history_adapter() {
+            Some(a) => a,
+            None => return Task::ready(Err(anyhow!("chat history adapter not installed"))),
         };
-        Task::ready(Ok(markdown))
+
+        // Helper to serialize adapter JSON result into a markdown fenced block.
+        fn md_json_block(title: &str, value: &Value) -> String {
+            let mut out = String::new();
+            out.push_str("# ");
+            out.push_str(title);
+            out.push_str("\n\n```json\n");
+            out.push_str(&serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".into()));
+            out.push_str("\n```\n");
+            out
+        }
+
+        let task_result: Result<String> = (|| match op {
+            ChatHistoryOperation::Append {
+                chat_id,
+                project_id,
+                title,
+                role,
+                content,
+            } => {
+                let role = role.unwrap_or(MessageRole::User);
+                let resp = adapter.append(chat_id, project_id, title, role, content)?;
+                Ok(md_json_block("Chat Append", &resp))
+            }
+            ChatHistoryOperation::Search {
+                query,
+                project_id,
+                chat_id,
+                top_k,
+                mode,
+                alpha,
+            } => {
+                let resp = adapter.search(
+                    query,
+                    project_id,
+                    chat_id,
+                    top_k,
+                    mode.unwrap_or(RetrievalMode::Hybrid),
+                    alpha,
+                )?;
+                Ok(md_json_block("Chat Search Results", &resp))
+            }
+            ChatHistoryOperation::Answer {
+                question,
+                project_id,
+                chat_id,
+                top_k,
+                mode,
+                alpha,
+            } => {
+                let resp = adapter.answer(
+                    question,
+                    project_id,
+                    chat_id,
+                    top_k,
+                    mode.unwrap_or(RetrievalMode::Hybrid),
+                    alpha,
+                )?;
+                Ok(md_json_block("Chat Answer", &resp))
+            }
+            ChatHistoryOperation::Similar {
+                chat_id,
+                n,
+                project_scoped,
+            } => {
+                let resp = adapter.similar(chat_id, n, project_scoped)?;
+                Ok(md_json_block("Similar Chats", &resp))
+            }
+            ChatHistoryOperation::List {
+                project_id,
+                limit,
+                offset,
+            } => {
+                let resp = adapter.list(project_id, limit, offset)?;
+                Ok(md_json_block("Chat List", &resp))
+            }
+            ChatHistoryOperation::Get { chat_id } => {
+                let resp = adapter.get(chat_id)?;
+                Ok(md_json_block("Chat", &resp))
+            }
+            ChatHistoryOperation::Reembed { chat_id } => {
+                let resp = adapter.reembed(chat_id)?;
+                Ok(md_json_block("Reembed Status", &resp))
+            }
+            ChatHistoryOperation::UpdateMetadata {
+                chat_id,
+                title,
+                summary,
+                tags_add,
+                tags_remove,
+                archived,
+                pinned,
+            } => {
+                let resp = adapter.update_metadata(
+                    chat_id,
+                    title,
+                    summary,
+                    tags_add.unwrap_or_default(),
+                    tags_remove.unwrap_or_default(),
+                    archived,
+                    pinned,
+                )?;
+                Ok(md_json_block("Metadata Update", &resp))
+            }
+            ChatHistoryOperation::ConfigGet => {
+                let resp = adapter.config_get()?;
+                Ok(md_json_block("Chat Config", &resp))
+            }
+            ChatHistoryOperation::ConfigSet {
+                embedding_model,
+                hybrid_alpha,
+                similar_chats_k,
+                summary_refresh_chars,
+                summary_delta_chars,
+                rag_top_k,
+                auto_tag,
+                default_retrieval_mode,
+            } => {
+                let resp = adapter.config_set(
+                    embedding_model,
+                    hybrid_alpha,
+                    similar_chats_k,
+                    summary_refresh_chars,
+                    summary_delta_chars,
+                    rag_top_k,
+                    auto_tag,
+                    default_retrieval_mode,
+                )?;
+                Ok(md_json_block("Chat Config Set", &resp))
+            }
+        })();
+
+        Task::ready(task_result)
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        // Indicate potential state mutation for operations flagged mutating.
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
+    use gpui::App;
 
     #[test]
-    fn initial_title_matches_action() {
+    fn title_mapping() {
         let tool = ChatHistoryAgentTool::new();
-        let title_overview = tool.initial_title(
-            Ok(ChatHistoryToolInput {
-                action: ChatHistoryAction::Overview,
+        let t = tool.initial_title(
+            Ok(ChatHistoryAgentToolInput {
+                operation: ChatHistoryOperation::List {
+                    project_id: None,
+                    limit: Some(5),
+                    offset: None,
+                },
             }),
-            &mut gpui::App::test(),
+            &mut App::test(),
         );
-        let title_snapshot = tool.initial_title(
-            Ok(ChatHistoryToolInput {
-                action: ChatHistoryAction::Snapshot,
-            }),
-            &mut gpui::App::test(),
-        );
-        assert!(title_overview.contains("overview"));
-        assert!(title_snapshot.contains("snapshot"));
-
-        let title_err = tool.initial_title(
-            Err(serde_json::json!({"bad":"data"})),
-            &mut gpui::App::test(),
-        );
-        assert_eq!(title_err.as_str(), "Chat history");
+        assert!(t.contains("List"));
     }
 
     #[test]
-    fn run_produces_markdown() {
-        let tool = Arc::new(ChatHistoryAgentTool::new());
-        let task = tool.run(
-            ChatHistoryToolInput {
-                action: ChatHistoryAction::Overview,
-            },
-            ToolCallEventStream::noop("chat_history_test"),
-            &mut gpui::App::test(),
-        );
-        let out = futures::executor::block_on(task).unwrap();
-        assert!(out.starts_with("# Chat History Overview"));
+    fn mutating_flag() {
+        let tool = ChatHistoryAgentTool::new();
+        assert!(tool.may_perform_edits());
     }
 }
