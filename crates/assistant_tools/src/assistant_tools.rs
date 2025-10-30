@@ -1,3 +1,4 @@
+mod context_management;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -89,11 +90,8 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
 
-    // Test tool to verify registration mechanism
-    registry.register_tool(TestContextTool);
-
     // Context management tools
-    log::info!("Registering context management tools: list_history, memory, call_context_tool, chat_history");
+    log::info!("Registering context management tools: list_history, memory, chat_history");
     registry.register_tool(ListHistoryTool);
     registry.register_tool(MemoryTool);
     registry.register_tool(ChatHistoryTool);
