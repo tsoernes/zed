@@ -922,47 +922,42 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        let connection = self.clone();
-        // Generate a fresh session id for the AcpThread.
-        // Generate a random 7-character session id (Alphanumeric).
-        // Rand items referenced via fully-qualified paths; explicit imports optional.
-        // Generate a simple session id based on current number of sessions (length-based pattern used in test implementations).
-        let session_id = acp::SessionId(self.0.read(cx).sessions.len().to_string().into());
-
-        // Create an ActionLog entity required by AcpThread.
-        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-
-        // Derive initial prompt capabilities from (currently) no selected model.
-        let prompt_capabilities_rx = watch::Receiver::constant(acp::PromptCapabilities {
-            image: true,
-            audio: false,
-            embedded_context: true,
-            meta: None,
-        });
-
-        // Choose a title (use directory name or fallback).
-        let title = cwd
+        // Compute possible initial title outside closure with owned allocation (avoid non-'static &str to SharedString conversion).
+        let initial_title = cwd
             .file_name()
-            .and_then(|n| n.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "Thread".to_string());
+            .and_then(|n| n.to_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned());
+        // Register the new thread so session-dependent operations (turns, telemetry) work.
+        Task::ready({
+            self.0.update(cx, |agent, cx| {
+                let registry = language_model::LanguageModelRegistry::read_global(cx);
+                let default_model = registry.default_model().map(|m| m.model);
 
-        // Construct AcpThread entity.
-        let acp_thread = cx.new(|cx| {
-            acp_thread::AcpThread::new(
-                title,
-                connection,
-                project.clone(),
-                action_log.clone(),
-                session_id.clone(),
-                prompt_capabilities_rx,
-                cx,
-            )
-        });
+                // Create Thread with a fresh UUID session id.
+                let thread = cx.new(|cx| {
+                    Thread::new(
+                        project.clone(),
+                        agent.project_context.clone(),
+                        agent.context_server_registry.clone(),
+                        agent.templates.clone(),
+                        default_model.clone(),
+                        cx,
+                    )
+                });
 
-        // NOTE: agent2 connection currently registers only Thread entities.
-        // AcpThread registration skipped until a dedicated registration path is added.
+                if let Some(name) = initial_title.clone() {
+                    thread.update(cx, |thread, cx| thread.set_title(name.into(), cx));
+                }
 
-        Task::ready(Ok(acp_thread))
+                // Register and obtain corresponding AcpThread.
+                let acp_thread = agent.register_session(thread.clone(), cx);
+
+                log::debug!("Registered new session: {}", thread.read(cx).id());
+
+                Ok(acp_thread)
+            })
+        })
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
