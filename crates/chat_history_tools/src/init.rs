@@ -36,6 +36,10 @@ pub struct ChatHistoryInitOptions {
     pub openai: Option<OpenAiConfig>,
     /// Azure OpenAI specific overrides.
     pub azure_openai: Option<AzureOpenAiConfig>,
+    /// Optional database connection for persistence; when provided, chat listing/search are enabled.
+    pub db_conn: Option<DatabaseConnection>,
+    /// Whether to rebuild the lexical (BM25) index on initialization when db_conn is present (default true).
+    pub rebuild_index: bool,
 }
 
 impl Default for ChatHistoryInitOptions {
@@ -51,6 +55,8 @@ impl Default for ChatHistoryInitOptions {
             auto_tag: None,
             openai: None,
             azure_openai: None,
+            db_conn: None,
+            rebuild_index: true,
         }
     }
 }
@@ -68,11 +74,14 @@ pub struct ChatHistoryHandles {
 /// This currently instantiates a local FastEmbed backend by default. When
 /// OpenAI / Azure support is desired, supply `options.backend`.
 ///
-/// Example:
+/// Example (in async context):
 /// ```ignore
-/// let handles = init_chat_history_tools(Default::default())?;
+/// let handles = init_chat_history_tools_async(Default::default()).await?;
 /// let answer_json = handles.tools.chat_answer(r#"{"question":"What did we discuss?"}"#).await;
 /// ```
+///
+/// Synchronous variant retained for backward compatibility when persistence is not needed.
+/// Prefer `init_chat_history_tools_async` when providing a database connection.
 pub fn init_chat_history_tools(options: ChatHistoryInitOptions) -> Result<ChatHistoryHandles> {
     // Load settings from .zed/settings.json (or settings.json) first, then layer explicit overrides.
     // Explicit ChatHistoryInitOptions fields below take precedence over file-based settings.
@@ -200,16 +209,154 @@ pub fn init_chat_history_tools(options: ChatHistoryInitOptions) -> Result<ChatHi
         }
     };
 
-    // For now we do not attach a DB (None). Future: supply ChatHistoryDb here.
+    // Legacy path: no DB, purely in-memory metadata (persistence unavailable errors on list/search).
     let store = ChatStore::new(backend, config, None);
     let store_arc = Arc::new(Mutex::new(store));
-
     let tools = Arc::new(ChatHistoryTools::new(store_arc.clone()));
+    Ok(ChatHistoryHandles { store: store_arc, tools })
+}
 
-    Ok(ChatHistoryHandles {
-        store: store_arc,
-        tools,
-    })
+/// Async initializer supporting optional DB-backed persistence.
+pub async fn init_chat_history_tools_async(
+    mut options: ChatHistoryInitOptions,
+) -> Result<ChatHistoryHandles> {
+    // Load settings first, then layer overrides (mirrors sync version).
+    let mut config = ChatHistoryConfig::load_from_default_files();
+
+    if let Some(model) = &options.embedding_model {
+        config.embedding_model = model.clone();
+    }
+    if let Some(alpha) = options.hybrid_alpha {
+        config.hybrid_alpha = alpha;
+    }
+    if let Some(k) = options.similar_chats_k {
+        config.similar_chats_k = k;
+    }
+    if let Some(v) = options.summary_refresh_chars {
+        config.summary_refresh_chars = v;
+    }
+    if let Some(v) = options.summary_delta_chars {
+        config.summary_delta_chars = v;
+    }
+    if let Some(v) = options.rag_top_k {
+        config.rag_top_k = v;
+    }
+    if let Some(v) = options.auto_tag {
+        config.auto_tag = v;
+    }
+    if let Some(ref o) = options.openai {
+        if let Some(model) = &o.model {
+            config.openai.model = Some(model.clone());
+        }
+        if let Some(key) = &o.api_key {
+            config.openai.api_key = Some(key.clone());
+        }
+        if let Some(url) = &o.api_url {
+            config.openai.api_url = Some(url.clone());
+        }
+    }
+    if let Some(ref az) = options.azure_openai {
+        if let Some(key) = &az.api_key {
+            config.azure_openai.api_key = Some(key.clone());
+        }
+        if let Some(ep) = &az.endpoint {
+            config.azure_openai.endpoint = Some(ep.clone());
+        }
+        if let Some(ver) = &az.api_version {
+            config.azure_openai.api_version = Some(ver.clone());
+        }
+        if let Some(dep) = &az.deployment {
+            config.azure_openai.deployment = Some(dep.clone());
+        }
+        if let Some(model) = &az.embedding_model {
+            config.azure_openai.embedding_model = Some(model.clone());
+        }
+    }
+
+    let backend_kind = options
+        .backend
+        .clone()
+        .unwrap_or(EmbeddingBackendKind::FastEmbedLocal { model_path: None });
+
+    let backend_arc: Arc<dyn EmbeddingBackend> = match backend_kind {
+        EmbeddingBackendKind::FastEmbedLocal { .. } => Arc::new(FastEmbedBackend::new(
+            config
+                .openai
+                .model
+                .clone()
+                .or_else(|| config.azure_openai.embedding_model.clone())
+                .unwrap_or(config.embedding_model.clone()),
+        )),
+        EmbeddingBackendKind::OpenAI { .. } => {
+            let _api_key = config
+                .openai
+                .api_key
+                .clone()
+                .ok_or_else(|| anyhow!("openai.api_key not set"))?;
+            let _ = config
+                .openai
+                .api_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            Arc::new(OpenAIEmbeddingBackend::new(
+                config
+                    .openai
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "text-embedding-3-small".into()),
+            ))
+        }
+        EmbeddingBackendKind::AzureOpenAI { .. } => {
+            let api_key = config
+                .azure_openai
+                .api_key
+                .clone()
+                .ok_or_else(|| anyhow!("azure_openai.api_key not set"))?;
+            let endpoint = config
+                .azure_openai
+                .endpoint
+                .clone()
+                .ok_or_else(|| anyhow!("azure_openai.endpoint not set"))?;
+            let api_version = config
+                .azure_openai
+                .api_version
+                .clone()
+                .unwrap_or_else(|| "2024-02-15-preview".into());
+            let deployment = config
+                .azure_openai
+                .deployment
+                .clone()
+                .ok_or_else(|| anyhow!("azure_openai.deployment not set"))?;
+            Arc::new(AzureOpenAIEmbeddingBackend::new_with_config(
+                config
+                    .azure_openai
+                    .embedding_model
+                    .clone()
+                    .unwrap_or_else(|| deployment.clone()),
+                endpoint,
+                api_key,
+                api_version,
+                deployment,
+            ))
+        }
+    };
+
+    // Optional DB-backed persistence.
+    let db_opt = if let Some(conn) = options.db_conn.take() {
+        let db = ChatHistoryDb::new(conn, config.clone(), backend_arc.clone());
+        if options.rebuild_index {
+            // Rebuild lexical index from persisted messages.
+            db.rebuild_message_index().await?;
+        }
+        Some(Arc::new(db))
+    } else {
+        None
+    };
+
+    let store = ChatStore::new(backend_arc, config, db_opt);
+    let store_arc = Arc::new(Mutex::new(store));
+    let tools = Arc::new(ChatHistoryTools::new(store_arc.clone()));
+    Ok(ChatHistoryHandles { store: store_arc, tools })
 }
 
 #[cfg(test)]
