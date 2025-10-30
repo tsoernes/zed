@@ -2375,52 +2375,313 @@ impl Thread {
         let Some(model) = self.summarization_model.clone() else {
             return Task::ready(Err(anyhow!("No summarization model available")));
         };
-        let mut request = LanguageModelRequest {
+
+        // Build full request (may be split if token count exceeds model limit).
+        let mut full_request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             ..Default::default()
         };
-
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            full_request.messages.extend(message.to_request());
         }
-
-        request.messages.push(LanguageModelRequestMessage {
+        full_request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
         });
-        cx.spawn(async move |this, cx| {
-            let mut summary = String::new();
-            let mut messages = model.stream_completion(request, cx).await?;
-            while let Some(event) = messages.next().await {
-                let event = event?;
-                let text = match event {
-                    LanguageModelCompletionEvent::Text(text) => text,
-                    LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated { amount, limit },
-                    ) => {
-                        this.update(cx, |thread, cx| {
-                            thread.update_model_request_usage(amount, limit, cx);
-                        })?;
-                        continue;
-                    }
-                    _ => continue,
-                };
 
-                let mut lines = text.lines();
-                summary.extend(lines.next());
+        cx.spawn(async move |this, cx| {
+            // Helper: stream a summary for a request (single-line accumulation).
+            async fn run_summary_request(
+                this: &Entity<Thread>,
+                model: &Arc<dyn LanguageModel>,
+                request: LanguageModelRequest,
+                cx: &mut AsyncApp,
+            ) -> Result<String> {
+                let mut acc = String::new();
+                let mut stream = model.stream_completion(request, cx).await?;
+                while let Some(event) = stream.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(t) => t,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, cx| {
+                                thread.update_model_request_usage(amount, limit, cx);
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let mut lines = text.lines();
+                    acc.extend(lines.next());
+                    if lines.next().is_some() {
+                        break;
+                    }
+                }
+                Ok(acc)
             }
 
-            log::trace!("Setting summary: {}", summary);
-            let summary = SharedString::from(summary);
+            log::debug!(
+                "agent2 summary: preparing token count (messages={}, max_tokens={})",
+                full_request.messages.len(),
+                model.max_token_count()
+            );
+
+            // Decide if we need multi-pass splitting.
+            let need_split = {
+                let max_tokens = model.max_token_count() as u64;
+                if let Ok(fut) = cx.update(|app| model.count_tokens(full_request.clone(), app)) {
+                    match fut.await {
+                        Ok(token_count) => {
+                            log::debug!(
+                                "agent2 summary: token_count={} max_tokens={} messages={}",
+                                token_count,
+                                max_tokens,
+                                full_request.messages.len()
+                            );
+                            token_count > max_tokens
+                        }
+                        Err(e) => {
+                            log::debug!("agent2 summary: token counting failed: {e}");
+                            false
+                        }
+                    }
+                } else {
+                    log::debug!("agent2 summary: token counting future creation failed");
+                    false
+                }
+            };
+
+            let final_summary = if need_split {
+                // Remove final prompt for splitting; we will append it per chunk.
+                let prompt_msg = full_request.messages.pop();
+                let all = &full_request.messages;
+                if all.is_empty() {
+                    let mut req = full_request.clone();
+                    if let Some(p) = prompt_msg.clone() {
+                        req.messages.push(p);
+                    }
+                    run_summary_request(this, &model, req, cx)?
+                } else {
+                    let max_tokens = model.max_token_count() as u64;
+                    let overlap = (all.len() / 20).clamp(1, 4);
+                    log::debug!(
+                        "agent2 summary: hierarchical splitting start total_messages={} overlap={}",
+                        all.len(),
+                        overlap
+                    );
+
+                    // Greedy chunk construction within token limit.
+                    let mut chunks: Vec<(usize, usize)> = Vec::new(); // (start, end_exclusive)
+                    let mut start = 0;
+                    while start < all.len() {
+                        let mut end = start;
+                        let mut last_fit_end = start;
+                        while end < all.len() {
+                            let slice = &all[start..=end];
+                            let mut req = LanguageModelRequest {
+                                intent: Some(CompletionIntent::ThreadContextSummarization),
+                                temperature: full_request.temperature,
+                                ..Default::default()
+                            };
+                            req.messages.extend_from_slice(slice);
+                            if let Some(p) = prompt_msg.clone() {
+                                req.messages.push(p.clone());
+                            }
+                            let fits = if let Ok(fut) =
+                                cx.update(|app| model.count_tokens(req.clone(), app))
+                            {
+                                match fut.await {
+                                    Ok(token_count) => {
+                                        if token_count <= max_tokens {
+                                            last_fit_end = end + 1;
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::debug!(
+                                            "agent2 summary: token count error during chunk build: {e}"
+                                        );
+                                        false
+                                    }
+                                }
+                            } else {
+                                log::debug!(
+                                    "agent2 summary: failed to create token count future for chunk"
+                                );
+                                false
+                            };
+                            if !fits {
+                                break;
+                            }
+                            end += 1;
+                        }
+
+                        if last_fit_end == start {
+                            last_fit_end = (start + 1).min(all.len());
+                        }
+
+                        chunks.push((start, last_fit_end));
+                        log::debug!(
+                            "agent2 summary: chunk {} range=({},{}) size={}",
+                            chunks.len(),
+                            start,
+                            last_fit_end,
+                            last_fit_end - start
+                        );
+
+                        if last_fit_end >= all.len() {
+                            break;
+                        }
+                        start = last_fit_end.saturating_sub(overlap);
+                    }
+
+                    if chunks.is_empty() {
+                        return Err(anyhow!("agent2 summary: no chunks generated"));
+                    }
+
+                    // Build requests per chunk.
+                    let build_chunk_request = |slice: &[LanguageModelRequestMessage]| {
+                        let mut req = LanguageModelRequest {
+                            intent: Some(CompletionIntent::ThreadContextSummarization),
+                            temperature: full_request.temperature,
+                            ..Default::default()
+                        };
+                        req.messages.extend_from_slice(slice);
+                        if let Some(p) = prompt_msg.clone() {
+                            req.messages.push(p);
+                        }
+                        req
+                    };
+
+                    let mut chunk_reqs: Vec<LanguageModelRequest> =
+                        Vec::with_capacity(chunks.len());
+                    for (s, e) in &chunks {
+                        chunk_reqs.push(build_chunk_request(&all[*s..*e]));
+                    }
+
+                    let partial_futs = chunk_reqs
+                        .into_iter()
+                        .map(|req| async { run_summary_request(this, &model, req, cx).await.ok() });
+
+                    let partial_results: Vec<Option<String>> =
+                        futures::future::join_all(partial_futs).await;
+                    let mut partial_summaries: Vec<String> = Vec::new();
+                    for (i, opt) in partial_results.into_iter().enumerate() {
+                        let len = opt.as_ref().map(|s| s.len()).unwrap_or(0);
+                        log::debug!("agent2 summary: partial {} length={}", i + 1, len);
+                        if let Some(s) = opt {
+                            partial_summaries.push(s);
+                        }
+                    }
+
+                    if partial_summaries.is_empty() {
+                        return Err(anyhow!("agent2 summary: all chunk summaries failed"));
+                    }
+
+                    // Hierarchical merge passes.
+                    let mut layer = partial_summaries;
+                    let mut pass = 0;
+                    loop {
+                        pass += 1;
+                        let mut merge_block = String::new();
+                        for (i, s) in layer.iter().enumerate() {
+                            let _ = write!(merge_block, "Partial summary {}:\n{}\n\n", i + 1, s);
+                        }
+                        merge_block.push_str("Combine these into one concise, comprehensive summary without duplication.");
+
+                        let mut merge_req = LanguageModelRequest {
+                            intent: Some(CompletionIntent::ThreadContextSummarization),
+                            temperature: full_request.temperature,
+                            ..Default::default()
+                        };
+                        merge_req.messages.push(LanguageModelRequestMessage {
+                            role: Role::User,
+                            content: vec![merge_block.clone().into()],
+                            cache: false,
+                        });
+
+                        let merge_fits = if let Ok(fut) =
+                            cx.update(|app| model.count_tokens(merge_req.clone(), app))
+                        {
+                            match fut.await {
+                                Ok(token_count) => {
+                                    log::debug!(
+                                        "agent2 summary: merge pass {} candidate token_count={} layer_size={}",
+                                        pass,
+                                        token_count,
+                                        layer.len()
+                                    );
+                                    token_count <= max_tokens
+                                }
+                                Err(e) => {
+                                    log::debug!(
+                                        "agent2 summary: merge pass {} token count error: {e}",
+                                        pass
+                                    );
+                                    true
+                                }
+                            }
+                        } else {
+                            log::debug!(
+                                "agent2 summary: merge pass {} failed to create token count future",
+                                pass
+                            );
+                            true
+                        };
+
+                        if merge_fits {
+                            let merged = run_summary_request(this, &model, merge_req, cx)?;
+                            log::debug!(
+                                "agent2 summary: hierarchical merge success pass={} final_len={}",
+                                pass,
+                                merged.len()
+                            );
+                            break merged;
+                        } else {
+                            if layer.len() == 1 {
+                                let merged = run_summary_request(this, &model, merge_req, cx)?;
+                                break merged;
+                            }
+                            let mut next_layer = Vec::new();
+                            let mut i = 0;
+                            while i < layer.len() {
+                                if i + 1 < layer.len() {
+                                    next_layer.push(format!("{}\n\n{}", layer[i], layer[i + 1]));
+                                    i += 2;
+                                } else {
+                                    next_layer.push(layer[i].clone());
+                                    i += 1;
+                                }
+                            }
+                            log::debug!(
+                                "agent2 summary: merge pass {} reducing layer {} -> {}",
+                                pass,
+                                layer.len(),
+                                next_layer.len()
+                            );
+                            layer = next_layer;
+                        }
+                    }
+                }
+            } else {
+                run_summary_request(this, &model, full_request.clone(), cx)?
+            };
+
+            log::trace!("Setting summary: {}", final_summary);
+            let summary_shared = SharedString::from(final_summary);
 
             this.update(cx, |this, cx| {
-                this.summary = Some(summary.clone());
+                this.summary = Some(summary_shared.clone());
                 cx.notify()
             })?;
 
-            Ok(summary)
+            Ok(summary_shared)
         })
     }
 
