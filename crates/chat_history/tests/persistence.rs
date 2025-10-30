@@ -153,9 +153,11 @@ async fn test_chat_insert_and_fetch() -> Result<()> {
     assert_eq!(fetched_meta.total_messages, chat_meta.total_messages);
     assert_eq!(
         messages.len(),
-        0,
-        "Message persistence not yet implemented; expect 0"
+        1,
+        "One message should be persisted and returned after append_message"
     );
+    assert_eq!(messages[0].content, "Hello persistence!");
+    matches!(messages[0].role, MessageRole::User);
     Ok(())
 }
 
@@ -219,8 +221,7 @@ async fn test_update_metadata_persists_changes() -> Result<()> {
 /// appended messages appear in `get_chat`. For now we assert absence.
 /// This test is ignored until message persistence is added.
 #[tokio::test]
-#[ignore]
-async fn test_message_persistence_future() -> Result<()> {
+async fn test_message_persistence() -> Result<()> {
     let conn = Database::connect("sqlite::memory:").await?;
     create_schema(&conn).await?;
     let store = build_store_with_db(conn).await?;
@@ -228,7 +229,7 @@ async fn test_message_persistence_future() -> Result<()> {
     let (_meta_again, messages) = store.get_chat(&chat_meta.chat_id).await?;
     assert!(
         !messages.is_empty(),
-        "Once implemented, messages should be persisted and returned"
+        "Messages should be persisted and returned"
     );
     Ok(())
 }
