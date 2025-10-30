@@ -344,7 +344,7 @@ pub async fn init_chat_history_tools_async(
 
     // Optional DB-backed persistence.
     let db_opt = if let Some(conn) = options.db_conn.take() {
-        let db = ChatHistoryDb::new(conn, config.clone(), backend_arc.clone());
+        let mut db = ChatHistoryDb::new(conn, config.clone(), backend_arc.clone());
         if options.rebuild_index {
             // Rebuild lexical index from persisted messages.
             db.rebuild_message_index().await?;
