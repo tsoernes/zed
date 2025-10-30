@@ -24,6 +24,12 @@ pub fn install_chat_history_adapter(handles: &ChatHistoryHandles) {
     let _ = CHAT_HISTORY_ADAPTER.set(handles.tools.clone());
 }
 
+/// Public getter for the installed chat history adapter.
+/// Returns None if the adapter has not yet been installed.
+pub fn chat_history_adapter() -> Option<Arc<ChatHistoryTools>> {
+    CHAT_HISTORY_ADAPTER.get().cloned()
+}
+
 /// Obtain the adapter or return an error if not yet installed.
 fn adapter() -> Result<Arc<ChatHistoryTools>> {
     CHAT_HISTORY_ADAPTER

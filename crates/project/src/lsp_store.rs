@@ -2540,9 +2540,25 @@ impl LocalLspStore {
             None => return,
         };
 
-        let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
+        // Gracefully handle non-absolute or otherwise invalid paths. Some transient buffers may
+        // momentarily report a placeholder path (e.g. a root name) that cannot form a valid file URI.
+        if !old_path.is_absolute() {
+            log::debug!(
+                "Skipping LSP buffer unregister for non-absolute path {:?}",
+                old_path
+            );
             return;
+        }
+
+        let file_url = match lsp::Uri::from_file_path(old_path.as_path()) {
+            Ok(url) => url,
+            Err(_) => {
+                log::debug!(
+                    "Skipping LSP buffer unregister; path not parseable as URI: {:?}",
+                    old_path
+                );
+                return;
+            }
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
     }

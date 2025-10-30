@@ -225,6 +225,8 @@ dependencies = [
  "assistant_context",
  "assistant_tool",
  "assistant_tools",
+ "chat_history",
+ "chat_history_tools",
  "chrono",
  "client",
  "clock",
