@@ -1,5 +1,37 @@
 use std::sync::{Arc, OnceLock};
 
+#[cfg(test)]
+mod adapter_schema_tests {
+    use super::*;
+    use assistant_tool::Tool;
+    use gpui::App;
+
+    #[gpui::test]
+    fn chat_history_tool_schema_contains_operation(cx: &mut App) {
+        let tool = ChatHistoryTool;
+        let schema = tool
+            .input_schema(language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset)
+            .expect("schema");
+        assert!(schema.get("properties").is_some(), "schema missing properties object");
+        let op = &schema["properties"]["operation"];
+        assert!(op.is_object(), "operation property should be an object");
+    }
+
+    #[gpui::test]
+    fn chat_history_adapter_initially_none(cx: &mut App) {
+        // Adapter should not be installed until startup code calls install_chat_history_adapter.
+        assert!(chat_history_adapter().is_none(), "adapter unexpectedly installed at test start");
+    }
+
+    #[gpui::test]
+    fn chat_history_adapter_install_and_retrieve(cx: &mut App) {
+        use chat_history_tools::init::init_chat_history_tools;
+        let handles = init_chat_history_tools(Default::default()).expect("init handles");
+        install_chat_history_adapter(&handles);
+        assert!(chat_history_adapter().is_some(), "adapter should be installed");
+    }
+}
+
 use action_log::ActionLog;
 use anyhow::{anyhow, Result};
 use assistant_tool::{Tool, ToolResult, ToolResultOutput};
