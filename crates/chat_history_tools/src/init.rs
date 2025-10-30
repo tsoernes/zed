@@ -3,9 +3,10 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use chat_history::{
     AzureOpenAIEmbeddingBackend, AzureOpenAiConfig, ChatHistoryConfig, ChatStore, EmbeddingBackend,
-    EmbeddingBackendKind, FastEmbedBackend, OpenAIEmbeddingBackend, OpenAiConfig,
+    EmbeddingBackendKind, FastEmbedBackend, OpenAIEmbeddingBackend, OpenAiConfig, db::ChatHistoryDb,
 };
 use tokio::sync::Mutex;
+use sea_orm::DatabaseConnection;
 
 use crate::ChatHistoryTools;
 

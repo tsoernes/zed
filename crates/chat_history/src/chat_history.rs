@@ -755,7 +755,7 @@ impl ChatStore {
             chat_vector: None,
         };
         if let Some(db_arc) = &self.db {
-            let mut db = db_arc.lock().await;
+            let db = db_arc.lock().await;
             db.insert_chat(&meta).await?;
         }
         Ok(meta)
@@ -1035,7 +1035,7 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let mut db = db_mutex.lock().await;
+        let db = db_mutex.lock().await;
 
         if let Some(id) = chat_id {
             let _ = db.recompute_chat_embedding(id).await?;
@@ -1065,7 +1065,7 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let mut db = db_mutex.lock().await;
+        let db = db_mutex.lock().await;
         // Fetch current metadata (messages not needed here, ignore second tuple element)
         let (mut meta, _messages) = db.fetch_chat_with_messages(chat_id).await?;
         let mut changed = false;
