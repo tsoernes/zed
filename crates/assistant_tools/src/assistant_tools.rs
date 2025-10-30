@@ -1,10 +1,14 @@
-pub mod context_management;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
+mod detect_binaries_tool;
 mod diagnostics_tool;
 pub mod edit_agent;
 mod edit_file_tool;
+mod enhanced_terminal_async_tool;
+mod enhanced_terminal_job_status_tool;
+mod enhanced_terminal_list_jobs_tool;
+mod enhanced_terminal_tool; // EnhancedTerminalTool registered under tool name "enhanced_terminal"
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
@@ -17,7 +21,6 @@ mod read_file_tool;
 mod schema;
 pub mod templates;
 mod terminal_tool;
-mod test_context_tool;
 mod thinking_tool;
 mod ui;
 mod web_search_tool;
@@ -27,7 +30,6 @@ use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
-use log;
 use move_path_tool::MovePathTool;
 use std::sync::Arc;
 use web_search_tool::WebSearchTool;
@@ -38,17 +40,22 @@ use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_file_tool::EditFileTool;
+
 use crate::fetch_tool::FetchTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
-use crate::test_context_tool::TestContextTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use context_management::{
     CallContextTool, CallContextToolInput, ChatHistoryTool, ChatHistoryToolInput, ContextToolName,
     ListHistoryTool, ListHistoryToolInput, MemoryOperation, MemoryTool, MemoryToolInput,
 };
+pub use detect_binaries_tool::DetectBinariesTool;
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
+pub use enhanced_terminal_async_tool::EnhancedTerminalAsyncTool;
+pub use enhanced_terminal_job_status_tool::EnhancedTerminalJobStatusTool;
+pub use enhanced_terminal_list_jobs_tool::EnhancedTerminalListJobsTool;
+pub use enhanced_terminal_tool::EnhancedTerminalTool;
 pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
 pub use open_tool::OpenTool;
@@ -59,10 +66,13 @@ pub use terminal_tool::TerminalTool;
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
-    log::info!("Initializing assistant_tools");
-
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
+    registry.register_tool(EnhancedTerminalTool);
+    registry.register_tool(EnhancedTerminalAsyncTool);
+    registry.register_tool(EnhancedTerminalJobStatusTool);
+    registry.register_tool(EnhancedTerminalListJobsTool);
+    registry.register_tool(DetectBinariesTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
@@ -95,7 +105,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         log::warn!("MemoryTool missing after registration; memory operations will be unavailable");
     }
     registry.register_tool(CallContextTool);
-
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
@@ -106,19 +115,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         },
     )
     .detach();
-
-    // Log all registered tools after initialization for harness export verification.
-    if log::log_enabled!(log::Level::Debug) {
-        let tool_names: Vec<String> = ToolRegistry::global(cx)
-            .tools()
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
-        log::debug!(
-            "assistant_tools registered tools: {}",
-            tool_names.join(", ")
-        );
-    }
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
@@ -143,7 +139,6 @@ mod tests {
     use schemars::JsonSchema;
     use serde::Serialize;
     use settings::Settings;
-    use std::sync::Arc;
 
     #[test]
     fn test_json_schema() {

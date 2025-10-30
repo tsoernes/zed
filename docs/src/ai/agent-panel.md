@@ -1,5 +1,28 @@
 # Agent Panel
 
+### Visualizing Async Job Streams and Statuses
+
+- When long-running commands are started via the async terminal tool, the Agent Panel should surface a job card per task with:
+  - State badge: running, finished, or canceled
+  - Runtime: show elapsed seconds (runtime_secs)
+  - Output preview: a short, streaming snippet of the latest output
+  - Actions:
+    - Cancel (best effort; graceful then forceful on Unix)
+    - Fetch full output (enabled on finished/canceled jobs)
+    - Open in a terminal view for larger inspection
+
+- Consolidated job list:
+  - Populate a jobs table using the job listing tool, showing job_id, state, runtime, and a short preview.
+  - Provide sort/filter controls (e.g., by state or duration) and a quick search by job_id or command.
+
+- Streaming updates:
+  - Poll the job status tool periodically to update state, runtime, and preview without blocking the model.
+  - Fetch full_output only on demand to reduce UI noise and payload size; render expandable sections.
+
+- Multitasking guidance:
+  - Encourage parallel execution by preferring the async terminal tool for builds, tests, and data fetches.
+  - Keep synchronous tools for short, single-shot commands that complete quickly.
+
 The Agent Panel allows you to interact with many LLMs and coding agents that can help with in various types of tasks, such as generating code, codebase understanding, and other general inquiries like writing emails, documentation, and more.
 
 To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.

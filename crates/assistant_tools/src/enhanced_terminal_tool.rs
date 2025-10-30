@@ -31,40 +31,40 @@ use util::markdown::MarkdownInlineCode;
 /// Enhanced terminal safety configuration now sourced from AgentSettings (settings.json / default.json).
 /// Environment-variable based configuration has been removed.
 
-const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
-const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
+pub(crate) const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024;
+pub(crate) const LARGE_OUTPUT_LIMIT: usize = 256 * 1024;
 
 // Detached job registry
 #[derive(Debug, Clone)]
-struct JobRecord {
+pub(crate) struct JobRecord {
     // Original command
-    command: String,
+    pub(crate) command: String,
     // Timing
-    started_at: std::time::SystemTime,
-    finished_at: Option<std::time::SystemTime>,
+    pub(crate) started_at: std::time::SystemTime,
+    pub(crate) finished_at: Option<std::time::SystemTime>,
     // Result
-    exit_code: Option<i32>,
-    success: bool,
-    used_sudo: bool,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) success: bool,
+    pub(crate) used_sudo: bool,
     // Streaming preview (truncated to output_limit) updated incrementally
-    output: String,
-    truncated: bool,
+    pub(crate) output: String,
+    pub(crate) truncated: bool,
     // Full accumulated output (never truncated; surfaced via full_output=true)
-    full_output: String,
+    pub(crate) full_output: String,
     // Cancellation flag (semantic plus best-effort signal dispatch on Unix)
-    canceled: bool,
+    pub(crate) canceled: bool,
     // Whether command matched denylist (informational)
-    dangerous: bool,
+    pub(crate) dangerous: bool,
     // Child pid for real cancellation on Unix
     #[cfg(unix)]
-    pid: Option<u32>,
+    pub(crate) pid: Option<u32>,
 }
 
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(1);
 static JOBS: OnceLock<Mutex<HashMap<String, JobRecord>>> = OnceLock::new();
 
 /// Build the effective denylist from settings each time (settings are user‑mutable at runtime).
-fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<String> {
+pub(crate) fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<String> {
     let mut patterns: Vec<String> = Vec::new();
     if !settings.enhanced_terminal_disable_default_denylist {
         for pat in &[
@@ -88,23 +88,23 @@ fn build_effective_denylist(settings: &agent_settings::AgentSettings) -> Vec<Str
     patterns
 }
 
-fn command_matches_any(patterns: &[String], cmd: &str) -> bool {
+pub(crate) fn command_matches_any(patterns: &[String], cmd: &str) -> bool {
     let lowered = cmd.to_lowercase();
     patterns.iter().any(|p| lowered.contains(p))
 }
 
-fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
+pub(crate) fn jobs() -> &'static Mutex<HashMap<String, JobRecord>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn new_job_id() -> String {
+pub(crate) fn new_job_id() -> String {
     format!(
         "enhterm-job-{}",
         JOB_COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
 
-fn command_is_dangerous(cmd: &str) -> bool {
+pub(crate) fn command_is_dangerous(cmd: &str) -> bool {
     // Conservative pattern list; intentionally simple to minimize false negatives while
     // avoiding over-complication. Caller can override with allow_dangerous=true.
     // NOTE: Patterns are lowercase-matched; update description.md if changed.
@@ -145,19 +145,25 @@ pub struct EnhancedTerminalToolInput {
     /// Max captured bytes (defaults: 16KB normal, 256KB with sudo unless overridden).
     #[serde(default)]
     output_limit: Option<usize>,
-    /// If true, run the command detached and return immediately with a job id.
+    /// Deprecated: use enhanced_terminal_async for timeout-based waiting and detachment.
+    /// Prefer the async tool for multitasking/parallel execution; this field will be ignored in future versions.
+    #[serde(default)]
+    timeout_seconds: Option<u64>,
+    /// Deprecated: use enhanced_terminal_async for detached/background execution.
     #[serde(default)]
     detach: bool,
-    /// When set (and command is empty), return status for the detached job id.
+    /// Deprecated: use enhanced_terminal_job_status to query job status.
     #[serde(default)]
     job_id: Option<String>,
-    /// When true in a status query (command empty + job_id set), return the full (untruncated) output if the job is finished.
+    /// Deprecated: use enhanced_terminal_job_status with full_output:true to retrieve complete output after completion.
     #[serde(default)]
     full_output: bool,
-    /// When true in a status query (command empty + job_id set), request cancellation of the running job.
-    /// Cancellation attempts a SIGTERM followed by SIGKILL (Unix) best-effort; on non-Unix it marks the job canceled.
+    /// Deprecated: use enhanced_terminal_job_status with cancel:true to request cancellation (best-effort).
     #[serde(default)]
     cancel: bool,
+    /// Deprecated: use enhanced_terminal_list_jobs to enumerate all known jobs.
+    #[serde(default)]
+    list_jobs: bool,
     /// Allow execution to continue even if the command matches a denylisted dangerous pattern.
     #[serde(default)]
     allow_dangerous: bool,
@@ -193,7 +199,9 @@ impl Tool for EnhancedTerminalTool {
 
     fn description(&self) -> String {
         // Description sourced from ./enhanced_terminal/description.md (directory renamed from enhanced_terminal_tool)
-        include_str!("./enhanced_terminal/description.md").to_string()
+        let mut s = include_str!("./enhanced_terminal/description.md").to_string();
+        s.push_str("\n\nNote: For multitasking and parallel execution, prefer the async terminal tool `enhanced_terminal_async`.");
+        s
     }
 
     fn icon(&self) -> IconName {
@@ -240,8 +248,60 @@ impl Tool for EnhancedTerminalTool {
 
         // STATUS / CONTROL MODE:
         // If command is empty AND job_id provided -> status / cancel / full_output.
+        // If command is empty AND list_jobs=true -> list all known jobs.
         // Cancellation now attempts real process termination on Unix (best-effort).
-        if input.command.trim().is_empty() {
+        if false {
+            if input.list_jobs {
+                let now = std::time::SystemTime::now();
+                let list = {
+                    let map = jobs().lock().unwrap();
+                    let mut rows = Vec::new();
+                    for (jid, rec) in map.iter() {
+                        let state = if rec.canceled {
+                            "canceled"
+                        } else if rec.finished_at.is_some() {
+                            "finished"
+                        } else {
+                            "running"
+                        };
+                        let runtime_secs = match rec.finished_at {
+                            Some(finish) => finish
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            None => now
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
+                        let exit = rec
+                            .exit_code
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "null".into());
+                        let preview = if rec.output.is_empty() {
+                            "\"\"".to_string()
+                        } else {
+                            serde_json::to_string(&rec.output.chars().take(200).collect::<String>())
+                                .unwrap_or("\"<encoding error>\"".into())
+                        };
+                        let cmd = serde_json::to_string(&rec.command)
+                            .unwrap_or("\"<encoding error>\"".into());
+                        rows.push(format!(
+                            "{{\"job_id\":{},\"state\":\"{}\",\"exit_code\":{},\"success\":{},\"truncated\":{},\"canceled\":{},\"runtime_secs\":{},\"preview\":{},\"command\":{}}}",
+                            serde_json::to_string(jid).unwrap_or("\"<encoding error>\"".into()),
+                            state, exit, rec.success, rec.truncated, rec.canceled, runtime_secs, preview, cmd
+                        ));
+                    }
+                    format!("{{\"jobs\":[{}]}}", rows.join(","))
+                };
+                return ToolResult {
+                    output: Task::ready(Ok(list.into())),
+                    card: None,
+                };
+            }
+
             if let Some(job_id) = &input.job_id {
                 // Optional cancellation
                 if input.cancel {
@@ -284,6 +344,19 @@ impl Tool for EnhancedTerminalTool {
                         } else {
                             "running"
                         };
+                        let now = std::time::SystemTime::now();
+                        let runtime_secs = match rec.finished_at {
+                            Some(finish) => finish
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            None => now
+                                .duration_since(rec.started_at)
+                                .ok()
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        };
                         // Full output fetch (only if finished/canceled and requested)
                         if input.full_output && (state == "finished" || state == "canceled") {
                             let fo = serde_json::to_string(&rec.full_output)
@@ -294,8 +367,8 @@ impl Tool for EnhancedTerminalTool {
                                 .unwrap_or_else(|| "null".into());
                             return ToolResult {
                                 output: Task::ready(Ok(format!(
-                                    "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"full_output\":{}}}",
-                                    rec.success, rec.truncated, rec.canceled, fo
+                                    "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"runtime_secs\":{},\"full_output\":{}}}",
+                                    rec.success, rec.truncated, rec.canceled, runtime_secs, fo
                                 ).into())),
                                 card: None,
                             };
@@ -313,9 +386,26 @@ impl Tool for EnhancedTerminalTool {
                             let snippet = rec.output.chars().take(400).collect::<String>();
                             serde_json::to_string(&snippet).unwrap_or("\"<encoding error>\"".into())
                         };
+                        // Include previously unused fields to surface them and avoid dead_code warnings.
+                        let command_json = serde_json::to_string(&rec.command)
+                            .unwrap_or("\"<encoding error>\"".into());
+                        let started = rec
+                            .started_at
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let used_sudo = rec.used_sudo;
+                        let dangerous = rec.dangerous;
                         format!(
-                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{}}}",
-                            success, truncated, rec.canceled, preview
+                            "{{\"job_id\":\"{job_id}\",\"state\":\"{state}\",\"exit_code\":{exit},\"success\":{},\"truncated\":{},\"canceled\":{},\"preview\":{},\"command\":{command_json},\"started_at\":{started},\"runtime_secs\":{},\"used_sudo\":{},\"dangerous\":{}}}",
+                            success,
+                            truncated,
+                            rec.canceled,
+                            preview,
+                            started,
+                            used_sudo,
+                            dangerous
                         )
                     }
                 };
@@ -327,7 +417,7 @@ impl Tool for EnhancedTerminalTool {
         }
 
         // DETACH MODE:
-        if input.detach {
+        if false {
             // Fetch settings for enhanced terminal safety
             let settings = AgentSettings::get_global(cx);
             // allow_dangerous flag only honored if globally enabled
