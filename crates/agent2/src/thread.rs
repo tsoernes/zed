@@ -2375,8 +2375,21 @@ impl Thread {
         let Some(model) = self.summarization_model.clone() else {
             return Task::ready(Err(anyhow!("No summarization model available")));
         };
+        // BEFORE summarization: restore all archived memory segments so summary covers full conversation.
+        let original_segments_snapshot = self.memory_segments.clone();
+        let mut sorted_restore = original_segments_snapshot.clone();
+        sorted_restore.sort_by_key(|s| s.start);
+        for seg in &sorted_restore {
+            if let Err(e) = self.restore_memory_segment(seg.id, cx) {
+                log::debug!(
+                    "summary: restore_memory_segment({}) failed prior to summarization: {}",
+                    seg.id,
+                    e
+                );
+            }
+        }
 
-        // Build full request (may be split if token count exceeds model limit).
+        // Build full request (may be split if token count exceeds model limit) over restored messages.
         let mut full_request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -2390,6 +2403,9 @@ impl Thread {
             content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
             cache: false,
         });
+
+        // Capture original segments for re-archiving inside async closure.
+        let original_segments_for_rearchive = original_segments_snapshot.clone();
 
         cx.spawn(async move |this, cx| {
             // Helper: stream a summary for a request (single-line accumulation).
@@ -2676,8 +2692,14 @@ impl Thread {
             log::trace!("Setting summary: {}", final_summary);
             let summary_shared = SharedString::from(final_summary);
 
-            this.update(cx, |this, cx| {
-                this.summary = Some(summary_shared.clone());
+            // RE-ARCHIVE segments after full restoration summary generation.
+            this.update(cx, |thread, cx| {
+                if let Err(e) =
+                    thread.rearchive_segments_after_full_restore(original_segments_for_rearchive.clone(), cx)
+                {
+                    log::debug!("summary: rearchive after full restore failed: {}", e);
+                }
+                thread.summary = Some(summary_shared.clone());
                 cx.notify()
             })?;
 
