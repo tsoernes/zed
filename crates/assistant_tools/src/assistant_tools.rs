@@ -26,7 +26,7 @@ mod thinking_tool;
 mod ui;
 mod web_search_tool;
 
-use assistant_tool::{Tool, ToolRegistry};
+use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;

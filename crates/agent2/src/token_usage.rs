@@ -89,6 +89,59 @@ fn rebuild_request(
     }
 }
 
+/// Synchronous (blocking) precise token count for a slice without heuristic fallback.
+/// Returns an error if the underlying model count fails or yields zero.
+pub fn precise_tokens_for_slice_try(
+    model: &Arc<dyn LanguageModel>,
+    base: &LanguageModelRequest,
+    slice: &[LanguageModelRequestMessage],
+    app: &impl TokenCountApp,
+) -> Result<usize> {
+    if slice.is_empty() {
+        return Ok(0);
+    }
+    let req = rebuild_request(base, slice.to_vec());
+    let fut = app.count_tokens_boxed(model, req);
+    let count = futures::executor::block_on(fut)?;
+    if count == 0 {
+        return Err(anyhow!("model returned zero tokens for non-empty slice"));
+    }
+    Ok(count as usize)
+}
+
+/// Synchronous (blocking) per-message precise token counts without heuristic fallback.
+/// Performs prefix counts; returns total as sum of returned vector. Errors if any count fails or yields zero unexpectedly.
+pub fn precise_per_message_tokens_try(
+    model: &Arc<dyn LanguageModel>,
+    base: &LanguageModelRequest,
+    all: &[LanguageModelRequestMessage],
+    app: &impl TokenCountApp,
+) -> Result<Vec<usize>> {
+    if all.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut prefix_totals: Vec<usize> = Vec::with_capacity(all.len() + 1);
+    prefix_totals.push(0);
+
+    for i in 0..all.len() {
+        let slice = &all[..=i];
+        let req = rebuild_request(base, slice.to_vec());
+        let fut = app.count_tokens_boxed(model, req);
+        let total = futures::executor::block_on(fut)?;
+        if total == 0 {
+            return Err(anyhow!("model returned zero tokens for prefix {}", i));
+        }
+        prefix_totals.push(total as usize);
+    }
+
+    let mut per = Vec::with_capacity(all.len());
+    for i in 0..all.len() {
+        per.push(prefix_totals[i + 1].saturating_sub(prefix_totals[i]));
+    }
+    Ok(per)
+}
+
 /// Precise token count for an arbitrary slice (fallbacks to heuristic).
 pub async fn precise_tokens_for_slice(
     model: &Arc<dyn LanguageModel>,

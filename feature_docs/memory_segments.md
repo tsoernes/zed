@@ -1,4 +1,4 @@
-# Memory Segments (Agent2 Thread Archival)
+# Memory Segments & Streaming Mention Suppression (Agent2 Thread Archival)
 
 ## 1. Overview
 
@@ -9,6 +9,7 @@ Goals:
 - Retain a concise semantic summary of archived messages.
 - Prevent overlapping or duplicate archival of the same message ranges.
 - Allow future reconstruction or higher‑level analytics (token usage, counts).
+- Integrate clean streaming output by suppressing duplicate / numeric-only mention tokens before archival, ensuring summaries and memory segments are built from clean, user-facing content.
 
 Non‑Goals (current state):
 - Partial reconstruction of original message bodies from a segment alone.
@@ -277,7 +278,7 @@ No panics; invariants enforced before mutation.
 
 ## 14. Summary
 
-Memory segments permit strategic compression of long agent conversations by replacing historical ranges with compact summaries plus quantitative metadata (char/token counts). Enforcement of non-overlapping intervals and careful summary normalization preserves correctness, while straightforward data structures keep the system easy to reason about and extend.
+Memory segments permit strategic compression of long agent conversations by replacing historical ranges with compact summaries plus quantitative metadata (char/token counts). Enforcement of non-overlapping intervals and careful summary normalization preserves correctness, while straightforward data structures keep the system easy to reason about and extend. Integrated streaming mention suppression ensures that archived content does not contain duplicate or purely numeric mention tokens, producing cleaner summaries and more reliable future retrieval via the memory tool.
 
 Reimplementation requires only a focused set of primitives (range validation, summary generation, metadata aggregation, vector replacement) and integrates cleanly with existing thread update & UI notification patterns.
 

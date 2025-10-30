@@ -1,7 +1,7 @@
-zed/feature_docs/chat_history_tools.md#L1-400
+# Chat History Tools (Conceptual Overview)
 # Chat History Tools Adapter Documentation
 
-This document details the `chat_history_tools` adapter layer that exposes a deterministic, JSON‑based, snake_case tool surface over the chat history core store. It is intended for reconstruction on a fresh upstream codebase.
+This document details the `chat_history_tools` adapter layer that exposes a deterministic, JSON‑based, snake_case tool surface over the chat history core store. It is intended for reconstruction on a fresh upstream codebase. For foundational concepts of storage, embeddings, hybrid retrieval, and summaries, see `chat_history_core.md`.
 
 ---
 
@@ -43,39 +43,29 @@ Provide a thin, stateless (aside from holding a shared store handle) interface t
 
 ### 3.1 Shared Handles
 
-```
-ChatHistoryHandles {
-  store: Arc<Mutex<ChatStore>>,
-  tools: Arc<ChatHistoryTools>,
-}
-```
+Conceptually, a single shared handle exposes:
+- A persistent chat history store (internally managing chats, messages, embeddings)
+- A lightweight tools facade (the adapter) for invoking high-level operations
 
 ### 3.2 ChatHistoryTools
 
 Holds:
-```
-struct ChatHistoryTools {
-  store: Arc<Mutex<ChatStore>>
-}
-```
+The tools layer conceptually wraps the store and provides named operations; its concrete struct layout is intentionally abstracted here.
 Public async methods implementing the tool API.
 
 ### 3.3 Tool API Trait (Conceptual)
 
-```
-trait ChatHistoryToolApi {
-  async fn chat_append(&self, input_json: &str) -> String;
-  async fn chat_search(&self, input_json: &str) -> String;
-  async fn chat_answer(&self, input_json: &str) -> String;
-  async fn chat_similar(&self, input_json: &str) -> String;
-  async fn chat_list(&self, input_json: &str) -> String;
-  async fn chat_get(&self, input_json: &str) -> String;
-  async fn chat_reembed(&self, input_json: &str) -> String;
-  async fn chat_update_metadata(&self, input_json: &str) -> String;
-  async fn chat_config_get(&self) -> String;
-  async fn chat_config_set(&self, input_json: &str) -> String;
-}
-```
+Conceptual operations exposed:
+- Append a message (creating a chat if needed)
+- Search messages (lexical / semantic / hybrid)
+- Answer a question using retrieved contexts (RAG)
+- List chats (pagination)
+- Get full chat (metadata + messages)
+- Find similar chats (embedding similarity)
+- Re-embed (refresh vectors)
+- Update metadata (title, summary, tags, flags)
+- Get/set configuration (embedding model, retrieval parameters)
+Implementation signatures are omitted for brevity.
 
 ---
 

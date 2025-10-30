@@ -1,4 +1,4 @@
-# Chat History Core (`chat_history`)
+# Chat History (Core + Tools Overview)
 
 This document describes the design of the Chat History core subsystem. It is intended for an engineer or coding LLM to recreate the crate on a fresh upstream checkout. It focuses on the storage model, embedding workflows, hybrid retrieval, RAG (retrieval‑augmented generation) interface, summarization triggers, configuration layering, and error handling philosophy.
 
@@ -23,7 +23,7 @@ Non‑goals for the current iteration:
 
 ---
 
-## 2. Architecture Overview
+## 2. High-Level Architecture (Conceptual Only)
 
 ```
 +----------------------------+
@@ -144,7 +144,7 @@ azure_openai { api_key?, endpoint?, api_version?, deployment?, embedding_model? 
 
 ---
 
-## 5. Embedding Backends
+## 5. Embedding Backends (Concept Summary)
 
 ### 5.1 Trait
 
@@ -171,7 +171,7 @@ trait EmbeddingBackend {
 
 ---
 
-## 6. Pooled Chat Embedding
+## 6. Pooled Chat Embedding (Concept)
 
 Mean pooling:
 
@@ -363,7 +363,7 @@ Return (metadata, message)
 
 ---
 
-## 12. Search Flow
+## 12. Search & Retrieval Flow (Conceptual)
 
 ```
 Input query
@@ -454,7 +454,7 @@ Future enhancement: use embedding similarity clustering.
 
 ---
 
-## 18. Store API (Conceptual)
+## 18. Core & Tools Unified Concept
 
 ```
 ChatStore {

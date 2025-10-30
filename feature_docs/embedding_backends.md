@@ -1,4 +1,4 @@
-# Embedding Backends
+# Embedding Backends (Conceptual Overview)
 
 This document describes the embedding backend subsystem used by the chat history and related agent features. It enables pluggable vector generation for semantic search, similarity, and RAG context building.
 
@@ -31,16 +31,13 @@ This document describes the embedding backend subsystem used by the chat history
 
 ## 3. Trait Contract (Conceptual)
 
-```
-trait EmbeddingBackend {
-    fn model_name(&self) -> &str;
-    fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>>;
-}
-```
+Conceptually, an embedding backend exposes:
+- A stable model identifier (used for recording which vectors were produced by which model).
+- A batch embedding capability (accepts a list of texts; returns one vector per text).
+- Consistent vector dimensionality across all outputs.
+- Transparent error reporting (failures propagate; no hidden retries).
 
-- `model_name` used for metadata and invalidation (e.g., re-embedding when model changes).
-- `embed` returns one vector per input string; lengths must be uniform.
-- Errors are surfaced upward (never panics) and translated into JSON tool error envelopes.
+Concrete method signatures and return types are intentionally omitted here; only behavioral expectations are described.
 
 ## 4. Supported Backends
 
@@ -262,13 +259,16 @@ User Tool Call: chat_append
 }
 ```
 
-## 20. Minimal Pseudocode (Embed Usage)
+## 20. Conceptual Usage Example
 
-```
-let backend: Arc<dyn EmbeddingBackend> = factory(kind, config)?;
-let vectors = backend.embed(&["First text".to_string(), "Second".to_string()])?;
-assert_eq!(vectors.len(), 2);
-```
+Conceptual flow:
+1. Select backend kind from configuration (e.g. local vs remote).
+2. Construct backend instance (validating required credentials if remote).
+3. Provide a batch of input texts.
+4. Receive a vector per input, all sharing the same dimensionality.
+5. Store vectors and (optionally) recompute any pooled representations.
+
+Exact code, types, and error handling details are intentionally excluded.
 
 ## 21. Future Considerations
 

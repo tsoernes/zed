@@ -1,11 +1,11 @@
-# Streaming Mention Suppression & Deduplication
+# Streaming Mention Suppression (Conceptual Overview)
 
-This document specifies the feature that cleans up streaming assistant message chunks by:
-1. Deduplicating immediately repeated mention tokens at chunk boundaries.
-2. Suppressing (removing) numeric-only mention markers of the form `[@<digits>]` that lack semantic payload.
+This feature ensures user-facing assistant messages remain clear by:
+1. Collapsing immediately repeated mention tokens at chunk boundaries.
+2. Hiding numeric-only mention markers (e.g. `[@42]`) that carry no semantic context.
 3. Preserving meaningful structured mentions (files, symbols, threads, rules, selections, fetch links).
 
-The goal is to enable a fresh upstream implementation to reproduce behavior closely.
+It is conceptually tied to the memory / archival system: cleaned streaming content produces higher-quality summaries and memory segments (see `memory_segments.md`). Implementation particulars (exact string scanning logic, internal buffers) are intentionally omitted here; only behavioral guarantees and integration points are retained.
 
 ---
 
@@ -266,45 +266,15 @@ Clarification: spaces or altered punctuation break match, intentionally conserva
 
 ---
 
-## 20. Minimal Reference Implementation (Illustrative Pseudocode)
+## 20. Conceptual Behavior (No Implementation Detail)
 
-(This pseudocode avoids crate specifics.)
+Rather than exposing algorithmic code, the behavior can be summarized:
 
-```
-fn process_chunk(existing: &mut String, chunk: String) -> String {
-    let mut c = chunk;
+- Boundary Deduplication: If the previously accumulated assistant text ends with a mention token and the next streamed chunk begins with the identical token, only one instance is shown.
+- Numeric-Only Suppression: Tokens of the form `[@<digits>]` (with no trailing link portion) are removed from user-visible output.
+- Structured Mentions: Any mention that includes a link target or non-numeric name is preserved verbatim.
 
-    // Dedup boundary
-    if let Some(start) = existing.rfind("[@") {
-        let tail = &existing[start..];
-        if (tail.ends_with(']') || tail.ends_with(')')) && c.starts_with(tail) {
-            c = c[tail.len()..].to_string();
-        }
-    }
-
-    // Suppress numeric-only mentions
-    let mut out = String::with_capacity(c.len());
-    let mut i = 0;
-    while let Some(rel) = c[i..].find("[@") {
-        let abs = i + rel;
-        out.push_str(&c[i..abs]);
-        let mut j = abs + 2;
-        while j < c.len() && c.as_bytes()[j].is_ascii_digit() {
-            j += 1;
-        }
-        if j > abs + 2 && j < c.len() && c.as_bytes()[j] == b']' {
-            // Numeric-only mention; skip
-            i = j + 1;
-            continue;
-        } else {
-            out.push_str("[@");
-            i = abs + 2;
-        }
-    }
-    out.push_str(&c[i..]);
-    out
-}
-```
+This cleaned text then flows into summary generation and optional memory segment creation (refer to `memory_segments.md` for archival integration).
 
 ---
 
@@ -320,6 +290,6 @@ Guard logs behind a feature flag or verbose mode to avoid spam.
 
 ## 22. Summary
 
-The streaming mention suppression feature improves readability and user experience by pruning duplicated and meaningless numeric-only mention tokens during assistant message construction—implemented with lightweight, boundary-aware transformations that are safe, deterministic, and easily extensible.
+Streaming mention suppression conceptually enhances readability by removing duplicate boundary tokens and discarding numeric-only markers while retaining meaningful structured mentions. Its primary value is upstream of summarization and memory segmentation, ensuring archived context (see `memory_segments.md`) reflects concise, semantically relevant content rather than transient formatting artifacts.
 
 ---

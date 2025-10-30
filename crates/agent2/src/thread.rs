@@ -608,9 +608,48 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+
+    // Memory segment / precise token usage fields
+    memory_segments: Vec<ThreadMemorySegment>,
+    next_memory_segment_id: u64,
+    precise_active_tokens: Option<u64>,
+    precise_max_tokens: Option<u64>,
+    precise_per_message_tokens: Option<Vec<usize>>,
+}
+
+/// Archived memory segment (precise token-based)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ThreadMemorySegment {
+    pub(crate) id: u64,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) summary: SharedString,
+    pub(crate) message_char_count: usize,
+    pub(crate) message_count: usize,
+    pub(crate) stored_epoch_ms: u128,
+    pub(crate) placeholder_char_count: usize,
+    pub(crate) message_token_count: usize,
+    pub(crate) placeholder_token_count: usize,
+    pub(crate) precise_message_token_count: Option<usize>,
+    pub(crate) precise_placeholder_token_count: Option<usize>,
+    pub(crate) messages: Vec<Message>,
 }
 
 impl Thread {
+    /// Getter for precise active token count (current context) if computed.
+    pub fn precise_active_tokens(&self) -> Option<u64> {
+        self.precise_active_tokens
+    }
+
+    /// Getter for precise max token count (model window) if cached alongside precise active tokens.
+    pub fn precise_max_tokens(&self) -> Option<u64> {
+        self.precise_max_tokens
+    }
+
+    /// Getter for per-message precise token counts (slice view). Returns None until computed.
+    pub fn precise_per_message_tokens(&self) -> Option<&[usize]> {
+        self.precise_per_message_tokens.as_ref().map(|v| v.as_slice())
+    }
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities {
@@ -664,11 +703,368 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            // Newly added memory / precise token usage fields
+            memory_segments: Vec::new(),
+            next_memory_segment_id: 0,
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
         }
     }
 
     pub fn id(&self) -> &acp::SessionId {
         &self.id
+    }
+
+    /// Public accessor for messages (used by tools)
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+
+    /// Latest token usage tied to last user message (existing behavior)
+    // Removed duplicate latest_token_usage definition (single implementation retained earlier)
+
+    /// Active (current context) and full (expanded with archived segments) usage pair.
+    pub fn active_and_full_token_usage(
+        &self,
+    ) -> Option<(acp_thread::TokenUsage, acp_thread::TokenUsage)> {
+        let model = self.model.as_ref()?;
+        let max_tokens = if self.completion_mode == CompletionMode::Burn {
+            model
+                .max_token_count_in_burn_mode()
+                .unwrap_or(model.max_token_count())
+        } else {
+            model.max_token_count()
+        };
+
+        // Active used: prefer precise cache, else recompute heuristic quickly.
+        let active_used = if let Some(precise) = self.precise_active_tokens {
+            precise
+        } else {
+            // Fallback heuristic: rough char/4 over message markdown
+            let chars: usize = self
+                .messages
+                .iter()
+                .map(|m| m.to_markdown().len())
+                .sum();
+            (chars / 4).max(1) as u64
+        };
+
+        // Delta: sum of archived original minus placeholder tokens.
+        let mut delta: i64 = 0;
+        for seg in &self.memory_segments {
+            delta += (seg.message_token_count.saturating_sub(seg.placeholder_token_count)) as i64;
+        }
+        let full_used = (active_used as i64 + delta).max(0) as u64;
+
+        Some((
+            acp_thread::TokenUsage {
+                max_tokens,
+                used_tokens: active_used,
+            },
+            acp_thread::TokenUsage {
+                max_tokens,
+                used_tokens: full_used,
+            },
+        ))
+    }
+
+    /// System prompt token count heuristic (0 if model absent).
+    pub fn system_prompt_token_count_heuristic(&self, app: &App) -> u64 {
+        let _model = match self.model.as_ref() {
+            Some(m) => m,
+            None => return 0,
+        };
+        let tpl = SystemPromptTemplate {
+            project: self.project_context.read(app),
+            available_tools: self.tools.keys().cloned().collect(),
+            active_tokens: None,
+            max_tokens: None,
+            usage_pct: None,
+            memory_segment_count: None,
+            memory_saved_tokens: None,
+        };
+        let prompt = tpl.render(&self.templates).unwrap_or_default();
+        // Very rough: char/4; real precise counting could use model.count_tokens if exposed for system-only slice.
+        (prompt.len() / 4) as u64
+    }
+
+    /// Archive a contiguous inclusive range of messages with optional custom summary.
+    pub fn store_memory_segment_with_summary(
+        &mut self,
+        start: usize,
+        end: usize,
+        custom_summary: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<u64> {
+        if start > end {
+            return Err(anyhow::anyhow!("start index greater than end index"));
+        }
+        if end >= self.messages.len() {
+            return Err(anyhow::anyhow!(
+                "range {}..={} out of bounds (len={})",
+                start,
+                end,
+                self.messages.len()
+            ));
+        }
+
+        let removed: Vec<Message> = self.messages[start..=end].to_vec();
+        if removed.is_empty() {
+            return Err(anyhow::anyhow!("empty range cannot be archived"));
+        }
+
+        // Compute summary
+        fn truncate(s: &str, max: usize) -> String {
+            if s.len() <= max {
+                s.to_string()
+            } else {
+                s.chars().take(max).collect::<String>() + "…"
+            }
+        }
+        let mut rendered: Vec<String> = Vec::with_capacity(removed.len());
+        let mut char_total = 0usize;
+        for m in &removed {
+            let md = m.to_markdown();
+            char_total += md.len();
+            rendered.push(md);
+        }
+        let auto_summary = if rendered.len() == 1 {
+            format!("Single message: {}", truncate(&rendered[0], 48))
+        } else {
+            format!(
+                "{} msgs | first: {} | last: {}",
+                rendered.len(),
+                truncate(&rendered.first().unwrap(), 48),
+                truncate(&rendered.last().unwrap(), 48)
+            )
+        };
+        let summary = custom_summary
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let cleaned = s
+                    .chars()
+                    .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+                    .collect::<String>();
+                let mut out = String::new();
+                let mut last_space = false;
+                for ch in cleaned.chars() {
+                    if ch.is_whitespace() {
+                        if !last_space {
+                            out.push(' ');
+                        }
+                        last_space = true;
+                    } else {
+                        out.push(ch);
+                        last_space = false;
+                    }
+                }
+                let max_len = 96;
+                if out.chars().count() > max_len {
+                    out.chars().take(max_len).collect::<String>() + "…"
+                } else {
+                    out
+                }
+            })
+            .unwrap_or(auto_summary);
+
+        let id = self.next_memory_segment_id;
+        self.next_memory_segment_id = self.next_memory_segment_id.saturating_add(1);
+        let placeholder_text = format!("[memory:{id}] {summary}");
+
+        // Token counts (precise attempt—fallback to simple heuristic if model absent)
+        let (message_token_count, placeholder_token_count) = if let Some(model) = self.model.as_ref()
+        {
+            // Build minimal request objects for counting
+            let base = LanguageModelRequest {
+                thread_id: Some(self.id.to_string()),
+                prompt_id: None,
+                intent: None,
+                mode: Some(self.completion_mode.into()),
+                messages: Vec::new(),
+                tools: Vec::new(),
+                tool_choice: None,
+                stop: Vec::new(),
+                temperature: Some(0.0),
+                thinking_allowed: true,
+            };
+            let removed_req: Vec<_> = removed.iter().flat_map(|m| m.to_request()).collect();
+            let placeholder_req: Vec<_> = Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text(placeholder_text.clone())],
+                tool_results: Default::default(),
+            })
+            .to_request();
+            let app_ref: &App = cx;
+            let removed_tokens = crate::token_usage::precise_tokens_for_slice_try(
+                model, &base, &removed_req, app_ref,
+            )
+            .unwrap_or_else(|_| {
+                removed_req
+                    .iter()
+                    .map(|mm| mm.content.iter().map(|c| match c {
+                        language_model::MessageContent::Text(t) => t.len(),
+                        language_model::MessageContent::Thinking { text, .. } => text.len(),
+                        language_model::MessageContent::RedactedThinking(t) => t.len(),
+                        language_model::MessageContent::Image(_) => 7,
+                        language_model::MessageContent::ToolUse(_) => 11,
+                        language_model::MessageContent::ToolResult(_) => 14,
+                    }).sum::<usize>())
+                    .sum::<usize>()
+                    / 4
+            });
+            let placeholder_tokens = crate::token_usage::precise_tokens_for_slice_try(
+                model, &base, &placeholder_req, app_ref,
+            )
+            .unwrap_or_else(|_| {
+                placeholder_req
+                    .iter()
+                    .map(|mm| mm.content.iter().map(|c| match c {
+                        language_model::MessageContent::Text(t) => t.len(),
+                        language_model::MessageContent::Thinking { text, .. } => text.len(),
+                        language_model::MessageContent::RedactedThinking(t) => t.len(),
+                        language_model::MessageContent::Image(_) => 7,
+                        language_model::MessageContent::ToolUse(_) => 11,
+                        language_model::MessageContent::ToolResult(_) => 14,
+                    }).sum::<usize>())
+                    .sum::<usize>()
+                    / 4
+            });
+            (removed_tokens, placeholder_tokens)
+        } else {
+            let removed_chars: usize = removed.iter().map(|m| m.to_markdown().len()).sum();
+            let placeholder_chars = placeholder_text.len();
+            ((removed_chars / 4).max(1), (placeholder_chars / 4).max(1))
+        };
+
+        // Replace messages in range with single placeholder
+        self.messages
+            .splice(
+                start..=end,
+                [Message::Agent(AgentMessage {
+                    content: vec![AgentMessageContent::Text(placeholder_text.clone())],
+                    tool_results: Default::default(),
+                })],
+            )
+            .count(); // execute splice
+
+        let seg = ThreadMemorySegment {
+            id,
+            start,
+            end,
+            summary: summary.into(),
+            message_char_count: char_total,
+            message_count: removed.len(),
+            stored_epoch_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or_default(),
+            placeholder_char_count: placeholder_text.len(),
+            message_token_count,
+            placeholder_token_count,
+            precise_message_token_count: Some(message_token_count),
+            precise_placeholder_token_count: Some(placeholder_token_count),
+            messages: removed,
+        };
+        self.memory_segments.push(seg);
+
+        // Invalidate precise active cache
+        self.precise_active_tokens = None;
+        self.precise_per_message_tokens = None;
+
+        cx.notify();
+        Ok(id)
+    }
+
+    pub fn load_memory_segment(
+        &self,
+        id: u64,
+    ) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+        let seg = self
+            .memory_segments
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {id}"))?;
+
+        let token_savings = seg
+            .message_token_count
+            .saturating_sub(seg.placeholder_token_count);
+
+        let meta = serde_json::json!({
+            "id": seg.id,
+            "start": seg.start,
+            "end": seg.end,
+            "count": seg.message_count,
+            "chars": seg.message_char_count,
+            "summary": seg.summary.as_ref(),
+            "stored_epoch_ms": seg.stored_epoch_ms,
+            "placeholder_chars": seg.placeholder_char_count,
+            "message_token_count": seg.message_token_count,
+            "placeholder_token_count": seg.placeholder_token_count,
+            "precise_message_token_count": seg.precise_message_token_count,
+            "precise_placeholder_token_count": seg.precise_placeholder_token_count,
+            "token_savings": token_savings
+        });
+
+        let markdown: Vec<String> = seg.messages.iter().map(|m| m.to_markdown()).collect();
+        Ok((meta, markdown))
+    }
+
+    pub fn restore_memory_segment(&mut self, id: u64, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let pos = self
+            .memory_segments
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {id}"))?;
+        let start_index = self.memory_segments[pos].start;
+
+        // Remove placeholder if still present
+        if start_index < self.messages.len() {
+            let is_placeholder = matches!(&self.messages[start_index], Message::Agent(agent_msg)
+                if agent_msg.content.iter().any(|c| matches!(c, AgentMessageContent::Text(t) if t.starts_with(&format!("[memory:{id}]")))));
+            if is_placeholder {
+                self.messages.remove(start_index);
+            }
+        }
+
+        // Reinsert archived messages
+        let archived = self.memory_segments[pos].messages.clone();
+        self.messages
+            .splice(start_index..start_index, archived.into_iter())
+            .count();
+
+        self.precise_active_tokens = None;
+        self.precise_per_message_tokens = None;
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn memory_segment_metas(
+        &self,
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128, usize, usize, usize, usize)>
+    {
+        self.memory_segments
+            .iter()
+            .map(|seg| {
+                let token_savings =
+                    seg.message_token_count.saturating_sub(seg.placeholder_token_count);
+                (
+                    seg.id,
+                    seg.start,
+                    seg.end,
+                    seg.message_count,
+                    seg.message_char_count,
+                    seg.placeholder_char_count,
+                    token_savings,
+                    seg.summary.to_string(),
+                    seg.stored_epoch_ms,
+                    seg.message_token_count,
+                    seg.placeholder_token_count,
+                    seg.precise_message_token_count.unwrap_or(seg.message_token_count),
+                    seg.precise_placeholder_token_count.unwrap_or(seg.placeholder_token_count),
+                )
+            })
+            .collect()
     }
 
     pub fn replay(
@@ -839,6 +1235,11 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
+            memory_segments: Vec::new(),
+            next_memory_segment_id: 0,
+            precise_active_tokens: None,
+            precise_max_tokens: None,
+            precise_per_message_tokens: None,
         }
     }
 
@@ -1708,9 +2109,9 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             // Helper to stream a summary for a given request, returning the single-line summary.
             async fn run_summary_request(
-                this: &Entity<Thread>,
+                this: &WeakEntity<Thread>,
                 model: &Arc<dyn LanguageModel>,
-                mut request: LanguageModelRequest,
+                request: LanguageModelRequest,
                 cx: &mut gpui::AsyncApp,
             ) -> Result<String> {
                 let mut acc = String::new();
@@ -1764,7 +2165,7 @@ impl Thread {
                     if let Some(p) = prompt_msg.clone() {
                         req.messages.push(p);
                     }
-                    run_summary_request(this, &model, req, cx).await?
+                    run_summary_request(&this, &model, req, cx).await?
                 } else {
                     let n = all.len();
                     let overlap = (n / 10).clamp(1, 4); // small overlap window
@@ -1798,11 +2199,8 @@ impl Thread {
                     let req2 = build_part_request(part2_msgs);
 
                     // First two passes in parallel.
-                    let (s1, s2) = futures::join!(
-                        run_summary_request(this, &model, req1, cx),
-                        run_summary_request(this, &model, req2, cx)
-                    );
-                    let (s1, s2) = (s1.unwrap_or_default(), s2.unwrap_or_default());
+                    let s1 = run_summary_request(&this, &model, req1, cx).await.unwrap_or_default();
+                    let s2 = run_summary_request(&this, &model, req2, cx).await.unwrap_or_default();
 
                     // Third pass: merge summaries.
                     let merge_prompt = format!(
@@ -1819,11 +2217,11 @@ impl Thread {
                         content: vec![merge_prompt.into()],
                         cache: false,
                     });
-                    run_summary_request(this, &model, merge_req, cx).await?
+                    run_summary_request(&this, &model, merge_req, cx).await?
                 }
             } else {
                 // Single pass as before.
-                run_summary_request(this, &model, full_request.clone(), cx).await?
+                run_summary_request(&this, &model, full_request.clone(), cx).await?
             };
 
             log::debug!("Setting summary: {}", final_summary);
@@ -2081,9 +2479,42 @@ impl Thread {
             self.messages.len()
         );
 
+        // Derive active usage + memory stats for template augmentation.
+        let (active_used_opt, max_tokens_opt, usage_pct_opt, mem_count_opt, mem_saved_opt) =
+            if let Some((active, _full)) = self.active_and_full_token_usage() {
+                let pct = if active.max_tokens > 0 {
+                    (active.used_tokens as f64 / active.max_tokens as f64) * 100.0
+                } else {
+                    0.0
+                };
+                let mem_count = self.memory_segments.len();
+                let mem_saved: u64 = self
+                    .memory_segments
+                    .iter()
+                    .map(|seg| {
+                        (seg.message_token_count
+                            .saturating_sub(seg.placeholder_token_count)) as u64
+                    })
+                    .sum();
+                (
+                    Some(active.used_tokens as usize),
+                    Some(active.max_tokens as usize),
+                    Some(pct),
+                    Some(mem_count),
+                    Some(mem_saved),
+                )
+            } else {
+                (None, None, None, Some(self.memory_segments.len()), Some(0))
+            };
+
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),
+            active_tokens: active_used_opt,
+            max_tokens: max_tokens_opt,
+            usage_pct: usage_pct_opt,
+            memory_segment_count: mem_count_opt,
+            memory_saved_tokens: mem_saved_opt,
         }
         .render(&self.templates)
         .context("failed to build system prompt")

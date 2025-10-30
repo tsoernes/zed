@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use action_log::ActionLog;
 use anyhow::Result;
 use assistant_tool::{Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;

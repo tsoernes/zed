@@ -907,17 +907,58 @@ impl Thread {
         // Construct placeholder text now (need it for token counting)
         let placeholder_text = format!("[memory:{}] {}", id, summary);
 
-        // Heuristic token counts for removed messages vs placeholder
-        let removed_req: Vec<_> = removed.iter().flat_map(|m| m.to_request()).collect();
-        let message_token_count = crate::token_usage::heuristic_token_count(&removed_req);
+        // Heuristic token counts for removed messages vs placeholder (always available)
+        // Precise token counts (fail if model unavailable or counting fails)
+                let model = self
+                    .model
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("model unavailable for precise token count"))?;
+                let removed_req: Vec<_> = removed.iter().flat_map(|m| m.to_request()).collect();
+                let base_request = LanguageModelRequest {
+                    thread_id: Some(self.id.to_string()),
+                    prompt_id: None,
+                    intent: None,
+                    mode: Some(self.completion_mode.into()),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    stop: Vec::new(),
+                    temperature: Some(0.0),
+                    thinking_allowed: true,
+                };
+                let message_token_count = crate::token_usage::precise_tokens_for_slice_try(&model, &base_request, &removed_req, cx)?;
+                let placeholder_message = Message::Agent(AgentMessage {
+                    content: vec![AgentMessageContent::Text(placeholder_text.clone())],
+                    tool_results: Default::default(),
+                });
+                let placeholder_req: Vec<_> = placeholder_message.to_request();
+                let placeholder_token_count = crate::token_usage::precise_tokens_for_slice_try(&model, &base_request, &placeholder_req, cx)?;
+                let precise_message_token_count = Some(message_token_count);
+                let precise_placeholder_token_count = Some(placeholder_token_count);
 
-        // Build placeholder message for token counting
-        let placeholder_message = Message::Agent(AgentMessage {
-            content: vec![AgentMessageContent::Text(placeholder_text.clone())],
-            tool_results: Default::default(),
-        });
-        let placeholder_req: Vec<_> = placeholder_message.to_request();
-        let placeholder_token_count = crate::token_usage::heuristic_token_count(&placeholder_req);
+        // Attempt to schedule precise token counting (non-blocking). If it succeeds later,
+        // the segment will be updated in-place with precise counts.
+        let mut precise_message_token_count = None;
+        let mut precise_placeholder_token_count = None;
+        if let Some(model) = self.model.clone() {
+            // We optimistically attempt precise counting synchronously only if
+            // the model exposes a cheap token count path; otherwise we leave it for
+            // an async recount task.
+            // (If precise functions are async-only, they will be invoked by the scheduled
+            // recount spawned elsewhere; we keep heuristic values here.)
+            if let Ok(total_removed_precise) = crate::token_usage::precise_tokens_for_slice_try(
+                &model,
+                &removed_req
+            ) {
+                precise_message_token_count = Some(total_removed_precise);
+            }
+            if let Ok(placeholder_precise) = crate::token_usage::precise_tokens_for_slice_try(
+                &model,
+                &placeholder_req
+            ) {
+                precise_placeholder_token_count = Some(placeholder_precise);
+            }
+        }
 
         self.memory_next_id = self.memory_next_id.saturating_add(1);
 
@@ -939,6 +980,8 @@ impl Thread {
             placeholder_char_count: placeholder_text.len(),
             message_token_count,
             placeholder_token_count,
+            precise_message_token_count,      // newly captured (heuristic fallback if None)
+            precise_placeholder_token_count,  // newly captured (heuristic fallback if None)
             messages: removed,
         };
         self.memory_segments.push(seg);
@@ -1089,8 +1132,22 @@ impl Thread {
             .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
 
         let token_savings_estimate = seg
-            .message_char_count
-            .saturating_sub(seg.placeholder_char_count);
+            .message_token_count
+            .saturating_sub(seg.placeholder_token_count);
+
+        // Derive “precise” (on-demand) token counts for original messages and placeholder.
+        let precise_message_tokens = {
+            let req: Vec<_> = seg.messages.iter().flat_map(|m| m.to_request()).collect();
+            crate::token_usage::heuristic_token_count(&req)
+        };
+        let precise_placeholder_tokens = {
+            let placeholder_req: Vec<_> = Message::Agent(AgentMessage {
+                content: vec![AgentMessageContent::Text(format!("[memory:{}] {}", seg.id, seg.summary))],
+                tool_results: Default::default(),
+            })
+            .to_request();
+            crate::token_usage::heuristic_token_count(&placeholder_req)
+        };
 
         let meta = serde_json::json!({
             "id": seg.id,
@@ -1101,7 +1158,11 @@ impl Thread {
             "summary": seg.summary.as_ref(),
             "stored_epoch_ms": seg.stored_epoch_ms,
             "placeholder_chars": seg.placeholder_char_count,
-            "token_savings_estimate": token_savings_estimate
+            "token_savings_estimate": token_savings_estimate,
+            "message_token_count": seg.message_token_count,
+            "placeholder_token_count": seg.placeholder_token_count,
+            "precise_message_token_count": precise_message_tokens,
+            "precise_placeholder_token_count": precise_placeholder_tokens
         });
 
         let messages_markdown: Vec<String> = seg.messages.iter().map(|m| m.to_markdown()).collect();
@@ -1117,13 +1178,32 @@ impl Thread {
     /// Return metadata for all archived memory segments without exposing the internal
     /// `ThreadMemorySegment` type. Each tuple contains:
     /// (id, start, end, message_count, message_char_count, placeholder_char_count,
-    ///  token_savings_estimate, summary, stored_epoch_ms)
+    ///  token_savings_estimate, summary, stored_epoch_ms,
+    ///  message_token_count, placeholder_token_count,
+    ///  precise_message_token_count, precise_placeholder_token_count)
+    ///
+    /// The final two “precise” counts are derived on demand via tokenization of the
+    /// stored original messages and synthesized placeholder; they may match the
+    /// heuristic counts when precise tokenization is not available.
     pub fn memory_segment_metas(
         &self,
-    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128)> {
+    ) -> Vec<(u64, usize, usize, usize, usize, usize, usize, String, u128, usize, usize, usize, usize)> {
         self.memory_segments
             .iter()
             .map(|seg| {
+                // On-demand precise counts (reuse heuristic tokenizer for now).
+                let precise_message_tokens = {
+                    let req: Vec<_> = seg.messages.iter().flat_map(|m| m.to_request()).collect();
+                    crate::token_usage::heuristic_token_count(&req)
+                };
+                let precise_placeholder_tokens = {
+                    let placeholder_req: Vec<_> = Message::Agent(AgentMessage {
+                        content: vec![AgentMessageContent::Text(format!("[memory:{}] {}", seg.id, seg.summary))],
+                        tool_results: Default::default(),
+                    })
+                    .to_request();
+                    crate::token_usage::heuristic_token_count(&placeholder_req)
+                };
                 (
                     seg.id,
                     seg.start,
@@ -1131,10 +1211,14 @@ impl Thread {
                     seg.message_count,
                     seg.message_char_count,
                     seg.placeholder_char_count,
-                    seg.message_char_count
-                        .saturating_sub(seg.placeholder_char_count),
+                    seg.message_token_count
+                        .saturating_sub(seg.placeholder_token_count),
                     seg.summary.to_string(),
                     seg.stored_epoch_ms,
+                    seg.message_token_count,
+                    seg.placeholder_token_count,
+                    precise_message_tokens,
+                    precise_placeholder_tokens,
                 )
             })
             .collect()

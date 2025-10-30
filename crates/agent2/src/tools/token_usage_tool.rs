@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -94,16 +94,24 @@ impl AgentTool for TokenUsageTool {
                 t.active_and_full_token_usage()
                     .map(|(active, _full)| active),
                 t.active_and_full_token_usage().map(|(_active, full)| full),
-                t.precise_active_tokens,
-                t.precise_max_tokens,
-                t.precise_per_message_tokens.clone(),
+                t.precise_active_tokens(),
+                t.precise_max_tokens(),
+                t.precise_per_message_tokens().map(|v| v.to_vec()),
                 t.memory_segment_metas(),
             )
         });
 
-        // Compute memory savings aggregate.
+        // Compute memory savings aggregate (both heuristic estimate and precise on-demand counts).
         let memory_segments_count = metas.len();
-        let memory_saved_tokens: usize = metas.iter().map(|m| m.6).sum();
+        // Use precise saved tokens only (archived original minus placeholder), dropping heuristic estimate.
+        let memory_saved_tokens: usize = metas
+            .iter()
+            .map(|m| {
+                let precise_message_tokens = m.11;
+                let precise_placeholder_tokens = m.12;
+                precise_message_tokens.saturating_sub(precise_placeholder_tokens)
+            })
+            .sum();
 
         // Active vs full tokens (prefer precise for active if available).
         let (active_used, active_max, active_precise) =
@@ -147,7 +155,7 @@ impl AgentTool for TokenUsageTool {
         // Per-message token counts (precise or heuristic).
         let per_message_tokens = if input.include_per_message {
             match precise_per_opt {
-                Some(ref v) if !v.is_empty() => Some(v.clone()),
+                Some(v) if !v.is_empty() => Some(v.clone()),
                 _ => {
                     // Fallback heuristic
                     let heuristics = thread
@@ -172,7 +180,7 @@ impl AgentTool for TokenUsageTool {
             "full_tokens_max": full_max,
             "full_usage_pct": (full_pct * 100.0).round() / 100.0,
             "memory_segment_count": memory_segments_count,
-            "memory_saved_tokens_estimate": memory_saved_tokens,
+            "memory_saved_tokens": memory_saved_tokens,
         });
 
         // Build markdown output.
@@ -261,6 +269,7 @@ impl AgentTool for TokenUsageTool {
             let memory_json: Vec<serde_json::Value> = metas
                 .iter()
                 .map(|m| {
+                    let precise_saved = m.11.saturating_sub(m.12);
                     serde_json::json!({
                         "id": m.0,
                         "start": m.1,
@@ -268,9 +277,13 @@ impl AgentTool for TokenUsageTool {
                         "message_count": m.3,
                         "message_chars": m.4,
                         "placeholder_chars": m.5,
-                        "token_savings_estimate": m.6,
                         "summary": m.7,
-                        "stored_epoch_ms": m.8
+                        "stored_epoch_ms": m.8,
+                        "message_token_count": m.9,
+                        "placeholder_token_count": m.10,
+                        "precise_message_token_count": m.11,
+                        "precise_placeholder_token_count": m.12,
+                        "token_savings": precise_saved
                     })
                 })
                 .collect();
