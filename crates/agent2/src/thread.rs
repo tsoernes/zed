@@ -1,9 +1,9 @@
 use crate::{
     ChatHistoryAgentTool, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool,
-    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, ListHistoryTool, MemoryAgentTool,
-    MovePathTool, NowTool, OpenTool, ReadFileTool, ShellDetectorTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, TokenUsageTool, WebSearchTool,
+    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MemoryAgentTool, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, ShellDetectorTool, SystemPromptTemplate, Template, Templates,
+    TerminalTool, ThinkingTool, TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1795,7 +1795,7 @@ impl Thread {
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
-        self.add_tool(ListHistoryTool::new(cx.weak_entity()));
+        // self.add_tool(ListHistoryTool::new(cx.weak_entity())); // disabled by default
         self.add_tool(ChatHistoryAgentTool);
         self.add_tool(MemoryAgentTool::new(cx.weak_entity()));
         self.add_tool(TokenUsageTool::new(cx.weak_entity()));
