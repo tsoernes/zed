@@ -166,11 +166,7 @@ impl MemoryBackend for ThreadMemoryBackend {
         Ok(MemorySegmentDetail { meta, messages })
     }
 
-    fn prune(&self, app: &mut App, id: u64) -> Result<()> {
-        let thread = Self::active_thread(app)?;
-        thread.update(app, |thread, cx| thread.prune_memory_segment(id, cx))?;
-        Ok(())
-    }
+    // prune operation removed; segments are retained and explicit deletion is disabled.
 }
 
 /// Install the thread-backed memory backend, replacing any existing backend.

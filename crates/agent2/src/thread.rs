@@ -1,9 +1,9 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool, FetchTool, FindPathTool,
-    GrepTool, ListDirectoryTool, ListHistoryTool, MemoryAgentTool, MovePathTool, NowTool, OpenTool,
-    ReadFileTool, ShellDetectorTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ThinkingTool, TokenUsageTool, WebSearchTool,
+    ChatHistoryAgentTool, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, EnhancedTerminalTool,
+    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, ListHistoryTool, MemoryAgentTool,
+    MovePathTool, NowTool, OpenTool, ReadFileTool, ShellDetectorTool, SystemPromptTemplate,
+    Template, Templates, TerminalTool, ThinkingTool, TokenUsageTool, WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -998,39 +998,162 @@ impl Thread {
         Ok(())
     }
 
-    /// Prune (delete) an archived memory segment by id. If the placeholder
-    /// representing the segment is still present at its original start index,
-    /// it is removed. This does not restore the archived messages.
-    pub fn prune_memory_segment(&mut self, id: u64, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        let pos = self
-            .memory_segments
-            .iter()
-            .position(|s| s.id == id)
-            .ok_or_else(|| anyhow::anyhow!("no memory segment with id {}", id))?;
-        let start_index = self.memory_segments[pos].start;
-        if start_index < self.messages.len() {
-            let placeholder_matches = match &self.messages[start_index] {
-                Message::Agent(agent_msg) => agent_msg.content.iter().any(|c| {
-                    matches!(
-                        c,
-                        AgentMessageContent::Text(t)
-                            if t.starts_with(&format!("[memory:{}]", id))
-                    )
-                }),
-                _ => false,
-            };
-            if placeholder_matches {
-                self.messages.remove(start_index);
+    /// Restore all archived memory segments, generate a detailed summary over the full
+    /// expanded message set, then re-archive the segments preserving their original
+    /// summaries. This ensures summaries are created from the complete, uncompressed
+    /// conversation while retaining memory compaction afterward.
+    pub fn summarize_with_full_restore_and_rearchive(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        // Snapshot original segments (clone so we can rebuild after).
+        let original_segments = self.memory_segments.clone();
+
+        // Restore all segments (ascending start order to keep index math predictable).
+        let mut sorted = original_segments.clone();
+        sorted.sort_by_key(|s| s.start);
+        for seg in &sorted {
+            // Ignore failures (e.g., already restored) but log them.
+            if let Err(e) = self.restore_memory_segment(seg.id, cx) {
+                log::debug!(
+                    "restore_memory_segment({}) failed during full restore: {}",
+                    seg.id,
+                    e
+                );
             }
         }
-        self.memory_segments.remove(pos);
-        self.summary = None;
-        cx.notify();
-        // Persist after pruning.
-        self.persist_memory_segments().log_err();
 
-        // Pruning changes “full” context projection
-        self.invalidate_and_schedule_token_recount(cx);
+        // Build detailed summarization request using the fully restored messages.
+        let Some(model) = self.summarization_model.clone() else {
+            // No model available; nothing further to do. Re-archive segments immediately.
+            self.rearchive_segments_after_full_restore(original_segments, cx)?;
+            return Ok(());
+        };
+
+        let mut request = LanguageModelRequest {
+            intent: Some(CompletionIntent::ThreadSummarization),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
+            ..Default::default()
+        };
+
+        for message in &self.messages {
+            request.messages.extend(message.to_request());
+        }
+
+        // Use the detailed prompt (same as existing summary generation path).
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
+            cache: false,
+        });
+
+        // Capture segments for re-archiving after async completion.
+        let segments_for_rearchive: Vec<_> = original_segments
+            .into_iter()
+            .map(|s| (s.start, s.end, s.message_count, s.summary.to_string()))
+            .collect();
+
+        // Spawn async summarization; once complete re-archive segments.
+        cx.spawn(async move |this, cx| {
+            let mut summary_accum = String::new();
+            let mut stream = model.stream_completion(request, cx).await?;
+            while let Some(evt) = stream.next().await {
+                let evt = evt?;
+                match evt {
+                    LanguageModelCompletionEvent::Text(text) => {
+                        let mut lines = text.lines();
+                        summary_accum.extend(lines.next());
+                    }
+                    LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::UsageUpdated { amount, limit },
+                    ) => {
+                        this.update(cx, |thread, cx| {
+                            thread.update_model_request_usage(amount, limit, cx);
+                        })?;
+                    }
+                    _ => {}
+                }
+            }
+
+            let final_summary = SharedString::from(summary_accum);
+            // Set summary
+            this.update(cx, |thread, cx| {
+                thread.summary = Some(final_summary.clone());
+                cx.notify();
+            })?;
+
+            // Re-archive segments after summary generation.
+            this.update(cx, |thread, cx| {
+                thread.rearchive_segments_after_full_restore(
+                    segments_for_rearchive
+                        .iter()
+                        .map(|(start, end, count, summary)| ThreadMemorySegment {
+                            // id will be reassigned; placeholder metadata below
+                            id: 0,
+                            start: *start,
+                            end: *end,
+                            summary: summary.clone().into(),
+                            message_char_count: 0,
+                            message_count: *count,
+                            stored_epoch_ms: 0,
+                            placeholder_char_count: 0,
+                            message_token_count: 0,
+                            placeholder_token_count: 0,
+                            messages: Vec::new(), // not needed here
+                        })
+                        .collect(),
+                    cx,
+                )
+            })??;
+
+            Ok(())
+        })
+        .detach();
+
+        Ok(())
+    }
+
+    /// Internal helper: re-archive previously restored segments.
+    /// Accepts the original segments (with original start/end/message_count/summary).
+    fn rearchive_segments_after_full_restore(
+        &mut self,
+        original_segments: Vec<ThreadMemorySegment>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        // Sort by original start to compute index shifts deterministically.
+        let mut segs = original_segments;
+        segs.sort_by_key(|s| s.start);
+
+        // After full restore, each segment's messages occupy [start, start + message_count - 1]
+        // but earlier restorations expanded the message vector, shifting later start indices.
+        // Compute cumulative shift and re-archive each segment using its original summary.
+        let mut cumulative_shift: isize = 0;
+
+        // Clear existing memory_segments; they will be rebuilt by store calls.
+        self.memory_segments.clear();
+
+        for seg in segs {
+            let adjusted_start = (seg.start as isize + cumulative_shift) as usize;
+            let adjusted_end = adjusted_start + seg.message_count.saturating_sub(1);
+            if let Err(e) = self.store_memory_segment_with_summary(
+                adjusted_start,
+                adjusted_end,
+                Some(seg.summary.as_ref()),
+                cx,
+            ) {
+                log::debug!(
+                    "Failed to re-archive segment (orig_id={}, start={}, end={}): {}",
+                    seg.id,
+                    adjusted_start,
+                    adjusted_end,
+                    e
+                );
+                continue;
+            }
+            // Archiving replaces message_count messages with one placeholder -> shift increases by (message_count - 1)
+            cumulative_shift += (seg.message_count as isize).saturating_sub(1);
+        }
+
         Ok(())
     }
 
@@ -1654,6 +1777,7 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(ListHistoryTool::new(cx.weak_entity()));
+        self.add_tool(ChatHistoryAgentTool);
         self.add_tool(MemoryAgentTool::new(cx.weak_entity()));
         self.add_tool(TokenUsageTool::new(cx.weak_entity()));
 
@@ -1680,6 +1804,11 @@ impl Thread {
 
     pub fn remove_tool(&mut self, name: &str) -> bool {
         self.tools.remove(name).is_some()
+    }
+
+    /// Return a cloned tool handle by name if it is currently registered and enabled.
+    pub fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
+        self.tools.get(name).cloned()
     }
 
     pub fn profile(&self) -> &AgentProfileId {
@@ -2304,6 +2433,16 @@ impl Thread {
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
+
+        // Generate a detailed summary from the fully restored message history (then re-archive)
+        // prior to title generation if we don't already have one.
+        if self.summary.is_none() {
+            if let Err(e) = self.summarize_with_full_restore_and_rearchive(cx) {
+                log::debug!(
+                    "summarize_with_full_restore_and_rearchive failed in generate_title: {e}"
+                );
+            }
+        }
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -2562,9 +2701,7 @@ impl Thread {
         self.restore_memory_segment(id, cx)
     }
 
-    fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
-        self.running_turn.as_ref()?.tools.get(name).cloned()
-    }
+    // Removed duplicate private tool() accessor; public tool() earlier in impl now used universally.
 
     /// Build the current system prompt string (excluding any pending user input).
     /// This is factored out so that other components (e.g. token usage tooling) can
@@ -2574,23 +2711,22 @@ impl Thread {
         // Token usage (precise only): only surface when available; otherwise omit.
         // Prefix these with underscores to indicate intentional unused bindings
         // when the precise values are not needed by the template rendering.
-        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) =
-            if let (Some(precise), Some(max)) =
-                (self.precise_active_tokens, self.precise_max_tokens)
-            {
-                let pct = if max > 0 {
-                    (precise as f64 / max as f64) * 100.0
-                } else {
-                    0.0
-                };
-                (
-                    Some(precise as usize),
-                    Some(max as usize),
-                    Some((pct * 100.0).round() / 100.0),
-                )
+        let (active_tokens_opt, max_tokens_opt, usage_pct_opt) = if let (Some(precise), Some(max)) =
+            (self.precise_active_tokens, self.precise_max_tokens)
+        {
+            let pct = if max > 0 {
+                (precise as f64 / max as f64) * 100.0
             } else {
-                (None, None, None)
+                0.0
             };
+            (
+                Some(precise as usize),
+                Some(max as usize),
+                Some((pct * 100.0).round() / 100.0),
+            )
+        } else {
+            (None, None, None)
+        };
         SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools: self.tools.keys().cloned().collect(),

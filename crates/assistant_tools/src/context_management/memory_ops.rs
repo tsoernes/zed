@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use gpui::{App, Global, UpdateGlobal};
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +50,6 @@ pub trait MemoryBackend: Send + Sync {
     ) -> Result<MemorySegmentMeta>;
     fn load(&self, app: &App, id: u64, include_messages: bool) -> Result<MemorySegmentDetail>;
     fn restore(&self, app: &mut App, id: u64) -> Result<MemorySegmentDetail>;
-    fn prune(&self, app: &mut App, id: u64) -> Result<()>;
 }
 
 /// Noop backend used until a real (thread-backed) implementation is installed.
@@ -90,9 +89,7 @@ impl MemoryBackend for NoopMemoryBackend {
         Err(anyhow!("memory backend not installed"))
     }
 
-    fn prune(&self, _app: &mut App, _id: u64) -> Result<()> {
-        Err(anyhow!("memory backend not installed"))
-    }
+    // Prune operation removed (memory segments are retained; explicit deletion is disabled).
 }
 
 /// Global wrapper storing the active `MemoryBackend` implementation.

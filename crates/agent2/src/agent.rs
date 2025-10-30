@@ -732,93 +732,85 @@ impl NativeAgentConnection {
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
                 match result {
-                    Ok(event) => {
-
-
-                        match event {
-                            ThreadEvent::UserMessage(message) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    for content in message.content {
-                                        thread.push_user_content_block(
-                                            Some(message.id.clone()),
-                                            content.into(),
-                                            cx,
-                                        );
-                                    }
-                                })?;
-                            }
-                            ThreadEvent::AgentText(text) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                            meta: None,
-                                        }),
-                                        false,
+                    Ok(event) => match event {
+                        ThreadEvent::UserMessage(message) => {
+                            acp_thread.update(cx, |thread, cx| {
+                                for content in message.content {
+                                    thread.push_user_content_block(
+                                        Some(message.id.clone()),
+                                        content.into(),
                                         cx,
-                                    )
-                                })?;
-                            }
-                            ThreadEvent::AgentThinking(text) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.push_assistant_content_block(
-                                        acp::ContentBlock::Text(acp::TextContent {
-                                            text,
-                                            annotations: None,
-                                            meta: None,
-                                        }),
-                                        true,
-                                        cx,
-                                    )
-                                })?;
-                            }
-                            ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
-                                tool_call,
-                                options,
-                                response,
-                            }) => {
-                                let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
-                                        tool_call, options, true, cx,
-                                    )
-                                })??;
-                                cx.background_spawn(async move {
-                                    if let acp::RequestPermissionOutcome::Selected { option_id } =
-                                        outcome_task.await
-                                    {
-                                        response
-                                            .send(option_id)
-                                            .map(|_| anyhow!("authorization receiver was dropped"))
-                                            .log_err();
-                                    }
-                                })
-                                .detach();
-                            }
-                            ThreadEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_tool_call(tool_call, cx)
-                                })??;
-                            }
-                            ThreadEvent::ToolCallUpdate(update) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.update_tool_call(update, cx)
-                                })??;
-                            }
-                            ThreadEvent::Retry(status) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.update_retry_status(status, cx)
-                                })?;
-                            }
-                            ThreadEvent::Stop(stop_reason) => {
-                                log::trace!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse {
-                                    stop_reason,
-                                    meta: None,
-                                });
-                            }
+                                    );
+                                }
+                            })?;
                         }
-                    }
+                        ThreadEvent::AgentText(text) => {
+                            acp_thread.update(cx, |thread, cx| {
+                                thread.push_assistant_content_block(
+                                    acp::ContentBlock::Text(acp::TextContent {
+                                        text,
+                                        annotations: None,
+                                        meta: None,
+                                    }),
+                                    false,
+                                    cx,
+                                )
+                            })?;
+                        }
+                        ThreadEvent::AgentThinking(text) => {
+                            acp_thread.update(cx, |thread, cx| {
+                                thread.push_assistant_content_block(
+                                    acp::ContentBlock::Text(acp::TextContent {
+                                        text,
+                                        annotations: None,
+                                        meta: None,
+                                    }),
+                                    true,
+                                    cx,
+                                )
+                            })?;
+                        }
+                        ThreadEvent::ToolCallAuthorization(ToolCallAuthorization {
+                            tool_call,
+                            options,
+                            response,
+                        }) => {
+                            let outcome_task = acp_thread.update(cx, |thread, cx| {
+                                thread.request_tool_call_authorization(tool_call, options, true, cx)
+                            })??;
+                            cx.background_spawn(async move {
+                                if let acp::RequestPermissionOutcome::Selected { option_id } =
+                                    outcome_task.await
+                                {
+                                    response
+                                        .send(option_id)
+                                        .map(|_| anyhow!("authorization receiver was dropped"))
+                                        .log_err();
+                                }
+                            })
+                            .detach();
+                        }
+                        ThreadEvent::ToolCall(tool_call) => {
+                            acp_thread.update(cx, |thread, cx| {
+                                thread.upsert_tool_call(tool_call, cx)
+                            })??;
+                        }
+                        ThreadEvent::ToolCallUpdate(update) => {
+                            acp_thread
+                                .update(cx, |thread, cx| thread.update_tool_call(update, cx))??;
+                        }
+                        ThreadEvent::Retry(status) => {
+                            acp_thread
+                                .update(cx, |thread, cx| thread.update_retry_status(status, cx))?;
+                        }
+                        ThreadEvent::Stop(stop_reason) => {
+                            log::trace!("Assistant message complete: {:?}", stop_reason);
+                            return Ok(acp::PromptResponse {
+                                stop_reason,
+                                meta: None,
+                            });
+                        }
+                    },
                     Err(e) => {
                         log::error!("Error in model response stream: {:?}", e);
                         return Err(e);
@@ -963,7 +955,16 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     }))
                 },
             )??;
-            agent.update(cx, |agent, cx| agent.register_session(thread, cx))
+            agent.update(cx, |agent, cx| agent.register_session(thread.clone(), cx))?;
+
+            // Perform full restore → summarize → re-archive immediately after creation.
+            if let Err(e) = thread.update(cx, |thread, thread_cx| {
+                thread.summarize_with_full_restore_and_rearchive(thread_cx)
+            }) {
+                log::debug!("summarize_with_full_restore_and_rearchive failed: {e}");
+            }
+
+            Ok(thread)
         })
     }
 

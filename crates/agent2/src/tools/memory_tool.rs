@@ -40,8 +40,6 @@ pub enum MemoryAction {
     },
     /// Restore a previously archived segment (reinsert messages, keep archive).
     Restore { id: u64 },
-    /// Permanently prune (delete) the archived segment (and its placeholder if present).
-    Prune { id: u64 },
 }
 
 /// Input schema for the native agent memory tool.
@@ -95,7 +93,6 @@ impl AgentTool for MemoryAgentTool {
                 }
                 MemoryAction::Load { id, .. } => format!("Load memory {}", id).into(),
                 MemoryAction::Restore { id } => format!("Restore memory {}", id).into(),
-                MemoryAction::Prune { id } => format!("Prune memory {}", id).into(),
             },
             Err(_) => "Memory operation".into(),
         }
@@ -288,18 +285,6 @@ impl AgentTool for MemoryAgentTool {
                 for (i, m) in msgs.iter().enumerate() {
                     md.push_str(&format!("### Message {}\n\n{}\n\n", i, m));
                 }
-                Ok(md)
-            }
-            MemoryAction::Prune { id } => {
-                if let Err(e) = thread.update(cx, |thread, thread_cx| {
-                    thread.prune_memory_segment(id, thread_cx)
-                }) {
-                    return Task::ready(Err(e));
-                }
-                let mut md = String::new();
-                md.push_str("# Pruned Memory Segment\n\nRemoved segment ");
-                md.push_str(&id.to_string());
-                md.push('\n');
                 Ok(md)
             }
         };

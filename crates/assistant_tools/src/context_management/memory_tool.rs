@@ -1,7 +1,7 @@
 use crate::context_management::memory_ops::GlobalMemoryBackend;
 use crate::schema::json_schema_for;
 use action_log::ActionLog;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -37,8 +37,6 @@ pub enum MemoryOperation {
     },
     /// Restore a stored segment (reinsert original messages).
     Restore { id: u64 },
-    /// Prune (delete) a stored memory segment by id.
-    Prune { id: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -59,22 +57,16 @@ impl Tool for MemoryTool {
         _project: &Entity<Project>,
         _cx: &App,
     ) -> bool {
-        // Destructive operation: prune.
-        if let Ok(parsed) = serde_json::from_value::<MemoryToolInput>(input.clone()) {
-            matches!(parsed.operation, MemoryOperation::Prune { .. })
-        } else {
-            false
-        }
+        false
     }
 
     fn may_perform_edits(&self) -> bool {
-        // Store / Restore / Prune mutate thread state (messages) via the backend.
+        // Store / Restore mutate thread state (messages) via the backend.
         true
     }
 
     fn description(&self) -> String {
-        "Archive, list, inspect, restore, and prune conversation memory segments (thread-backed)."
-            .into()
+        "Archive, list, inspect, and restore conversation memory segments (thread-backed).".into()
     }
 
     fn icon(&self) -> IconName {
@@ -107,7 +99,6 @@ impl Tool for MemoryTool {
                 }
                 MemoryOperation::Load { id, .. } => format!("Load memory {}", id),
                 MemoryOperation::Restore { id } => format!("Restore memory {}", id),
-                MemoryOperation::Prune { id } => format!("Prune memory {}", id),
             }
         } else {
             "Memory operation".into()
@@ -256,15 +247,6 @@ impl Tool for MemoryTool {
                     for (i, msg) in detail.messages.iter().enumerate() {
                         md.push_str(&format!("### Message {}\n\n{}\n\n", i, msg));
                     }
-                    Ok(md.into())
-                }
-                MemoryOperation::Prune { id } => {
-                    // Mutating prune requires &mut App; backend.prune will remove the archived segment.
-                    backend.prune(cx, id)?;
-                    let mut md = String::new();
-                    md.push_str("# Pruned Memory Segment\n\nRemoved segment ");
-                    md.push_str(&id.to_string());
-                    md.push('\n');
                     Ok(md.into())
                 }
             })();
