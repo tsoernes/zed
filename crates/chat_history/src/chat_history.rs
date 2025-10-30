@@ -710,14 +710,14 @@ pub struct ChatStore {
     backend: Arc<dyn EmbeddingBackend>,
     config: ChatHistoryConfig,
     /// Optional database-backed implementation for persistence / advanced search.
-    db: Option<Arc<ChatHistoryDb>>,
+    db: Option<Arc<tokio::sync::Mutex<ChatHistoryDb>>>,
 }
 
 impl ChatStore {
     pub fn new(
         backend: Arc<dyn EmbeddingBackend>,
         config: ChatHistoryConfig,
-        db: Option<Arc<ChatHistoryDb>>,
+        db: Option<Arc<tokio::sync::Mutex<ChatHistoryDb>>>,
     ) -> Self {
         Self {
             backend,
@@ -727,13 +727,14 @@ impl ChatStore {
     }
 
     /// Create a new chat.
+    /// Persists the chat immediately if a database is attached.
     pub async fn create_chat(
         &self,
         project_id: Option<String>,
         title: Option<String>,
     ) -> Result<ChatMetadata> {
         let now = OffsetDateTime::now_utc();
-        Ok(ChatMetadata {
+        let meta = ChatMetadata {
             chat_id: ChatId(self.generate_chat_id()),
             project_id,
             title,
@@ -749,11 +750,16 @@ impl ChatStore {
             pinned: false,
             tags: Vec::new(),
             chat_vector: None,
-        })
+        };
+        if let Some(db_arc) = &self.db {
+            let db = &mut *db_arc.lock().await;
+            db.insert_chat(&meta).await?;
+        }
+        Ok(meta)
     }
 
     /// Append a message; intended to be called automatically by higher-level assistant code.
-    /// When a database is available, persists (upserts) the chat metadata and the new message.
+    /// Persists chat metadata, message row, tags, and updates BM25 index when a database is attached.
     pub async fn append_message(
         &self,
         chat: &mut ChatMetadata,
@@ -789,23 +795,19 @@ impl ChatStore {
             }
         }
 
-        // Persist chat + message if a DB is attached. Message persistence via DB
-        // is limited by the current API (insert_message requires &mut self on ChatHistoryDb
-        // behind an Arc); for now we upsert chat metadata and defer message indexing.
-        if let Some(db) = &self.db {
-            // Attempt update; if missing, fall back to insert.
+        if let Some(db_arc) = &self.db {
+            let db = &mut *db_arc.lock().await;
+            // Upsert chat row.
             match db.update_chat(chat).await {
                 Ok(_) => {}
                 Err(e) if e.to_string().contains("chat not found for update") => {
-                    // Insert new chat row.
                     db.insert_chat(chat).await?;
                 }
                 Err(e) => return Err(e),
             }
-            // Persist tags set (after potential additions above).
             db.set_tags(&chat.chat_id, &chat.tags).await?;
-            // NOTE: Full message persistence (including BM25 index update) requires mutable
-            // access to ChatHistoryDb; consider refactoring to interior mutability in a follow-up.
+            // Persist message and index for lexical search.
+            db.insert_message(&message).await?;
         }
 
         Ok(message)
@@ -873,7 +875,8 @@ impl ChatStore {
 
     /// Retrieve chat metadata + messages.
     pub async fn get_chat(&self, chat_id: &ChatId) -> Result<(ChatMetadata, Vec<ChatMessage>)> {
-        if let Some(db) = &self.db {
+        if let Some(db_mutex) = &self.db {
+            let db = db_mutex.lock().await;
             db.fetch_chat_with_messages(chat_id).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -887,7 +890,8 @@ impl ChatStore {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<ChatMetadata>> {
-        if let Some(db) = &self.db {
+        if let Some(db_mutex) = &self.db {
+            let db = db_mutex.lock().await;
             db.list_chats(project_id, limit, offset).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -901,7 +905,8 @@ impl ChatStore {
         n: usize,
         project_scoped: bool,
     ) -> Result<Vec<(ChatMetadata, f32)>> {
-        if let Some(db) = &self.db {
+        if let Some(db_mutex) = &self.db {
+            let db = db_mutex.lock().await;
             db.similar_chats(chat_id, n, project_scoped).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -918,10 +923,11 @@ impl ChatStore {
         mode: RetrievalMode,
         alpha: f32,
     ) -> Result<Vec<RetrievedContext>> {
-        let db = self
+        let db_mutex = self
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
+        let db = db_mutex.lock().await;
         let scored = db
             .search_messages(query, project_id, chat_id, top_k, mode, alpha)
             .await?;
@@ -984,10 +990,11 @@ impl ChatStore {
     /// If `chat_id` is provided, only that chat is processed; otherwise all known chats are iterated.
     /// Returns an error if persistence / embedding backend is unavailable.
     pub async fn reembed(&self, chat_id: Option<&ChatId>) -> Result<()> {
-        let db = self
+        let db_mutex = self
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
+        let db = &mut *db_mutex.lock().await;
 
         if let Some(id) = chat_id {
             let _ = db.recompute_chat_embedding(id).await?;
@@ -1013,10 +1020,11 @@ impl ChatStore {
         archived: Option<bool>,
         pinned: Option<bool>,
     ) -> Result<ChatMetadata> {
-        let db = self
+        let db_mutex = self
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
+        let mut db = db_mutex.lock().await;
         // Fetch current metadata (messages not needed here, ignore second tuple element)
         let (mut meta, _messages) = db.fetch_chat_with_messages(chat_id).await?;
         let mut changed = false;

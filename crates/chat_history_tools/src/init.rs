@@ -348,7 +348,7 @@ pub async fn init_chat_history_tools_async(
             // Rebuild lexical index from persisted messages.
             db.rebuild_message_index().await?;
         }
-        Some(Arc::new(db))
+        Some(Arc::new(Mutex::new(db)))
     } else {
         None
     };
