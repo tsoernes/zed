@@ -710,14 +710,14 @@ pub struct ChatStore {
     backend: Arc<dyn EmbeddingBackend>,
     config: ChatHistoryConfig,
     /// Optional database-backed implementation for persistence / advanced search.
-    db: Option<Arc<tokio::sync::Mutex<ChatHistoryDb>>>,
+    db: Option<Arc<std::sync::Mutex<ChatHistoryDb>>>,
 }
 
 impl ChatStore {
     pub fn new(
         backend: Arc<dyn EmbeddingBackend>,
         config: ChatHistoryConfig,
-        db: Option<Arc<tokio::sync::Mutex<ChatHistoryDb>>>,
+        db: Option<Arc<std::sync::Mutex<ChatHistoryDb>>>,
     ) -> Self {
         Self {
             backend,
@@ -752,7 +752,10 @@ impl ChatStore {
             chat_vector: None,
         };
         if let Some(db_arc) = &self.db {
-            let db = &mut *db_arc.lock().await;
+            let db_lock = db_arc
+                .lock()
+                .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
+            let db = &mut *db_lock;
             db.insert_chat(&meta).await?;
         }
         Ok(meta)
@@ -796,7 +799,10 @@ impl ChatStore {
         }
 
         if let Some(db_arc) = &self.db {
-            let db = &mut *db_arc.lock().await;
+            let db_lock = db_arc
+                .lock()
+                .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
+            let db = &mut *db_lock;
             // Upsert chat row (insert if missing).
             match db.update_chat(chat).await {
                 Ok(_) => {}
@@ -913,7 +919,9 @@ impl ChatStore {
     /// Retrieve chat metadata + messages.
     pub async fn get_chat(&self, chat_id: &ChatId) -> Result<(ChatMetadata, Vec<ChatMessage>)> {
         if let Some(db_mutex) = &self.db {
-            let db = db_mutex.lock().await;
+            let db = db_mutex
+                .lock()
+                .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
             db.fetch_chat_with_messages(chat_id).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -928,7 +936,9 @@ impl ChatStore {
         offset: usize,
     ) -> Result<Vec<ChatMetadata>> {
         if let Some(db_mutex) = &self.db {
-            let db = db_mutex.lock().await;
+            let db = db_mutex
+                .lock()
+                .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
             db.list_chats(project_id, limit, offset).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -943,7 +953,9 @@ impl ChatStore {
         project_scoped: bool,
     ) -> Result<Vec<(ChatMetadata, f32)>> {
         if let Some(db_mutex) = &self.db {
-            let db = db_mutex.lock().await;
+            let db = db_mutex
+                .lock()
+                .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
             db.similar_chats(chat_id, n, project_scoped).await
         } else {
             Err(anyhow!("chat persistence unavailable"))
@@ -964,7 +976,9 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let db = db_mutex.lock().await;
+        let db = db_mutex
+            .lock()
+            .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
         let scored = db
             .search_messages(query, project_id, chat_id, top_k, mode, alpha)
             .await?;
@@ -1031,7 +1045,10 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let db = &mut *db_mutex.lock().await;
+        let db_lock = db_mutex
+            .lock()
+            .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
+        let db = &mut *db_lock;
 
         if let Some(id) = chat_id {
             let _ = db.recompute_chat_embedding(id).await?;
@@ -1061,7 +1078,9 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let mut db = db_mutex.lock().await;
+        let mut db = db_mutex
+            .lock()
+            .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
         // Fetch current metadata (messages not needed here, ignore second tuple element)
         let (mut meta, _messages) = db.fetch_chat_with_messages(chat_id).await?;
         let mut changed = false;
