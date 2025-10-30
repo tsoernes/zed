@@ -1,6 +1,6 @@
 # Testing Context Management Tools in Zed Assistant
 
-This guide explains how to test the three context management tools (`list_history`, `memory`, `call_context_tool`) that are now available in the Zed assistant.
+This guide explains how to test the context management tools (`list_history`, `memory`) that are now available in the Zed assistant. The former multiplexer `call_context_tool` has been removed; each tool is invoked directly.
 
 ## Prerequisites
 
@@ -21,10 +21,10 @@ This guide explains how to test the three context management tools (`list_histor
 When you start a new assistant conversation, the tools should be registered and available. You can verify this in the logs:
 
 ```
-INFO  [assistant_tools] Registering context management tools: list_history, memory, call_context_tool
+INFO  [assistant_tools] Registering context management tools: list_history, memory
 INFO  [assistant_tools] Registered ListHistoryTool
 INFO  [assistant_tools] Registered MemoryTool
-INFO  [assistant_tools] Registered CallContextTool
+<!-- CallContextTool removal: line removed -->
 ```
 
 ## Testing Each Tool
@@ -87,13 +87,13 @@ This tool manages conversation memory (archive, load, list, restore, prune).
 - Restore: Re-inserts archived messages back into the conversation
 - Prune: Removes orphaned memories
 
-### 3. CallContextTool
+<!-- Section removed: CallContextTool no longer available -->
 
 This is a meta-tool that can invoke either `list_history` or `memory` dynamically.
 
 **Test prompts:**
 ```
-Can you call the list_history tool through call_context_tool?
+(Deprecated) Previously you could invoke `list_history` via a multiplexer; now invoke `list_history` directly.
 ```
 
 ```
@@ -115,7 +115,7 @@ If tools don't appear to be working:
 
 2. **Verify tool names are being called:**
    ```bash
-   cargo run 2>&1 | grep -E "(list_history|memory|call_context_tool)"
+   cargo run 2>&1 | grep -E "(list_history|memory)"
    ```
 
 3. **Check for errors:**

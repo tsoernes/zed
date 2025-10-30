@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the implementation of an embedded MCP (Model Context Protocol) server in Zed that exposes context management tools (`list_history`, `memory`, `call_context_tool`) to external MCP clients.
+This document describes the implementation of an embedded MCP (Model Context Protocol) server in Zed that exposes context management tools (`list_history`, `memory`) to external MCP clients.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ This document describes the implementation of an embedded MCP (Model Context Pro
 2. **Context Management Tools** (`crates/assistant_tools/src/context_management/`)
    - `list_history` - Enumerate conversation history with stable indices
    - `memory` - Store, load, list, restore, and prune conversation segments
-   - `call_context_tool` - Invoke other context tools dynamically
+
 
 3. **CLI Client** (`crates/agent_compaction_cli/`)
    - Command-line interface for invoking MCP tools
@@ -35,7 +35,7 @@ This document describes the implementation of an embedded MCP (Model Context Pro
 │  │ - Tool Registry                  │   │
 │  │   • list_history                 │   │
 │  │   • memory                       │   │
-│  │   • call_context_tool            │   │
+
 │  └──────────────────────────────────┘   │
 │                                           │
 │  ┌──────────────────────────────────┐   │
@@ -210,21 +210,21 @@ Example response:
 - `remove_placeholder` (optional) - Remove placeholder after restore
 - `replace_placeholder_with` (optional) - Replace placeholder with text
 
-**Output:**
+
 - Operation status and result message
 - For list: Array of stored memories with metadata
 - For store: New memory handle
 - For load/restore: Restored content
 
-### call_context_tool
 
-**Input:**
-- `tool_name` (required) - Name of the context tool to invoke
-- `input` (optional) - Tool-specific input parameters
+
+
+
+
 
 **Output:**
-- Tool execution result
-- Status and any error messages
+
+
 
 ## Integration with Claude Desktop
 

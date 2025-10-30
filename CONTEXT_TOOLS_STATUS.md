@@ -6,10 +6,9 @@
 
 ## Overview
 
-Two context management tools have been successfully implemented and integrated into Zed:
+One context management tool has been successfully implemented and integrated into Zed:
 
 1. **`list_history`** - List conversation history with stable indices
-2. **`call_context_tool`** - Meta-tool that can dynamically invoke other context tools
 
 
 ## Current Status
@@ -26,10 +25,9 @@ Two context management tools have been successfully implemented and integrated i
    - Tools registered in `ToolRegistry` during `assistant_tools::init()`
    - Registration confirmed in startup logs:
      ```
-     INFO  [assistant_tools] Registering context management tools: list_history, call_context_tool
+     INFO  [assistant_tools] Registering context management tools: list_history
      INFO  [assistant_tools] Registered ListHistoryTool
      INFO  [assistant_tools] (MemoryTool removed)
-     INFO  [assistant_tools] Registered CallContextTool
      ```
 
 3. **Default Profile Configuration**
@@ -40,7 +38,6 @@ Two context management tools have been successfully implemented and integrated i
      "profiles": {
        "write": {
          "tools": {
-           "call_context_tool": true,
            "list_history": true,
            // "memory": true, (removed)
            ...
@@ -167,7 +164,7 @@ Two context management tools have been successfully implemented and integrated i
 
 5. Check logs for tool invocations:
    ```bash
-   cargo run 2>&1 | grep -E "(list_history|memory|call_context_tool)"
+   cargo run 2>&1 | grep -E "(list_history|memory)"
    ```
 
 ### Test via MCP CLI
@@ -192,7 +189,7 @@ Zed has two parallel tool systems:
    - Follows Model Context Protocol (MCP) specification
    - Used by CLI tools and other MCP clients
 
-Both systems expose the same three context management tools, but they:
+Both systems expose the same context management tool (`list_history`), but they:
 - Share the same input/output schemas
 - Have separate implementations (native vs MCP)
 - Serve different purposes (internal vs external)

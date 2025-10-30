@@ -2,17 +2,16 @@
 
 ## Overview
 
-This document explains how the context management tools (`list_history`, `call_context_tool`) were implemented and integrated into Zed's LLM agent system. (The `memory` tool has been removed.)
+This document explains how the context management tools (`list_history`) were implemented and integrated into Zed's LLM agent system. (The `memory` tool has been removed.)
 
 ## The Issue
 
 The tools were successfully implemented and registered in the `ToolRegistry`, but they weren't available to the LLM agent. The startup logs showed:
 
 ```
-INFO  [assistant_tools] Registering context management tools: list_history, call_context_tool
+INFO  [assistant_tools] Registering context management tools: list_history
 INFO  [assistant_tools] Registered ListHistoryTool
 INFO  [assistant_tools] (MemoryTool removed)
-INFO  [assistant_tools] Registered CallContextTool
 ```
 
 Despite successful registration, attempting to use these tools resulted in errors like:
@@ -50,7 +49,6 @@ Tools must be added to the default agent profile settings in `assets/settings/de
         "tools": {
           "list_history": true,
           // "memory": true,  (removed)
-          "call_context_tool": true,
           // ... other tools
         }
       },
@@ -58,7 +56,6 @@ Tools must be added to the default agent profile settings in `assets/settings/de
         "tools": {
           "list_history": true,
           // "memory": true,  (removed)
-          "call_context_tool": true,
           // ... other tools
         }
       }
@@ -187,8 +184,7 @@ Lists conversation history with message indices and previews.
 ### `memory`
 Archives, loads, lists, restores, and prunes conversation segments for long-term context management.
 
-### `call_context_tool`
-Multiplexer that provides a unified interface to all context management operations.
+
 
 ## References
 

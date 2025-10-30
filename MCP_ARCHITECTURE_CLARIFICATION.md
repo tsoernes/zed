@@ -27,7 +27,7 @@ User → Zed Agent → Thread → LanguageModelRequest (with tools array) → Cl
 let registry = ToolRegistry::global(cx);
 registry.register_tool(ListHistoryTool);
 registry.register_tool(MemoryTool);
-registry.register_tool(CallContextTool);
+// registry.register_tool(CallContextTool); // removed
 ```
 
 **Available to:**

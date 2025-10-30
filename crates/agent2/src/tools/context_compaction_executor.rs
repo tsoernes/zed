@@ -9,7 +9,6 @@ use context_server::listener::ToolResponse;
 use context_server::types::ToolResponseContent;
 
 use crate::thread::Thread;
-use crate::tools::CallContextToolInput;
 
 /// Executor that exposes the `list_history` context–compaction
 /// tools to the context_server adapter without requiring a direct (and cyclic)
@@ -34,11 +33,11 @@ impl ContextCompactionExecutor {
         Self { thread }
     }
 
-// run_list_history removed (ListHistoryTool is now executed via dynamic generic lookup)
+    // run_list_history removed (ListHistoryTool is now executed via dynamic generic lookup)
 
-// run_memory removed (MemoryAgentTool is executed via dynamic generic lookup)
+    // run_memory removed (MemoryAgentTool is executed via dynamic generic lookup)
 
-// run_call_context_tool removed (call_context_tool should become an AgentTool; temporary unsupported)
+    // call_context_tool fully removed; delegator no longer exists
 }
 
 impl ContextCompactionExecutor {
@@ -52,9 +51,11 @@ impl ContextCompactionExecutor {
         args: Option<Value>,
         cx: &mut AsyncApp,
     ) -> Task<Result<ToolResponse<Value>>> {
-// call_context_tool not yet converted to AgentTool; unsupported until wrapped
+        // call_context_tool not yet converted to AgentTool; unsupported until wrapped
         if name == "call_context_tool" {
-            return Task::ready(Err(anyhow!("'call_context_tool' not available (pending AgentTool wrapper)")));
+            return Task::ready(Err(anyhow!(
+                "'call_context_tool' not available (pending AgentTool wrapper)"
+            )));
         }
 
         let Some(thread) = self.thread.upgrade() else {
@@ -69,8 +70,7 @@ impl ContextCompactionExecutor {
             if let Some(tool) = maybe_tool {
                 // Prepare input JSON (empty object if none supplied).
                 let input_json = args.unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-                let event_stream =
-                    crate::ToolCallEventStream::noop(format!("{}_exec", name));
+                let event_stream = crate::ToolCallEventStream::noop(format!("{}_exec", name));
                 Ok(tool.run(input_json, event_stream, thread_cx))
             } else {
                 Err(anyhow!("unsupported tool: {name}"))
