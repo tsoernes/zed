@@ -28,6 +28,7 @@ http = "*"
 reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = { version = "*", features = ["raw_value"] }
 schemars = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros"] } # Needed for async tasks & mutex; moved from dev-dependencies.
 
 # Workspace internal crates (path dependencies use workspace resolution).
 collections = { path = "../collections" }
@@ -42,7 +43,5 @@ fastembed = { version = "*", optional = true }
 sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 
 [dev-dependencies]
-# (moved to main dependencies for runtime use)
-tokio = { version = "1", features = ["rt", "macros"] }
 # SQLite feature for SeaORM in tests/local development
 sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
