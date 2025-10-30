@@ -4,7 +4,7 @@ mod list_history_tool;
 mod memory_ops;
 mod memory_tool;
 
-pub use call_context_tool::{CallContextTool, CallContextToolInput, ContextToolName};
+// CallContextTool exports removed
 pub use chat_history_tool::{
     chat_history_adapter, install_chat_history_adapter, ChatHistoryTool, ChatHistoryToolInput,
 };

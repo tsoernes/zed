@@ -47,8 +47,8 @@ use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use context_management::{
-    CallContextTool, CallContextToolInput, ChatHistoryTool, ChatHistoryToolInput, ContextToolName,
-    ListHistoryTool, ListHistoryToolInput, MemoryOperation, MemoryTool, MemoryToolInput,
+    ChatHistoryTool, ChatHistoryToolInput, ContextToolName, ListHistoryTool, ListHistoryToolInput,
+    MemoryOperation, MemoryTool, MemoryToolInput,
 };
 pub use detect_binaries_tool::DetectBinariesTool;
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
@@ -104,7 +104,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     } else {
         log::warn!("MemoryTool missing after registration; memory operations will be unavailable");
     }
-    registry.register_tool(CallContextTool);
+    // CallContextTool removed; context tools exposed individually (list_history, memory, chat_history)
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
@@ -202,22 +202,16 @@ mod tests {
     }
 
     #[gpui::test]
-    fn memory_and_call_context_tool_registered(cx: &mut App) {
-        // Minimal initialization to avoid global side effects (paths, settings).
+    fn memory_tool_registered(cx: &mut App) {
         assistant_tool::init(cx);
         let registry = ToolRegistry::global(cx);
         registry.register_tool(MemoryTool);
-        registry.register_tool(CallContextTool);
 
         let names: Vec<String> = registry.tools().iter().map(|t| t.name()).collect();
 
         assert!(
             names.contains(&"memory".to_string()),
             "MemoryTool not registered"
-        );
-        assert!(
-            names.contains(&"call_context_tool".to_string()),
-            "CallContextTool not registered"
         );
     }
 
