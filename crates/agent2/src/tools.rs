@@ -1,4 +1,3 @@
-mod chat_history_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -36,7 +35,6 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         GrepTool::name(),
         ListDirectoryTool::name(),
         ListHistoryTool::name(),
-        ChatHistoryAgentTool::name(),
         MemoryAgentTool::name(),
         TokenUsageTool::name(),
         EnhancedTerminalTool::name(),
@@ -52,7 +50,6 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
     .into_iter()
 }
 
-pub use chat_history_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
