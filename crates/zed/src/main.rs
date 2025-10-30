@@ -587,7 +587,7 @@ pub fn main() {
             // Uses default (FastEmbed local) configuration; override via settings or extend here if needed.
             use chat_history_tools::init::init_chat_history_tools;
             if let Ok(chat_history_handles) = init_chat_history_tools(Default::default()) {
-                assistant_tools::context_management::install_chat_history_adapter(&chat_history_handles);
+                assistant_tools::install_chat_history_adapter(&chat_history_handles);
                 // Log effective embedding model asynchronously (tokio mutex requires await).
                 cx.spawn({
                     let store = chat_history_handles.store.clone();

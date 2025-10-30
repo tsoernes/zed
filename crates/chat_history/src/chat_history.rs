@@ -224,7 +224,7 @@ pub struct ChatId(pub String);
 pub struct MessageId(pub String);
 
 /// Role of a message inside a chat.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -516,7 +516,7 @@ pub enum EmbeddingBackendKind {
     AzureOpenAI { api_key: String, endpoint: String, model: String },
 }
 /// Retrieval strategy for search / RAG.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RetrievalMode {
     Bm25,
     Embedding,

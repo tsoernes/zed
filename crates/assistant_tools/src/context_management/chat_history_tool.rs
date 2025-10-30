@@ -41,7 +41,7 @@ fn adapter() -> Result<Arc<ChatHistoryTools>> {
 /// High‑level operations exposed by the `chat_history` tool.
 ///
 /// Each variant maps directly to a JSON method on `ChatHistoryTools`.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatHistoryOperation {
     /// Append a message to a chat (creates chat if missing).
@@ -150,7 +150,7 @@ pub enum ChatHistoryOperation {
 }
 
 /// Tool input envelope.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChatHistoryToolInput {
     pub operation: ChatHistoryOperation,
 }

@@ -53,7 +53,7 @@ impl Tool for MemoryTool {
 
     fn needs_confirmation(
         &self,
-        input: &serde_json::Value,
+        _input: &serde_json::Value,
         _project: &Entity<Project>,
         _cx: &App,
     ) -> bool {

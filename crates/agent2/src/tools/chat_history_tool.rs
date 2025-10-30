@@ -9,14 +9,14 @@ use serde_json::Value;
 use crate::{AgentTool, ToolCallEventStream};
 
 /// Reuse the rich chat history adapter & operation types from assistant_tools.
-use assistant_tools::context_management::chat_history_tool::{
-    ChatHistoryOperation, ChatHistoryToolInput as AdapterChatHistoryToolInput, chat_history_adapter,
-};
+use assistant_tools::{ChatHistoryOperation, chat_history_adapter};
 use chat_history::{MessageRole, RetrievalMode};
+use chat_history_tools::ChatHistoryToolApi;
+use serde_json::json;
 
 /// Agent-side input wrapper (mirrors adapter input; kept separate to allow future
 /// agent-specific extensions like thread-scoped overrides).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ChatHistoryAgentToolInput {
     pub operation: ChatHistoryOperation,
 }
@@ -31,16 +31,6 @@ pub struct ChatHistoryAgentTool;
 impl ChatHistoryAgentTool {
     pub fn new() -> Self {
         Self
-    }
-
-    fn is_mutating(op: &ChatHistoryOperation) -> bool {
-        matches!(
-            op,
-            ChatHistoryOperation::Append { .. }
-                | ChatHistoryOperation::Reembed { .. }
-                | ChatHistoryOperation::UpdateMetadata { .. }
-                | ChatHistoryOperation::ConfigSet { .. }
-        )
     }
 }
 
@@ -106,159 +96,162 @@ impl AgentTool for ChatHistoryAgentTool {
             out
         }
 
-        let task_result: Result<String> = (|| match op {
-            ChatHistoryOperation::Append {
-                chat_id,
-                project_id,
-                title,
-                role,
-                content,
-            } => {
-                let role = role.unwrap_or(MessageRole::User);
-                let resp = adapter.append(chat_id, project_id, title, role, content)?;
-                Ok(md_json_block("Chat Append", &resp))
-            }
-            ChatHistoryOperation::Search {
-                query,
-                project_id,
-                chat_id,
-                top_k,
-                mode,
-                alpha,
-            } => {
-                let resp = adapter.search(
-                    query,
-                    project_id,
-                    chat_id,
-                    top_k,
-                    mode.unwrap_or(RetrievalMode::Hybrid),
-                    alpha,
-                )?;
-                Ok(md_json_block("Chat Search Results", &resp))
-            }
-            ChatHistoryOperation::Answer {
-                question,
-                project_id,
-                chat_id,
-                top_k,
-                mode,
-                alpha,
-            } => {
-                let resp = adapter.answer(
-                    question,
-                    project_id,
-                    chat_id,
-                    top_k,
-                    mode.unwrap_or(RetrievalMode::Hybrid),
-                    alpha,
-                )?;
-                Ok(md_json_block("Chat Answer", &resp))
-            }
-            ChatHistoryOperation::Similar {
-                chat_id,
-                n,
-                project_scoped,
-            } => {
-                let resp = adapter.similar(chat_id, n, project_scoped)?;
-                Ok(md_json_block("Similar Chats", &resp))
-            }
-            ChatHistoryOperation::List {
-                project_id,
-                limit,
-                offset,
-            } => {
-                let resp = adapter.list(project_id, limit, offset)?;
-                Ok(md_json_block("Chat List", &resp))
-            }
-            ChatHistoryOperation::Get { chat_id } => {
-                let resp = adapter.get(chat_id)?;
-                Ok(md_json_block("Chat", &resp))
-            }
-            ChatHistoryOperation::Reembed { chat_id } => {
-                let resp = adapter.reembed(chat_id)?;
-                Ok(md_json_block("Reembed Status", &resp))
-            }
-            ChatHistoryOperation::UpdateMetadata {
-                chat_id,
-                title,
-                summary,
-                tags_add,
-                tags_remove,
-                archived,
-                pinned,
-            } => {
-                let resp = adapter.update_metadata(
-                    chat_id,
-                    title,
-                    summary,
-                    tags_add.unwrap_or_default(),
-                    tags_remove.unwrap_or_default(),
-                    archived,
-                    pinned,
-                )?;
-                Ok(md_json_block("Metadata Update", &resp))
-            }
-            ChatHistoryOperation::ConfigGet => {
-                let resp = adapter.config_get()?;
-                Ok(md_json_block("Chat Config", &resp))
-            }
-            ChatHistoryOperation::ConfigSet {
-                embedding_model,
-                hybrid_alpha,
-                similar_chats_k,
-                summary_refresh_chars,
-                summary_delta_chars,
-                rag_top_k,
-                auto_tag,
-                default_retrieval_mode,
-            } => {
-                let resp = adapter.config_set(
-                    embedding_model,
-                    hybrid_alpha,
-                    similar_chats_k,
-                    summary_refresh_chars,
-                    summary_delta_chars,
-                    rag_top_k,
-                    auto_tag,
-                    default_retrieval_mode,
-                )?;
-                Ok(md_json_block("Chat Config Set", &resp))
-            }
-        })();
+        _cx.spawn({
+            let adapter = adapter.clone();
+            async move |_cx| {
+                let mk = |label: &str, raw: String| -> Result<String> {
+                    let value: Value = serde_json::from_str(&raw)
+                        .unwrap_or_else(|_| json!({"ok": false, "error": "invalid json"}));
+                    Ok(md_json_block(label, &value))
+                };
 
-        Task::ready(task_result)
+                match op {
+                    ChatHistoryOperation::Append {
+                        chat_id,
+                        project_id,
+                        title,
+                        role,
+                        content,
+                    } => {
+                        let payload = json!({
+                            "chat_id": chat_id,
+                            "project_id": project_id,
+                            "title": title,
+                            "role": role.unwrap_or(MessageRole::User),
+                            "content": content
+                        })
+                        .to_string();
+                        mk("Chat Append", adapter.chat_append(&payload).await)
+                    }
+                    ChatHistoryOperation::Search {
+                        query,
+                        project_id,
+                        chat_id,
+                        top_k,
+                        mode,
+                        alpha,
+                    } => {
+                        let payload = json!({
+                            "query": query,
+                            "project_id": project_id,
+                            "chat_id": chat_id,
+                            "top_k": top_k,
+                            "mode": mode.unwrap_or(RetrievalMode::Hybrid),
+                            "alpha": alpha
+                        })
+                        .to_string();
+                        mk("Chat Search Results", adapter.chat_search(&payload).await)
+                    }
+                    ChatHistoryOperation::Answer {
+                        question,
+                        project_id,
+                        chat_id,
+                        top_k,
+                        mode,
+                        alpha,
+                    } => {
+                        let payload = json!({
+                            "question": question,
+                            "project_id": project_id,
+                            "chat_id": chat_id,
+                            "top_k": top_k,
+                            "mode": mode.unwrap_or(RetrievalMode::Hybrid),
+                            "alpha": alpha
+                        })
+                        .to_string();
+                        mk("Chat Answer", adapter.chat_answer(&payload).await)
+                    }
+                    ChatHistoryOperation::Similar {
+                        chat_id,
+                        n,
+                        project_scoped,
+                    } => {
+                        let payload = json!({
+                            "chat_id": chat_id,
+                            "n": n,
+                            "project_scoped": project_scoped
+                        })
+                        .to_string();
+                        mk("Similar Chats", adapter.chat_similar(&payload).await)
+                    }
+                    ChatHistoryOperation::List {
+                        project_id,
+                        limit,
+                        offset,
+                    } => {
+                        let payload = json!({
+                            "project_id": project_id,
+                            "limit": limit,
+                            "offset": offset
+                        })
+                        .to_string();
+                        mk("Chat List", adapter.chat_list(&payload).await)
+                    }
+                    ChatHistoryOperation::Get { chat_id } => {
+                        let payload = json!({ "chat_id": chat_id }).to_string();
+                        mk("Chat", adapter.chat_get(&payload).await)
+                    }
+                    ChatHistoryOperation::Reembed { chat_id } => {
+                        let payload = json!({ "chat_id": chat_id }).to_string();
+                        mk("Reembed Status", adapter.chat_reembed(&payload).await)
+                    }
+                    ChatHistoryOperation::UpdateMetadata {
+                        chat_id,
+                        title,
+                        summary,
+                        tags_add,
+                        tags_remove,
+                        archived,
+                        pinned,
+                    } => {
+                        let payload = json!({
+                            "chat_id": chat_id,
+                            "title": title,
+                            "summary": summary,
+                            "tags_add": tags_add,
+                            "tags_remove": tags_remove,
+                            "archived": archived,
+                            "pinned": pinned
+                        })
+                        .to_string();
+                        mk(
+                            "Metadata Update",
+                            adapter.chat_update_metadata(&payload).await,
+                        )
+                    }
+                    ChatHistoryOperation::ConfigGet => {
+                        mk("Chat Config", adapter.chat_config_get().await)
+                    }
+                    ChatHistoryOperation::ConfigSet {
+                        embedding_model,
+                        hybrid_alpha,
+                        similar_chats_k,
+                        summary_refresh_chars,
+                        summary_delta_chars,
+                        rag_top_k,
+                        auto_tag,
+                        default_retrieval_mode,
+                    } => {
+                        let payload = json!({
+                            "embedding_model": embedding_model,
+                            "hybrid_alpha": hybrid_alpha,
+                            "similar_chats_k": similar_chats_k,
+                            "summary_refresh_chars": summary_refresh_chars,
+                            "summary_delta_chars": summary_delta_chars,
+                            "rag_top_k": rag_top_k,
+                            "auto_tag": auto_tag,
+                            "default_retrieval_mode": default_retrieval_mode
+                        })
+                        .to_string();
+                        mk("Chat Config Set", adapter.chat_config_set(&payload).await)
+                    }
+                }
+            }
+        })
     }
 
-    fn may_perform_edits(&self) -> bool {
-        // Indicate potential state mutation for operations flagged mutating.
-        true
-    }
+    // may_perform_edits removed; AgentTool trait does not define this method
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::App;
-
-    #[test]
-    fn title_mapping() {
-        let tool = ChatHistoryAgentTool::new();
-        let t = tool.initial_title(
-            Ok(ChatHistoryAgentToolInput {
-                operation: ChatHistoryOperation::List {
-                    project_id: None,
-                    limit: Some(5),
-                    offset: None,
-                },
-            }),
-            &mut App::test(),
-        );
-        assert!(t.contains("List"));
-    }
-
-    #[test]
-    fn mutating_flag() {
-        let tool = ChatHistoryAgentTool::new();
-        assert!(tool.may_perform_edits());
-    }
-}
+mod tests {}

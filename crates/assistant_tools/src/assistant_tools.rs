@@ -26,7 +26,7 @@ mod thinking_tool;
 mod ui;
 mod web_search_tool;
 
-use assistant_tool::ToolRegistry;
+use assistant_tool::{Tool, ToolRegistry};
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
@@ -48,8 +48,9 @@ use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use context_management::{
-    ChatHistoryTool, ChatHistoryToolInput, ListHistoryTool, ListHistoryToolInput, MemoryOperation,
-    MemoryTool, MemoryToolInput,
+    chat_history_adapter, install_chat_history_adapter, ChatHistoryOperation, ChatHistoryTool,
+    ChatHistoryToolInput, ListHistoryTool, ListHistoryToolInput, MemoryOperation, MemoryTool,
+    MemoryToolInput,
 };
 pub use detect_binaries_tool::DetectBinariesTool;
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};

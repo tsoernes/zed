@@ -27,6 +27,7 @@ once_cell = "*"
 http = "*"
 reqwest = { version = "*", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = { version = "*", features = ["raw_value"] }
+schemars = { version = "1.0", features = ["derive"] }
 
 # Workspace internal crates (path dependencies use workspace resolution).
 collections = { path = "../collections" }

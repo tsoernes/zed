@@ -1112,7 +1112,7 @@ impl Thread {
                 )
             })??;
 
-            Ok(())
+            Ok::<(), anyhow::Error>(())
         })
         .detach();
 
@@ -2470,6 +2470,10 @@ impl Thread {
                 full_request.messages.len(),
                 model.max_token_count()
             );
+            let entity = match this.upgrade() {
+                Some(e) => e,
+                None => return Err(anyhow!("thread dropped")),
+            };
 
             // Decide if we need multi-pass splitting.
             let need_split = {
@@ -2505,7 +2509,7 @@ impl Thread {
                     if let Some(p) = prompt_msg.clone() {
                         req.messages.push(p);
                     }
-                    run_summary_request(this, &model, req, cx)?
+                    run_summary_request(&entity, &model, req, cx).await?
                 } else {
                     let max_tokens = model.max_token_count() as u64;
                     let overlap = (all.len() / 20).clamp(1, 4);
@@ -2606,12 +2610,12 @@ impl Thread {
                         chunk_reqs.push(build_chunk_request(&all[*s..*e]));
                     }
 
-                    let partial_futs = chunk_reqs
-                        .into_iter()
-                        .map(|req| async { run_summary_request(this, &model, req, cx).await.ok() });
-
-                    let partial_results: Vec<Option<String>> =
-                        futures::future::join_all(partial_futs).await;
+                    // Execute chunk summaries sequentially to avoid moving cx into multiple futures.
+                    let mut partial_results: Vec<Option<String>> = Vec::with_capacity(chunk_reqs.len());
+                    for req in chunk_reqs {
+                        let res = run_summary_request(&entity, &model, req, cx).await.ok();
+                        partial_results.push(res);
+                    }
                     let mut partial_summaries: Vec<String> = Vec::new();
                     for (i, opt) in partial_results.into_iter().enumerate() {
                         let len = opt.as_ref().map(|s| s.len()).unwrap_or(0);
@@ -2677,7 +2681,7 @@ impl Thread {
                         };
 
                         if merge_fits {
-                            let merged = run_summary_request(this, &model, merge_req, cx)?;
+                            let merged = run_summary_request(&entity, &model, merge_req, cx).await?;
                             log::debug!(
                                 "agent2 summary: hierarchical merge success pass={} final_len={}",
                                 pass,
@@ -2686,7 +2690,7 @@ impl Thread {
                             break merged;
                         } else {
                             if layer.len() == 1 {
-                                let merged = run_summary_request(this, &model, merge_req, cx)?;
+                                let merged = run_summary_request(&entity, &model, merge_req, cx).await?;
                                 break merged;
                             }
                             let mut next_layer = Vec::new();
@@ -2711,7 +2715,7 @@ impl Thread {
                     }
                 }
             } else {
-                run_summary_request(this, &model, full_request.clone(), cx)?
+                run_summary_request(&entity, &model, full_request.clone(), cx).await?
             };
 
             log::trace!("Setting summary: {}", final_summary);

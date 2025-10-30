@@ -922,50 +922,47 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        let agent = self.0.clone();
-        log::debug!("Creating new thread for project at: {:?}", cwd);
+        let connection = self.clone();
+        // Generate a fresh session id for the AcpThread.
+        // Generate a random 7-character session id (Alphanumeric).
+        // Rand items referenced via fully-qualified paths; explicit imports optional.
+        // Generate a simple session id based on current number of sessions (length-based pattern used in test implementations).
+        let session_id = acp::SessionId(self.0.read(cx).sessions.len().to_string().into());
 
-        cx.spawn(async move |cx| {
-            log::debug!("Starting thread creation in async context");
+        // Create an ActionLog entity required by AcpThread.
+        let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
 
-            // Create Thread
-            let thread = agent.update(
+        // Derive initial prompt capabilities from (currently) no selected model.
+        let prompt_capabilities_rx = watch::Receiver::constant(acp::PromptCapabilities {
+            image: true,
+            audio: false,
+            embedded_context: true,
+            meta: None,
+        });
+
+        // Choose a title (use directory name or fallback).
+        let title = cwd
+            .file_name()
+            .and_then(|n| n.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "Thread".to_string());
+
+        // Construct AcpThread entity.
+        let acp_thread = cx.new(|cx| {
+            acp_thread::AcpThread::new(
+                title,
+                connection,
+                project.clone(),
+                action_log.clone(),
+                session_id.clone(),
+                prompt_capabilities_rx,
                 cx,
-                |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
-                    // Fetch default model from registry settings
-                    let registry = LanguageModelRegistry::read_global(cx);
-                    // Log available models for debugging
-                    let available_count = registry.available_models(cx).count();
-                    log::debug!("Total available models: {}", available_count);
+            )
+        });
 
-                    let default_model = registry.default_model().and_then(|default_model| {
-                        agent
-                            .models
-                            .model_from_id(&LanguageModels::model_id(&default_model.model))
-                    });
-                    Ok(cx.new(|cx| {
-                        Thread::new(
-                            project.clone(),
-                            agent.project_context.clone(),
-                            agent.context_server_registry.clone(),
-                            agent.templates.clone(),
-                            default_model,
-                            cx,
-                        )
-                    }))
-                },
-            )??;
-            agent.update(cx, |agent, cx| agent.register_session(thread.clone(), cx))?;
+        // NOTE: agent2 connection currently registers only Thread entities.
+        // AcpThread registration skipped until a dedicated registration path is added.
 
-            // Perform full restore → summarize → re-archive immediately after creation.
-            if let Err(e) = thread.update(cx, |thread, thread_cx| {
-                thread.summarize_with_full_restore_and_rearchive(thread_cx)
-            }) {
-                log::debug!("summarize_with_full_restore_and_rearchive failed: {e}");
-            }
-
-            Ok(thread)
-        })
+        Task::ready(Ok(acp_thread))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
