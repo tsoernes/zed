@@ -752,7 +752,7 @@ impl ChatStore {
             chat_vector: None,
         };
         if let Some(db_arc) = &self.db {
-            let db_lock = db_arc
+            let mut db_lock = db_arc
                 .lock()
                 .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
             let db = &mut *db_lock;
@@ -1045,7 +1045,7 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let db_lock = db_mutex
+        let mut db_lock = db_mutex
             .lock()
             .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
         let db = &mut *db_lock;
@@ -1078,7 +1078,7 @@ impl ChatStore {
             .db
             .as_ref()
             .ok_or_else(|| anyhow!("chat persistence unavailable"))?;
-        let mut db = db_mutex
+        let db = db_mutex
             .lock()
             .map_err(|_| anyhow!("chat history db mutex poisoned"))?;
         // Fetch current metadata (messages not needed here, ignore second tuple element)
