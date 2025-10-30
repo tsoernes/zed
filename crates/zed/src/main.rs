@@ -585,25 +585,28 @@ pub fn main() {
         {
             // Initialize chat history tools before registering assistant tools so the adapter is available.
             // Uses default (FastEmbed local) configuration; override via settings or extend here if needed.
-            use chat_history_tools::init::init_chat_history_tools;
-            if let Ok(chat_history_handles) = init_chat_history_tools(Default::default()) {
-                assistant_tools::install_chat_history_adapter(&chat_history_handles);
-                // Log effective embedding model asynchronously (tokio mutex requires await).
-                cx.spawn({
-                    let store = chat_history_handles.store.clone();
-                    async move |_cx| {
-                        let guard = store.lock().await;
-                        ::log::info!(
-                            "ChatHistoryTools initialized (embedding_model={})",
-                            guard.config().embedding_model
-                        );
+            use chat_history_tools::init::{init_chat_history_tools_async, ChatHistoryInitOptions};
+            // Async initialization so that persistence (db_conn) can be added later without blocking startup.
+            cx.spawn({
+                async move |_cx| {
+                    match init_chat_history_tools_async(ChatHistoryInitOptions::default()).await {
+                        Ok(chat_history_handles) => {
+                            assistant_tools::install_chat_history_adapter(&chat_history_handles);
+                            let store = chat_history_handles.store.clone();
+                            let guard = store.lock().await;
+                            ::log::info!(
+                                "ChatHistoryTools initialized (embedding_model={})",
+                                guard.config().embedding_model
+                            );
+                        }
+                        Err(err) => {
+                            ::log::warn!(
+                                "ChatHistoryTools async initialization failed; chat_history tool will be unavailable: {err}"
+                            );
+                        }
                     }
-                }).detach();
-            } else {
-                ::log::warn!(
-                    "ChatHistoryTools initialization failed; chat_history tool will be unavailable"
-                );
-            }
+                }
+            }).detach();
 
             // Migration: ensure 'chat_history' tool enabled for existing profiles if missing.
             // This only inserts the boolean flag when absent; it does not alter existing values.
