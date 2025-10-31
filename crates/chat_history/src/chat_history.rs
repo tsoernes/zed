@@ -1271,6 +1271,9 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 #[derive(Clone)]
 pub struct SharedChatStore(Arc<Mutex<ChatStore>>);
 
+#[cfg(feature = "chat-persistence")]
+pub mod chat_history_db;
+
 impl SharedChatStore {
     pub fn new(store: ChatStore) -> Self {
         Self(Arc::new(Mutex::new(store)))

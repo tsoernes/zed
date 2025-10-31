@@ -43,6 +43,7 @@ fastembed = { version = "5.2.0", optional = true, features = ["hf-hub-native-tls
 async-openai = { version = "0.20", optional = true }
 reqwest = { version = "0.11", optional = true, default-features = false, features = ["json","rustls-tls"] }
 rayon = { version = "1.8", optional = true }   # Used for parallel cosine similarity / reembed passes.
+db = { path = "../db", optional = true }
 # NOTE: Additional vendor SDKs (Azure) can be layered via reqwest + custom signing; no dedicated crate mandatory.
 
 [features]
@@ -72,6 +73,7 @@ rag = ["retrieval-hybrid", "async-openai", "tokio"]
 parallel = ["rayon"]
 
 # Convenience umbrella enabling everything (avoids hidden surprises for power users).
+chat-persistence = ["db"]          # Enables SQLite persistence via internal db crate.
 full = [
   "runtime-tokio",
   "embedding-fastembed",
