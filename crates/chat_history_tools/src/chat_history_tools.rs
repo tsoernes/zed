@@ -582,7 +582,12 @@ mod tests {
             )
             .await;
         let cfg = adapter.chat_config_get().await;
-        assert!(cfg.contains("\"hybrid_alpha\":0.7"));
+        let cfg_json: serde_json::Value = serde_json::from_str(&cfg).expect("valid json");
+        assert!(
+            (cfg_json["config"]["hybrid_alpha"].as_f64().unwrap() - 0.7).abs() < 1e-9,
+            "expected hybrid_alpha 0.7, got {:?}",
+            cfg_json["config"]["hybrid_alpha"]
+        );
         assert!(cfg.contains("\"api_key\":\"****\""));
     }
 
@@ -601,6 +606,12 @@ mod tests {
             .await;
         assert!(upd.contains("Latency Discussion"));
         let listed = adapter.chat_list(r#"{"limit":10}"#).await;
-        assert!(listed.contains("Latency Discussion"));
+        let fetched = adapter
+            .chat_get(&format!(r#"{{"chat_id":"{chat_id}"}}"#))
+            .await;
+        assert!(
+            fetched.contains("Latency Discussion"),
+            "updated title not reflected in chat_get response: {fetched}"
+        );
     }
 }
