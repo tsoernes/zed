@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
+use log::error;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1282,9 +1283,11 @@ impl ChatStore {
         }
         let snap = Snapshot { version: 1, chats };
         if let Ok(json) = serde_json::to_string(&snap) {
-            if let Err(e) = db::smol::block_on(
-                db::kvp::KEY_VALUE_STORE.write_kvp("chat_history_snapshot_v1".to_string(), json),
-            ) {
+            if let Err(e) = db::smol::block_on(async {
+                db::kvp::KEY_VALUE_STORE
+                    .write_kvp("chat_history_snapshot_v1".to_string(), json)
+                    .await
+            }) {
                 error!("chat_history: snapshot write failed: {e:?}");
             }
         }

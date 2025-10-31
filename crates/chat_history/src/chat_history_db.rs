@@ -134,13 +134,21 @@ pub fn persist_after_metadata_update(store: &SharedChatStore) {
 
 /// Read a value from the global key‑value store (blocking).
 fn read_kvp(key: &str) -> Result<Option<String>> {
-    db::smol::block_on(db::kvp::KEY_VALUE_STORE.read_kvp(key)).map_err(|e| anyhow!(e))
+    // read_kvp is synchronous; do not block_on a non-future.
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(key)
+        .map_err(|e| anyhow!(e))
 }
 
 /// Write a value to the global key‑value store (blocking).
 fn write_kvp(key: &str, value: String) -> Result<()> {
-    db::smol::block_on(db::kvp::KEY_VALUE_STORE.write_kvp(key.to_string(), value))
-        .map_err(|e| anyhow!(e))
+    // Use an explicit async block to ensure future is awaited in a predictable scope.
+    db::smol::block_on(async {
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(key.to_string(), value)
+            .await
+    })
+    .map_err(|e| anyhow!(e))
 }
 
 #[cfg(test)]
