@@ -585,14 +585,73 @@ pub fn main() {
         {
             // Initialize chat history tools before registering assistant tools so the adapter is available.
             // Uses default (FastEmbed local) configuration; override via settings or extend here if needed.
-            use chat_history_tools::init::{init_chat_history_tools_async, ChatHistoryInitOptions};
+            use chat_history_tools::{
+                init::{init_chat_history_tools_async, ChatHistoryInitOptions},
+                migrations::run_chat_history_migrations,
+            };
+            use sea_orm::Database;
+            use std::path::PathBuf;
+            use paths;
             // Async initialization so that persistence (db_conn) can be added later without blocking startup.
             cx.spawn({
                 let app_state = app_state.clone();
                 async move |_cx| {
-                    // TODO: provide a real DatabaseConnection (db_conn) once collab AppState handle is accessible here.
+                    // Use application data directory for persistent chat history storage.
+                    let db_conn = {
+                        let chat_history_dir = paths::database_dir().join("chat_history");
+                        if std::fs::create_dir_all(&chat_history_dir).is_err() {
+                            ::log::warn!("failed to create chat history directory; using in-memory store");
+                            None
+                        } else {
+                            let db_path = chat_history_dir.join("chat_history.db");
+                            let url = format!("sqlite://{}", db_path.to_string_lossy());
+                            let conn_result = {
+                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                    let _guard = handle.enter();
+                                    Database::connect(url).await
+                                } else {
+                                    // Fallback: build a lightweight runtime to perform the connection when no handle is present.
+                                    tokio::runtime::Builder::new_current_thread()
+                                        .enable_all()
+                                        .build()
+                                        .map_err(|e| sea_orm::DbErr::Conn(format!("failed to build runtime: {e}")))
+                                        .and_then(|rt| rt.block_on(async { Database::connect(url).await }))
+                                }
+                            };
+                            match conn_result {
+                                Ok(conn) => {
+                                    let mig_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                                        .join("crates")
+                                        .join("chat_history_tools")
+                                        .join("migrations");
+                                    match run_chat_history_migrations(&conn, &mig_dir).await {
+                                        Ok(applied) => {
+                                            for (version, ms) in applied {
+                                                ::log::info!(
+                                                    "Applied chat history migration {} ({} ms)",
+                                                    version,
+                                                    ms
+                                                );
+                                            }
+                                            Some(conn)
+                                        }
+                                        Err(err) => {
+                                            ::log::warn!("chat history migrations failed; using in-memory store: {err}");
+                                            None
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    ::log::warn!("failed to connect chat history database; using in-memory store: {err}");
+                                    None
+                                }
+                            }
+                        }
+                    };
+                    let persistence_enabled = db_conn.is_some();
                     let options = ChatHistoryInitOptions {
-                        db_conn: None,
+                        db_conn,
+                        rebuild_index: true, // Set false if startup performance becomes an issue.
                         ..Default::default()
                     };
                     match init_chat_history_tools_async(options).await {
@@ -601,8 +660,9 @@ pub fn main() {
                             let store = chat_history_handles.store.clone();
                             let guard = store.lock().await;
                             ::log::info!(
-                                "ChatHistoryTools initialized (embedding_model={})",
-                                guard.config().embedding_model
+                                "ChatHistoryTools initialized (embedding_model={}, persistence={})",
+                                guard.config().embedding_model,
+                                if persistence_enabled { "enabled" } else { "in-memory" }
                             );
                         }
                         Err(err) => {
