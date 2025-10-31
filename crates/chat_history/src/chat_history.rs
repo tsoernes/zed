@@ -1278,6 +1278,55 @@ impl SharedChatStore {
     pub fn lock(&self) -> parking_lot::MutexGuard<'_, ChatStore> {
         self.0.lock()
     }
+
+    /// (Persistence scaffold) Save all chats + messages using provided callback.
+    /// No-op unless the `chat-persistence` feature is enabled.
+    #[cfg(feature = "chat-persistence")]
+    pub fn persist_all<F>(&self, mut save: F) -> anyhow::Result<()>
+    where
+        F: FnMut(&ChatMetadata, &ChatMessage) -> anyhow::Result<()>,
+    {
+        let guard = self.0.lock();
+        for meta in guard.chats.values() {
+            // Emit a synthetic zero-length message save to guarantee metadata row exists first if desired.
+            save(
+                meta,
+                &ChatMessage {
+                    message_id: MessageId::new("META"),
+                    chat_id: meta.chat_id.clone(),
+                    role: MessageRole::User,
+                    content: String::new(),
+                    created_at: meta.updated_at,
+                    token_estimate: 0,
+                    digest: String::new(),
+                    vector: None,
+                },
+            )?;
+            if let Some(msgs) = guard.messages.get(&meta.chat_id) {
+                for m in msgs {
+                    save(meta, m)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// (Persistence scaffold) Load chats/messages from an iterator of (metadata, messages).
+    /// Existing in-memory data is replaced.
+    #[cfg(feature = "chat-persistence")]
+    pub fn load_from<I, M>(&self, iter: I)
+    where
+        I: IntoIterator<Item = (ChatMetadata, Vec<ChatMessage>)>,
+    {
+        let mut guard = self.0.lock();
+        guard.chats.clear();
+        guard.messages.clear();
+        for (meta, msgs) in iter {
+            let cid = meta.chat_id.clone();
+            guard.chats.insert(cid.clone(), meta);
+            guard.messages.insert(cid.clone(), msgs);
+        }
+    }
 }
 
 /* ---- Tests (focused on core invariants) ---- */
