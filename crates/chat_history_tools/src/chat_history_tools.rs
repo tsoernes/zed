@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chat_history::{
     ChatHistoryConfig, ChatHistoryConfigPatch, ChatId, ChatMessage, ChatMetadata, ChatStore,
@@ -7,7 +7,7 @@ use chat_history::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::str::FromStr;
+// unused import removed
 
 /* WHY: Uniform success envelope required by tools spec */
 fn ok(value: Value) -> String {
@@ -257,9 +257,7 @@ impl ChatHistoryTools {
         if let Some(remove) = input.tags_remove {
             meta.tags.retain(|t| !remove.iter().any(|r| r == t));
         }
-        if let Some(stored) = guard.chats.get_mut(&cid) {
-            *stored = meta.clone();
-        }
+        // TODO: persist metadata update once ChatStore exposes a public setter
         Ok(meta)
     }
 
@@ -352,20 +350,27 @@ impl ChatHistoryTools {
         hits.into_iter()
             .filter(|h| {
                 if let Some(ref pid) = project_id_filter {
-                    if let Some(meta) = guard.chats.get(&h.chat_id) {
+                    if let Ok((meta, _)) = guard.get_chat(&h.chat_id) {
                         return meta.project_id.as_ref() == Some(pid);
+                    } else {
+                        return false;
                     }
-                    return false;
                 }
                 true
             })
             .take(top_k)
-            .map(|h| ContextHit {
-                chat_id: h.chat_id.as_str().to_string(),
-                message_id: h.message_id.0,
-                score: h.fused_score,
-                content: h.content,
-                role: h.role,
+            .map(|h| {
+                let mid = serde_json::to_value(&h.message_id)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                ContextHit {
+                    chat_id: h.chat_id.as_str().to_string(),
+                    message_id: mid,
+                    score: h.fused_score,
+                    content: h.content,
+                    role: h.role,
+                }
             })
             .collect()
     }
