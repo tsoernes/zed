@@ -163,10 +163,9 @@ pub enum ChatHistoryError {
 pub type ChatResult<T> = std::result::Result<T, ChatHistoryError>;
 
 /* WHY: Trait kept minimal to ease stubbing and replacement; async for potential remote calls. */
-#[async_trait::async_trait]
 pub trait EmbeddingBackend: Send + Sync {
     fn model_name(&self) -> &str;
-    async fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>>;
+    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>>;
 }
 
 /* WHY: FastEmbed stub placeholder; actual model loading omitted for reconstruction. */
@@ -185,24 +184,26 @@ impl FastEmbedBackend {
 }
 
 #[cfg(feature = "embedding-fastembed")]
-#[async_trait::async_trait]
 impl EmbeddingBackend for FastEmbedBackend {
     fn model_name(&self) -> &str {
         &self.model
     }
-    async fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
-        // Placeholder deterministic embedding: normalized character frequency vector (a-z).
+    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut outputs = Vec::with_capacity(batch.len());
         for text in batch {
             let mut counts = [0_f32; 26];
             let mut total = 0_f32;
             for b in text.bytes() {
-                if (b'a'..=b'z').contains(&b) {
-                    counts[(b - b'a') as usize] += 1.0;
-                    total += 1.0;
-                } else if (b'A'..=b'Z').contains(&b) {
-                    counts[(b - b'A') as usize] += 1.0;
-                    total += 1.0;
+                match b {
+                    b'a'..=b'z' => {
+                        counts[(b - b'a') as usize] += 1.0;
+                        total += 1.0;
+                    }
+                    b'A'..=b'Z' => {
+                        counts[(b - b'A') as usize] += 1.0;
+                        total += 1.0;
+                    }
+                    _ => {}
                 }
             }
             let mut v = counts.to_vec();
@@ -232,16 +233,13 @@ impl OpenAIEmbeddingBackend {
 }
 
 #[cfg(feature = "embedding-openai")]
-#[async_trait::async_trait]
 impl EmbeddingBackend for OpenAIEmbeddingBackend {
     fn model_name(&self) -> &str {
         &self.model
     }
-    async fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
-        // Placeholder until real client wired.
+    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
         let mut outputs = Vec::with_capacity(batch.len());
         for text in batch {
-            // Simple length scalar expanded to fixed width.
             let len = text.len() as f32;
             outputs.push(vec![len.sqrt()]);
         }
@@ -264,13 +262,11 @@ impl AzureOpenAIEmbeddingBackend {
 }
 
 #[cfg(feature = "embedding-azure")]
-#[async_trait::async_trait]
 impl EmbeddingBackend for AzureOpenAIEmbeddingBackend {
     fn model_name(&self) -> &str {
         &self.model
     }
-    async fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
-        // Placeholder similar to OpenAI stub.
+    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
         Ok(batch
             .iter()
             .map(|t| vec![(t.len() as f32).log2()])
@@ -545,10 +541,7 @@ impl ChatStore {
                 }
             }
         }
-        let rt_vecs = futures::executor::block_on(async {
-            // Synchronous blocking since store locked externally; migration to spawn would require releasing lock.
-            backend.embed(&texts).await
-        })?;
+        let rt_vecs = backend.embed(&texts)?;
 
         for ((cid, mid), vec) in msg_refs.into_iter().zip(rt_vecs.into_iter()) {
             if let Some(ms) = self.messages.get_mut(&cid) {
@@ -605,13 +598,9 @@ impl ChatStore {
     }
 
     pub fn list_chats(&self, offset: usize, limit: usize) -> Vec<ChatMetadata> {
-        self.chats
-            .values()
-            .sorted_by_key_desc(|c| c.updated_at)
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect()
+        let mut v: Vec<ChatMetadata> = self.chats.values().cloned().collect();
+        v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        v.into_iter().skip(offset).take(limit).collect()
     }
 
     pub fn get_chat(&self, chat_id: &ChatId) -> ChatResult<(ChatMetadata, Vec<ChatMessage>)> {
@@ -739,12 +728,12 @@ impl ChatStore {
             return Ok(Vec::new()); // degrade
         };
         // Quick textual embedding (blocking) for query
-        let query_vec =
-            futures::executor::block_on(async { backend.embed(&[query.to_string()]).await })
-                .map_err(|_| ChatHistoryError::EmbeddingUnavailable)?
-                .into_iter()
-                .next()
-                .unwrap_or_default();
+        let query_vec = backend
+            .embed(&[query.to_string()])
+            .map_err(|_| ChatHistoryError::EmbeddingUnavailable)?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
 
         // Enumerate candidate messages
         let sources: Box<dyn Iterator<Item = (&ChatId, &Vec<ChatMessage>)>> =
@@ -871,7 +860,8 @@ impl ChatStore {
         if all_texts.is_empty() {
             return Ok(());
         }
-        let vecs = futures::executor::block_on(async { backend.embed(&all_texts).await })
+        let vecs = backend
+            .embed(&all_texts)
             .map_err(|_| ChatHistoryError::EmbeddingUnavailable)?;
         for ((cid, mid), v) in mapping.into_iter().zip(vecs.into_iter()) {
             if let Some(msgs) = self.messages.get_mut(&cid) {
