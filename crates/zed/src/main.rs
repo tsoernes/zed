@@ -612,7 +612,7 @@ pub fn main() {
                                     Database::connect(url).await
                                 } else {
                                     ::log::warn!("Tokio handle unavailable; chat history persistence disabled");
-                                    Err(sea_orm::DbErr::Conn("tokio handle unavailable".into()))
+                                    Err(sea_orm::DbErr::Custom("tokio handle unavailable".to_string()))
                                 }
                             };
                             match conn_result {
