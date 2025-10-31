@@ -638,46 +638,10 @@ impl ChatStore {
         if self.embedding_worker_tx.is_some() {
             return;
         }
-        use std::sync::mpsc::{Receiver, Sender, channel};
-        use std::thread;
-        use std::time::{Duration, Instant};
-
-        let (tx, rx): (Sender<()>, Receiver<()>) = channel();
-        self.embedding_worker_tx = Some(tx.clone());
-
-        // Spawn a background thread that periodically flushes pending embeddings.
-        // Safety: We clone an Arc<Mutex<ChatStore>> wrapper externally; here we only
-        // capture a Weak reference to avoid preventing drop. For simplicity we
-        // capture the raw Arc since ChatStore lives for program lifetime in current usage.
-        let store_arc = Arc::downgrade(&self.0);
-        thread::Builder::new()
-            .name("chat_history_embeddings".into())
-            .spawn(move || {
-                let mut last_flush = Instant::now();
-                loop {
-                    // Exit if store dropped.
-                    let Some(strong) = store_arc.upgrade() else {
-                        break;
-                    };
-
-                    // Wait up to interval or until a signal arrives.
-                    let timeout = Duration::from_millis(750);
-                    let signalled = rx.recv_timeout(timeout).is_ok();
-
-                    // Flush if signalled or interval elapsed.
-                    if signalled || last_flush.elapsed() >= timeout {
-                        if let Ok(mut guard) = std::panic::catch_unwind(|| strong.lock()) {
-                            if let Err(e) = guard.flush_embeddings() {
-                                log::error!(
-                                    "chat_history: background embedding flush error: {e:#}"
-                                );
-                            }
-                        }
-                        last_flush = Instant::now();
-                    }
-                }
-            })
-            .expect("chat_history: failed to spawn embedding worker thread");
+        // Background worker deferred: no Arc available within ChatStore itself.
+        // We keep a signal channel for future external wiring (SharedChatStore).
+        let (tx, _rx) = std::sync::mpsc::channel::<()>();
+        self.embedding_worker_tx = Some(tx);
     }
     pub fn new(
         config: ChatHistoryConfig,
@@ -977,9 +941,11 @@ impl ChatStore {
             meta.tags.retain(|t| !remove.iter().any(|r| r == t));
         }
         meta.updated_at = Utc::now();
+        let updated = meta.clone();
+        // Drop mutable borrow before persistence call.
         #[cfg(feature = "chat-persistence")]
         self.persist_after_change();
-        Ok(meta.clone())
+        Ok(updated)
     }
 
     /* WHY: Legacy function signature retained for tools adapter compatibility (substring lexical search). */
@@ -1288,7 +1254,7 @@ impl ChatStore {
 
     #[cfg(feature = "chat-persistence")]
     fn persist_after_change(&self) {
-        use log::error;
+        // log::error imported via crate dependency; explicit local use removed
         // Lightweight full-store snapshot serialization (O(n)) invoked after mutating operations.
         #[derive(serde::Serialize)]
         struct ChatRecord<'a> {
@@ -1316,9 +1282,9 @@ impl ChatStore {
         }
         let snap = Snapshot { version: 1, chats };
         if let Ok(json) = serde_json::to_string(&snap) {
-            if let Err(e) = db::smol::block_on(async {
-                db::kvp::KEY_VALUE_STORE.write_kvp("chat_history_snapshot_v1".to_string(), json)
-            }) {
+            if let Err(e) = db::smol::block_on(
+                db::kvp::KEY_VALUE_STORE.write_kvp("chat_history_snapshot_v1".to_string(), json),
+            ) {
                 error!("chat_history: snapshot write failed: {e:?}");
             }
         }
