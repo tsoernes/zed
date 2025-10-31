@@ -557,35 +557,70 @@ impl ChatStore {
         if self.embedding_backend.is_some() {
             return;
         }
-        let _model = self.config.embedding_model.clone();
+        let model = self.config.embedding_model.trim().to_string();
 
+        // Precedence rules (from highest to lowest):
+        // 1. Explicit prefix "azure:" -> Azure backend (remainder optional deployment name)
+        // 2. Explicit prefix "openai:" -> OpenAI backend (remainder optional model name)
+        // 3. FastEmbed feature enabled -> local embedding
+        // 4. OpenAI feature enabled (env/config present) -> OpenAI
+        // 5. Azure feature enabled (env/config present) -> Azure
+        // 6. Fallback: leave None (lexical only)
+        //
+        // Prefix parsing keeps syntax simple and avoids additional config surfaces.
+        let parsed_prefix = model
+            .split_once(':')
+            .map(|(p, rest)| (p.to_lowercase(), rest.to_string()));
+
+        match parsed_prefix {
+            #[cfg(feature = "embedding-azure")]
+            Some((p, rest)) if p == "azure" => {
+                let backend_model = if rest.is_empty() { model.clone() } else { rest };
+                let be = AzureOpenAIEmbeddingBackend::new(backend_model);
+                self.embedding_backend = Some(Arc::new(be));
+                return;
+            }
+            #[cfg(feature = "embedding-openai")]
+            Some((p, rest)) if p == "openai" => {
+                let backend_model = if rest.is_empty() { model.clone() } else { rest };
+                let be = OpenAIEmbeddingBackend::new(backend_model);
+                self.embedding_backend = Some(Arc::new(be));
+                return;
+            }
+            _ => {}
+        }
+
+        // FastEmbed preferred when available and model does not explicitly request remote backends.
         #[cfg(feature = "embedding-fastembed")]
         {
-            // FastEmbed local backend attempt
-            let be = FastEmbedBackend::new(model.clone());
-            self.embedding_backend = Some(Arc::new(be));
-            return;
+            if parsed_prefix.is_none() {
+                let be = FastEmbedBackend::new(model.clone());
+                self.embedding_backend = Some(Arc::new(be));
+                return;
+            }
         }
 
-        #[cfg(all(not(feature = "embedding-fastembed"), feature = "embedding-openai"))]
+        // If fastembed not chosen but explicit remote prefix absent, prefer OpenAI next.
+        #[cfg(feature = "embedding-openai")]
         {
-            let be = OpenAIEmbeddingBackend::new(model.clone());
-            self.embedding_backend = Some(Arc::new(be));
-            return;
+            if self.embedding_backend.is_none() && parsed_prefix.is_none() {
+                let be = OpenAIEmbeddingBackend::new(model.clone());
+                self.embedding_backend = Some(Arc::new(be));
+                return;
+            }
         }
 
-        #[cfg(all(
-            not(feature = "embedding-fastembed"),
-            not(feature = "embedding-openai"),
-            feature = "embedding-azure"
-        ))]
+        // Finally Azure if still none.
+        #[cfg(feature = "embedding-azure")]
         {
-            let be = AzureOpenAIEmbeddingBackend::new(model.clone());
-            self.embedding_backend = Some(Arc::new(be));
-            return;
+            if self.embedding_backend.is_none() && parsed_prefix.is_none() {
+                let be = AzureOpenAIEmbeddingBackend::new(model.clone());
+                self.embedding_backend = Some(Arc::new(be));
+                return;
+            }
         }
 
-        // If no feature matched we leave backend None (lexical only).
+        // Fallback: leave None (lexical retrieval only).
     }
 
     /// Start (idempotently) a very simple background worker loop that
@@ -603,12 +638,46 @@ impl ChatStore {
         if self.embedding_worker_tx.is_some() {
             return;
         }
-        let (tx, _rx) = std::sync::mpsc::channel::<()>();
-        self.embedding_worker_tx = Some(tx);
-        // NOTE: Real background thread omitted to avoid unsafe self capture.
-        // Future implementation sketch:
-        //  - Accept a SharedChatStore handle instead (Arc<Mutex<ChatStore>>)
-        //  - Spawn thread: loop { wait for signal OR timeout; lock; flush_embeddings(); }
+        use std::sync::mpsc::{Receiver, Sender, channel};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let (tx, rx): (Sender<()>, Receiver<()>) = channel();
+        self.embedding_worker_tx = Some(tx.clone());
+
+        // Spawn a background thread that periodically flushes pending embeddings.
+        // Safety: We clone an Arc<Mutex<ChatStore>> wrapper externally; here we only
+        // capture a Weak reference to avoid preventing drop. For simplicity we
+        // capture the raw Arc since ChatStore lives for program lifetime in current usage.
+        let store_arc = Arc::downgrade(&self.0);
+        thread::Builder::new()
+            .name("chat_history_embeddings".into())
+            .spawn(move || {
+                let mut last_flush = Instant::now();
+                loop {
+                    // Exit if store dropped.
+                    let Some(strong) = store_arc.upgrade() else {
+                        break;
+                    };
+
+                    // Wait up to interval or until a signal arrives.
+                    let timeout = Duration::from_millis(750);
+                    let signalled = rx.recv_timeout(timeout).is_ok();
+
+                    // Flush if signalled or interval elapsed.
+                    if signalled || last_flush.elapsed() >= timeout {
+                        if let Ok(mut guard) = std::panic::catch_unwind(|| strong.lock()) {
+                            if let Err(e) = guard.flush_embeddings() {
+                                log::error!(
+                                    "chat_history: background embedding flush error: {e:#}"
+                                );
+                            }
+                        }
+                        last_flush = Instant::now();
+                    }
+                }
+            })
+            .expect("chat_history: failed to spawn embedding worker thread");
     }
     pub fn new(
         config: ChatHistoryConfig,
@@ -755,6 +824,8 @@ impl ChatStore {
             .ok_or_else(|| anyhow!("metadata missing after update"))?
             .clone();
 
+        #[cfg(feature = "chat-persistence")]
+        self.persist_after_change();
         Ok((meta_snapshot, msg))
     }
 
@@ -906,6 +977,8 @@ impl ChatStore {
             meta.tags.retain(|t| !remove.iter().any(|r| r == t));
         }
         meta.updated_at = Utc::now();
+        #[cfg(feature = "chat-persistence")]
+        self.persist_after_change();
         Ok(meta.clone())
     }
 
@@ -1211,6 +1284,44 @@ impl ChatStore {
 
     fn estimate_tokens(text: &str) -> usize {
         (text.len() / 4).max(1)
+    }
+
+    #[cfg(feature = "chat-persistence")]
+    fn persist_after_change(&self) {
+        use log::error;
+        // Lightweight full-store snapshot serialization (O(n)) invoked after mutating operations.
+        #[derive(serde::Serialize)]
+        struct ChatRecord<'a> {
+            metadata: &'a ChatMetadata,
+            messages: &'a [ChatMessage],
+        }
+        #[derive(serde::Serialize)]
+        struct Snapshot<'a> {
+            version: u32,
+            chats: Vec<ChatRecord<'a>>,
+        }
+        let mut chats = Vec::with_capacity(self.chats.len());
+        for meta in self.chats.values() {
+            if let Some(msgs) = self.messages.get(&meta.chat_id) {
+                chats.push(ChatRecord {
+                    metadata: meta,
+                    messages: msgs,
+                });
+            } else {
+                chats.push(ChatRecord {
+                    metadata: meta,
+                    messages: &[],
+                });
+            }
+        }
+        let snap = Snapshot { version: 1, chats };
+        if let Ok(json) = serde_json::to_string(&snap) {
+            if let Err(e) = db::smol::block_on(async {
+                db::kvp::KEY_VALUE_STORE.write_kvp("chat_history_snapshot_v1".to_string(), json)
+            }) {
+                error!("chat_history: snapshot write failed: {e:?}");
+            }
+        }
     }
 }
 
