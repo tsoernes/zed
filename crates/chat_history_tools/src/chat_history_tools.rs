@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use chat_history::{
     ChatHistoryConfig, ChatHistoryConfigPatch, ChatId, ChatMessage, ChatMetadata, ChatStore,
@@ -231,7 +231,7 @@ impl ChatHistoryTools {
     }
 
     fn do_update_metadata(&self, input: UpdateMetadataInput) -> Result<ChatMetadata> {
-        let mut guard = self.store.lock();
+        let guard = self.store.lock();
         let cid = ChatId::new(&input.chat_id);
         let (meta, _msgs) = guard.get_chat(&cid)?;
         let mut meta = meta;
@@ -360,13 +360,13 @@ impl ChatHistoryTools {
             })
             .take(top_k)
             .map(|h| {
-                let mid = serde_json::to_value(&h.message_id)
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+                let message_id = serde_json::to_value(&h.message_id)
+                    .ok()
+                    .and_then(|v| v.as_str().map(|s| s.to_string()))
+                    .unwrap_or_default();
                 ContextHit {
                     chat_id: h.chat_id.as_str().to_string(),
-                    message_id: mid,
+                    message_id,
                     score: h.fused_score,
                     content: h.content,
                     role: h.role,
@@ -417,13 +417,8 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             input.alpha,
         );
         let guard = self.store.lock();
-        let hits = guard.hybrid_search(
-            &input.query,
-            input.chat_id.as_ref().map(|c| &ChatId::new(c.clone())),
-            top_k,
-            mode,
-            alpha,
-        );
+        let chat_id_opt = input.chat_id.as_ref().map(|c| ChatId::new(c.clone()));
+        let hits = guard.hybrid_search(&input.query, chat_id_opt.as_ref(), top_k, mode, alpha);
         drop(guard);
         match hits {
             Ok(h) => {
@@ -441,9 +436,10 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let top_k = input.top_k.unwrap_or(6).max(1);
         let guard = self.store.lock();
+        let chat_id_opt = input.chat_id.as_ref().map(|c| ChatId::new(c.clone()));
         let hits = guard.hybrid_search(
             &input.question,
-            input.chat_id.as_ref().map(|c| &ChatId::new(c.clone())),
+            chat_id_opt.as_ref(),
             top_k,
             input.mode.as_deref().and_then(parse_retrieval_mode),
             input.alpha,
@@ -518,10 +514,8 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             Err(e) => return err(format!("parse error: {e}")),
         };
         let mut guard = self.store.lock();
-        let r = guard.reembed(
-            input.chat_id.as_ref().map(|c| &ChatId::new(c.clone())),
-            input.force.unwrap_or(false),
-        );
+        let chat_id_opt = input.chat_id.as_ref().map(|c| ChatId::new(c.clone()));
+        let r = guard.reembed(chat_id_opt.as_ref(), input.force.unwrap_or(false));
         match r {
             Ok(_) => ok(json!({ "status": "scheduled" })),
             Err(e) => err(e),
