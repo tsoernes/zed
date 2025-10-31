@@ -681,12 +681,8 @@ impl Tool for ChatHistoryTool {
                 }
             }
 
-            // Produce markdown wrapper.
-            let mut md = String::new();
-            md.push_str("# Chat History Tool Result\n\n```json\n");
-            md.push_str(&serde_json::to_string_pretty(&value)?);
-            md.push_str("\n```\n");
-            Ok(ToolResultOutput::from(md))
+            // Return raw JSON (no markdown wrapper)
+            Ok(ToolResultOutput::from(serde_json::to_string_pretty(&value)?))
         });
 
         ToolResult {
