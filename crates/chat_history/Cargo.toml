@@ -1,35 +1,107 @@
 [package]
 name = "chat_history"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Conceptual chat history core: persistent metadata, message storage, retrieval, and summary triggers."
+description = "Chat history core: metadata, messages, async embeddings, hybrid retrieval, similar chats, re-embedding, summarization triggers."
 license = "Apache-2.0"
 publish = false
+repository = "https://github.com/zed-industries/zed"
+readme = false
 
 [lib]
-# Use a descriptive root file instead of lib.rs per workspace guidelines.
+# Descriptive root file (no lib.rs) per workspace guidelines.
 path = "src/chat_history.rs"
 crate-type = ["rlib"]
 
+[package.metadata.docs]
+# Kept aligned with feature_docs reconstruction checklist; not exhaustive implementation yet.
+categories = ["llm", "search", "assistant"]
+keywords = ["chat", "history", "retrieval", "rag", "embedding"]
+# Sections targeted by this crate (concept-to-code parity goal):
+spec_sections = [
+  "config layering",
+  "embedding backends",
+  "hybrid retrieval",
+  "similar chats",
+  "re-embedding lifecycle",
+  "summarization triggers"
+]
+
 [dependencies]
 anyhow = "1"
+thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-schemars = "1"            # For future JSON schema exposure (kept minimal here).
-thiserror = "1"           # For structured error enums if expanded.
-parking_lot = "0.12"      # Lightweight locking for internal store structures.
+schemars = "1"                  # JSON schema exposure for tool surfaces.
+parking_lot = "0.12"            # Low‑overhead sync primitives guarding store.
 chrono = { version = "0.4", default-features = false, features = ["clock","serde"] }
 uuid = { version = "1", features = ["v4","serde"] }
+futures = "0.3"                 # Async combinators for background tasks.
+# Optional / feature-gated dependencies (see [features])
+tokio = { version = "1", optional = true, features = ["rt-multi-thread","macros","sync","time"] }
+fastembed = { version = "0.7", optional = true, default-features = false, features = ["models"] }
+async-openai = { version = "0.20", optional = true }
+reqwest = { version = "0.11", optional = true, default-features = false, features = ["json","rustls-tls"] }
+rayon = { version = "1.8", optional = true }   # Used for parallel cosine similarity / reembed passes.
+# NOTE: Additional vendor SDKs (Azure) can be layered via reqwest + custom signing; no dedicated crate mandatory.
 
 [features]
-# Minimal feature gates for future expansion; kept skeletal.
-default = []
-embed-openai = []         # Placeholder: enable OpenAI embedding backend.
-embed-azure = []          # Placeholder: enable Azure embedding backend.
-embed-fastembed = []      # Placeholder: enable local FastEmbed backend.
-rag = []                  # Placeholder: retrieval-augmented answer construction.
+# Default keeps footprint minimal while enabling baseline runtime + lexical retrieval.
+default = [
+  "runtime-tokio",
+  "retrieval-lexical",
+]
 
-[package.metadata.docs]
-# Internal crate; not published. This section hints at conceptual scope.
-categories = ["llm", "search", "assistant"]
-keywords = ["chat", "history", "retrieval", "rag"]
+# Runtime selection.
+runtime-tokio = ["tokio"]
+
+# Embedding backends (mutually composable).
+embedding-fastembed = ["fastembed"]
+embedding-openai = ["async-openai", "reqwest", "tokio"]   # tokio required for HTTP + async-openai
+embedding-azure = ["reqwest", "tokio"]                    # azure embedding via REST; custom signing logic in crate
+
+# Retrieval modes.
+retrieval-lexical = []                 # BM25 / keyword scoring (initial heuristic implementation)
+retrieval-embedding = []               # Vector similarity path (requires at least one embedding-* backend at runtime)
+retrieval-hybrid = ["retrieval-lexical", "retrieval-embedding"]
+
+# RAG answer synthesis (model invocation + prompt assembly).
+rag = ["retrieval-hybrid", "async-openai", "tokio"]
+
+# Parallel acceleration for re-embedding & similarity ranking.
+parallel = ["rayon"]
+
+# Convenience umbrella enabling everything (avoids hidden surprises for power users).
+full = [
+  "runtime-tokio",
+  "embedding-fastembed",
+  "embedding-openai",
+  "embedding-azure",
+  "retrieval-hybrid",
+  "rag",
+  "parallel",
+]
+
+[package.metadata.feature-status]
+# Rationale: convey maturity / expected stability (not enforced).
+runtime-tokio = "stable"
+embedding-fastembed = "experimental"
+embedding-openai = "experimental"
+embedding-azure = "planned"
+retrieval-lexical = "baseline"
+retrieval-embedding = "experimental"
+retrieval-hybrid = "experimental"
+rag = "prototype"
+parallel = "experimental"
+full = "meta"
+
+[package.metadata.lints]
+# Future: can centralize workspace lint policy here.
+
+[badges]
+# Illustrative (not required for internal workspace crates).
+maintenance = { status = "experimental" }
+
+[dev-dependencies]
+serde_json = "1"       # Explicit (tests may construct JSON fixtures)
+tokio = { version = "1", features = ["rt-multi-thread","macros","sync","time"] }

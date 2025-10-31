@@ -1,6 +1,6 @@
 [package]
 name = "chat_history_tools"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Conceptual tool adapter exposing snake_case JSON operations over chat_history core."
 license = "Apache-2.0"
@@ -24,9 +24,33 @@ parking_lot = "0.12"
 tokio = { version = "1", features = ["rt","macros"] }
 
 [features]
-default = []
-rag = []            # Placeholder feature flag for answer (RAG) operations.
-embed = []          # Placeholder to enable embedding-related operations.
+# Default targets hybrid retrieval (lexical+embedding) mirroring core crate defaults.
+default = ["hybrid"]
+
+# Granular retrieval feature forwarding to core crate.
+lexical = ["chat_history/retrieval-lexical"]
+embedding = ["chat_history/retrieval-embedding"]
+hybrid = ["chat_history/retrieval-hybrid"]
+
+# RAG answer synthesis (uses core rag path).
+rag = ["chat_history/rag"]
+
+# Embedding backend forwards (select one or more).
+embed-fastembed = ["chat_history/embedding-fastembed"]
+embed-openai = ["chat_history/embedding-openai"]
+embed-azure = ["chat_history/embedding-azure"]
+
+# Backwards compatibility alias for previous single flag; maps to embedding-only retrieval.
+embed = ["embedding"]
+
+# Convenience umbrella enabling everything.
+full = [
+    "hybrid",
+    "rag",
+    "embed-fastembed",
+    "embed-openai",
+    "embed-azure",
+]
 
 [package.metadata.docs]
 categories = ["llm", "assistant", "tooling"]
