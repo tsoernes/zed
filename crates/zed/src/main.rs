@@ -606,16 +606,13 @@ pub fn main() {
                             let db_path = chat_history_dir.join("chat_history.db");
                             let url = format!("sqlite://{}", db_path.to_string_lossy());
                             let conn_result = {
-                                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                                let handle_result = _cx.update(|app| gpui_tokio::Tokio::handle(app));
+                                if let Ok(handle) = handle_result {
                                     let _guard = handle.enter();
                                     Database::connect(url).await
                                 } else {
-                                    // Fallback: build a lightweight runtime to perform the connection when no handle is present.
-                                    tokio::runtime::Builder::new_current_thread()
-                                        .enable_all()
-                                        .build()
-                                        .map_err(|e| sea_orm::DbErr::Conn(format!("failed to build runtime: {e}")))
-                                        .and_then(|rt| rt.block_on(async { Database::connect(url).await }))
+                                    ::log::warn!("Tokio handle unavailable; chat history persistence disabled");
+                                    Err(sea_orm::DbErr::Conn("tokio handle unavailable".into()))
                                 }
                             };
                             match conn_result {
