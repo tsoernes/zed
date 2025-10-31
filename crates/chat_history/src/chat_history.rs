@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::cmp::Ordering;
+
 use std::collections::{HashMap, HashSet};
 use std::f32::EPSILON;
 use std::sync::Arc;
@@ -495,19 +494,33 @@ impl ChatStore {
             .ok_or_else(|| anyhow!("messages container missing after init"))?;
         list.push(msg.clone());
 
-        let meta = self
-            .chats
-            .get_mut(&cid)
-            .ok_or_else(|| anyhow!("metadata missing after init"))?;
-        meta.update_from_message(&msg);
+        let msg_index = list.len() - 1;
+        {
+            let meta = self
+                .chats
+                .get_mut(&cid)
+                .ok_or_else(|| anyhow!("metadata missing after init"))?;
+            meta.update_from_message(&msg);
+        }
 
-        self.lexical.index_message(&msg, list.len() - 1);
-        self.pending_embedding
-            .push((cid.clone(), msg.message_id.clone()));
+        // Perform operations that require &mut self but not a simultaneous borrow of chat metadata.
+        self.lexical.index_message(&msg, msg_index);
+        self.pending_embedding.push((cid.clone(), msg.message_id.clone()));
         self.maybe_run_embedding_batch()?;
-        self.maybe_trigger_summary(meta);
 
-        Ok((meta.clone(), msg))
+        // Potential summary refresh after other mutations while avoiding overlapping mutable borrows.
+        if let Some(meta) = self.chats.get_mut(&cid) {
+            self.maybe_trigger_summary(meta);
+        }
+
+        // Snapshot metadata for return.
+        let meta_snapshot = self
+            .chats
+            .get(&cid)
+            .ok_or_else(|| anyhow!("metadata missing after update"))?
+            .clone();
+
+        Ok((meta_snapshot, msg))
     }
 
     fn maybe_run_embedding_batch(&mut self) -> Result<()> {
