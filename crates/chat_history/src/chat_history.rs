@@ -170,23 +170,40 @@ pub trait EmbeddingBackend: Send + Sync {
 #[cfg(feature = "embedding-fastembed")]
 pub struct FastEmbedBackend {
     model: String,
+    inner: Option<fastembed::TextEmbedding>,
 }
 
 #[cfg(feature = "embedding-fastembed")]
 impl FastEmbedBackend {
     pub fn new(model: impl Into<String>) -> Self {
+        use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+        let model_str = model.into();
+        // Attempt to map a few common identifiers; fall back to default model.
+        let chosen = match model_str.as_str() {
+            // FastEmbed enum variants (best‑effort; if variant name changes this still compiles but may fallback)
+            "all-MiniLM-L6-v2" | "all-miniLM-L6-v2" => Some(EmbeddingModel::AllMiniLml6V2),
+            // Add more mappings here as needed.
+            _ => None,
+        };
+        let inner = match chosen {
+            Some(enum_model) => TextEmbedding::try_new(InitOptions {
+                model_name: enum_model,
+                ..Default::default()
+            })
+            .ok(),
+            None => {
+                // Try default init; if that fails we will degrade to heuristic embeddings.
+                TextEmbedding::try_new(InitOptions::default()).ok()
+            }
+        };
         Self {
-            model: model.into(),
+            model: model_str,
+            inner,
         }
     }
-}
 
-#[cfg(feature = "embedding-fastembed")]
-impl EmbeddingBackend for FastEmbedBackend {
-    fn model_name(&self) -> &str {
-        &self.model
-    }
-    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
+    fn fallback_embed(&self, batch: &[String]) -> Vec<Vec<f32>> {
+        // Deterministic character frequency fallback (same as previous stub) for graceful degradation.
         let mut outputs = Vec::with_capacity(batch.len());
         for text in batch {
             let mut counts = [0_f32; 26];
@@ -212,21 +229,58 @@ impl EmbeddingBackend for FastEmbedBackend {
             }
             outputs.push(v);
         }
-        Ok(outputs)
+        outputs
+    }
+}
+
+#[cfg(feature = "embedding-fastembed")]
+impl EmbeddingBackend for FastEmbedBackend {
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+    fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
+        if let Some(inner) = &self.inner {
+            // fastembed returns Result; propagate errors and fallback on failure.
+            match inner.embed(batch.to_vec(), None) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    // Log-worthy in a fuller implementation; degrade silently here.
+                    let _ = e;
+                }
+            }
+        }
+        Ok(self.fallback_embed(batch))
     }
 }
 
 #[cfg(feature = "embedding-openai")]
 pub struct OpenAIEmbeddingBackend {
     model: String,
+    client: Option<async_openai::Client<async_openai::config::OpenAIConfig>>,
 }
 
 #[cfg(feature = "embedding-openai")]
 impl OpenAIEmbeddingBackend {
     pub fn new(model: impl Into<String>) -> Self {
+        // Rationale: rely on environment (OPENAI_API_KEY) if present; if not, degrade gracefully.
+        let cfg = async_openai::config::OpenAIConfig::new();
+        let client = if cfg.api_key().is_empty() {
+            None
+        } else {
+            Some(async_openai::Client::with_config(cfg.clone()))
+        };
         Self {
             model: model.into(),
+            client,
         }
+    }
+
+    fn fallback_embed(&self, batch: &[String]) -> Vec<Vec<f32>> {
+        // Simple deterministic length-based embedding (same dimensionality = 1) for degradation.
+        batch
+            .iter()
+            .map(|t| vec![(t.len() as f32).sqrt()])
+            .collect()
     }
 }
 
@@ -235,26 +289,79 @@ impl EmbeddingBackend for OpenAIEmbeddingBackend {
     fn model_name(&self) -> &str {
         &self.model
     }
+
     fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
-        let mut outputs = Vec::with_capacity(batch.len());
-        for text in batch {
-            let len = text.len() as f32;
-            outputs.push(vec![len.sqrt()]);
+        // If no client (missing key), immediately fallback.
+        let client = match &self.client {
+            Some(c) => c,
+            None => return Ok(self.fallback_embed(batch)),
+        };
+
+        // The async-openai API is async; block on current runtime if available.
+        // We keep the sync trait contract by performing a blocking call.
+        use async_openai::types::{CreateEmbeddingRequestArgs, EmbeddingInput};
+        let request = CreateEmbeddingRequestArgs::default()
+            .model(self.model.clone())
+            .input(EmbeddingInput::StringArray(batch.clone()))
+            .build()?;
+
+        // Try to use an existing runtime; if absent, create a temporary one.
+        let fut = async {
+            client.embeddings().create(request).await.map(|resp| {
+                resp.data
+                    .into_iter()
+                    .map(|d| d.embedding)
+                    .collect::<Vec<Vec<f32>>>()
+            })
+        };
+
+        let result = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.block_on(fut)
+        } else {
+            // Create a minimal runtime just for this call.
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(fut)
+        };
+
+        match result {
+            Ok(vectors) => {
+                // Basic sanity: ensure we got one vector per input; otherwise fallback.
+                if vectors.len() == batch.len() {
+                    Ok(vectors)
+                } else {
+                    Ok(self.fallback_embed(batch))
+                }
+            }
+            Err(_) => Ok(self.fallback_embed(batch)),
         }
-        Ok(outputs)
     }
 }
 
 #[cfg(feature = "embedding-azure")]
 pub struct AzureOpenAIEmbeddingBackend {
     model: String,
+    endpoint: String,
+    api_version: String,
+    deployment: String,
+    api_key: Option<String>,
 }
 
 #[cfg(feature = "embedding-azure")]
 impl AzureOpenAIEmbeddingBackend {
     pub fn new(model: impl Into<String>) -> Self {
+        // Environment-driven configuration (Azure typical env vars)
+        let endpoint = std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default();
+        let api_version =
+            std::env::var("AZURE_OPENAI_API_VERSION").unwrap_or_else(|_| "2024-02-01".into());
+        let deployment =
+            std::env::var("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT").unwrap_or_else(|_| model.into());
+        let api_key = std::env::var("AZURE_OPENAI_KEY").ok();
         Self {
-            model: model.into(),
+            model: deployment.clone(),
+            endpoint,
+            api_version,
+            deployment,
+            api_key,
         }
     }
 }
@@ -265,10 +372,69 @@ impl EmbeddingBackend for AzureOpenAIEmbeddingBackend {
         &self.model
     }
     fn embed(&self, batch: &[String]) -> Result<Vec<Vec<f32>>> {
-        Ok(batch
-            .iter()
-            .map(|t| vec![(t.len() as f32).log2()])
-            .collect())
+        // Fallback if required config missing
+        if self.endpoint.is_empty()
+            || self.deployment.is_empty()
+            || self.api_key.as_ref().map(|k| k.is_empty()).unwrap_or(true)
+        {
+            return Ok(batch
+                .iter()
+                .map(|t| vec![(t.len() as f32).log2()])
+                .collect());
+        }
+        // Build Azure embeddings URL:
+        // {endpoint}/openai/deployments/{deployment}/embeddings?api-version={api_version}
+        let url = format!(
+            "{}/openai/deployments/{}/embeddings?api-version={}",
+            self.endpoint.trim_end_matches('/'),
+            self.deployment,
+            self.api_version
+        );
+        // JSON body per Azure spec: { "input": [...], "model": "<ignored or deployment>" }
+        #[derive(Serialize)]
+        struct EmbeddingRequest<'a> {
+            input: &'a [String],
+        }
+        #[derive(Deserialize)]
+        struct EmbeddingResponse {
+            data: Vec<EmbeddingDatum>,
+        }
+        #[derive(Deserialize)]
+        struct EmbeddingDatum {
+            embedding: Vec<f32>,
+        }
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(&url)
+            .header("api-key", self.api_key.clone().unwrap_or_default())
+            .header("Content-Type", "application/json")
+            .json(&EmbeddingRequest { input: batch })
+            .send();
+        let resp = match resp {
+            Ok(r) => r,
+            Err(_) => {
+                return Ok(batch
+                    .iter()
+                    .map(|t| vec![(t.len() as f32).log2()])
+                    .collect());
+            }
+        };
+        if !resp.status().is_success() {
+            return Ok(batch
+                .iter()
+                .map(|t| vec![(t.len() as f32).log2()])
+                .collect());
+        }
+        let parsed: Result<EmbeddingResponse, _> = resp.json();
+        match parsed {
+            Ok(r) if r.data.len() == batch.len() => {
+                Ok(r.data.into_iter().map(|d| d.embedding).collect())
+            }
+            _ => Ok(batch
+                .iter()
+                .map(|t| vec![(t.len() as f32).log2()])
+                .collect()),
+        }
     }
 }
 

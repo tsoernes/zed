@@ -433,16 +433,45 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         match hits {
             Ok(h) => {
                 let contexts = self.build_context_hits(h, top_k, input.project_id.clone());
-                // Stub answer strategy (placeholder)
                 let answer = if contexts.is_empty() {
                     "No relevant context found.".to_string()
                 } else {
+                    // Simple RAG-style heuristic:
+                    // 1. Take up to 5 highest-scoring context fragments
+                    // 2. Truncate each fragment
+                    // 3. Concatenate with lightweight citation markers
+                    let mut stitched = String::new();
+                    for ctx in contexts.iter().take(5) {
+                        let mut snippet = ctx.content.trim().to_string();
+                        if snippet.len() > 160 {
+                            snippet.truncate(157);
+                            snippet.push('…');
+                        }
+                        stitched.push_str(&format!(
+                            "[{}:{}] {} ",
+                            ctx.chat_id, ctx.message_id, snippet
+                        ));
+                        if stitched.len() > 800 {
+                            break;
+                        }
+                    }
+                    let mut synthesis = stitched.trim().to_string();
+                    if synthesis.len() > 280 {
+                        synthesis.truncate(277);
+                        synthesis.push('…');
+                    }
                     format!(
-                        "Derived answer referencing {} context fragment(s).",
-                        contexts.len()
+                        "Question: {}\nAnswer (contextual synthesis): {}",
+                        input.question, synthesis
                     )
                 };
-                ok(json!({ "answer": answer, "contexts_used": contexts.len() }))
+                let citations: Vec<Value> = contexts
+                    .iter()
+                    .map(|c| json!({"chat_id": c.chat_id, "message_id": c.message_id, "score": c.score }))
+                    .collect();
+                ok(
+                    json!({ "answer": answer, "contexts_used": contexts.len(), "citations": citations }),
+                )
             }
             Err(e) => err(e),
         }
@@ -590,7 +619,7 @@ mod tests {
             ))
             .await;
         assert!(upd.contains("Latency Discussion"));
-        let listed = adapter.chat_list(r#"{"limit":10}"#).await;
+        let _listed = adapter.chat_list(r#"{"limit":10}"#).await;
         let listed = adapter.chat_list(r#"{"limit":10}"#).await;
         assert!(
             listed.contains("Latency Discussion"),
