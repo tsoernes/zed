@@ -557,7 +557,7 @@ impl ChatStore {
         if self.embedding_backend.is_some() {
             return;
         }
-        let model = self.config.embedding_model.clone();
+        let _model = self.config.embedding_model.clone();
 
         #[cfg(feature = "embedding-fastembed")]
         {
