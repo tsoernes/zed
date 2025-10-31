@@ -633,4 +633,29 @@ mod tests {
             "updated title not reflected in chat_get response: {fetched}"
         );
     }
+
+    #[tokio::test]
+    async fn answer_includes_citations() {
+        let adapter = ChatHistoryTools::new(ChatStore::new(ChatHistoryConfig::default(), None));
+        adapter
+            .chat_append(r#"{"content":"Latency is impacted by batching","role":"user"}"#)
+            .await;
+        adapter
+            .chat_append(
+                r#"{"content":"We mitigate latency using hybrid retrieval","role":"assistant"}"#,
+            )
+            .await;
+        let ans = adapter
+            .chat_answer(r#"{"question":"How do we mitigate latency?","top_k":4,"mode":"hybrid"}"#)
+            .await;
+        assert!(ans.contains("\"answer\""), "missing answer field: {ans}");
+        assert!(
+            ans.contains("\"citations\""),
+            "missing citations array: {ans}"
+        );
+        assert!(
+            ans.contains("\"contexts_used\""),
+            "missing contexts_used metric: {ans}"
+        );
+    }
 }

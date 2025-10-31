@@ -544,14 +544,77 @@ pub struct ChatStore {
     embedding_backend: Option<Arc<dyn EmbeddingBackend>>,
     pending_embedding: Vec<(ChatId, MessageId)>, // queue of messages needing embeddings
     batch_size: usize,
+    embedding_worker_tx: Option<std::sync::mpsc::Sender<()>>, // signal channel for background embedding flush
 }
 
 impl ChatStore {
+    /// Attempt to automatically initialize an embedding backend based on the
+    /// current configuration's `embedding_model` if none is already present.
+    /// This is a lightweight, idempotent best‑effort helper. It degrades
+    /// silently if the requested backend cannot be constructed so callers
+    /// can still rely on lexical retrieval.
+    pub fn auto_init_backend(&mut self) {
+        if self.embedding_backend.is_some() {
+            return;
+        }
+        let model = self.config.embedding_model.clone();
+
+        #[cfg(feature = "embedding-fastembed")]
+        {
+            // FastEmbed local backend attempt
+            let be = FastEmbedBackend::new(model.clone());
+            self.embedding_backend = Some(Arc::new(be));
+            return;
+        }
+
+        #[cfg(all(not(feature = "embedding-fastembed"), feature = "embedding-openai"))]
+        {
+            let be = OpenAIEmbeddingBackend::new(model.clone());
+            self.embedding_backend = Some(Arc::new(be));
+            return;
+        }
+
+        #[cfg(all(
+            not(feature = "embedding-fastembed"),
+            not(feature = "embedding-openai"),
+            feature = "embedding-azure"
+        ))]
+        {
+            let be = AzureOpenAIEmbeddingBackend::new(model.clone());
+            self.embedding_backend = Some(Arc::new(be));
+            return;
+        }
+
+        // If no feature matched we leave backend None (lexical only).
+    }
+
+    /// Start (idempotently) a very simple background worker loop that
+    /// periodically attempts to flush any pending embeddings. Because the
+    /// internal store is not wrapped in an Arc within this method, this
+    /// function currently acts as a no‑op placeholder aside from recording
+    /// that a worker was "started". A full implementation would move the
+    /// store into an Arc<Mutex<..>> at a higher layer (e.g. SharedChatStore)
+    /// and spawn a thread that locks, flushes, then sleeps.
+    ///
+    /// This placeholder still sets up a signaling channel so future
+    /// refactors can attach an actual worker without changing the public
+    /// method signature.
+    pub fn start_embedding_worker(&mut self) {
+        if self.embedding_worker_tx.is_some() {
+            return;
+        }
+        let (tx, _rx) = std::sync::mpsc::channel::<()>();
+        self.embedding_worker_tx = Some(tx);
+        // NOTE: Real background thread omitted to avoid unsafe self capture.
+        // Future implementation sketch:
+        //  - Accept a SharedChatStore handle instead (Arc<Mutex<ChatStore>>)
+        //  - Spawn thread: loop { wait for signal OR timeout; lock; flush_embeddings(); }
+    }
     pub fn new(
         config: ChatHistoryConfig,
         embedding_backend: Option<Arc<dyn EmbeddingBackend>>,
     ) -> Self {
-        Self {
+        let mut store = Self {
             config,
             chats: HashMap::new(),
             messages: HashMap::new(),
@@ -559,7 +622,13 @@ impl ChatStore {
             embedding_backend,
             pending_embedding: Vec::new(),
             batch_size: 32,
-        }
+            embedding_worker_tx: None,
+        };
+        // Initialize backend automatically if none was explicitly supplied.
+        store.auto_init_backend();
+        // Start (placeholder) embedding worker channel.
+        store.start_embedding_worker();
+        store
     }
 
     pub fn config(&self) -> &ChatHistoryConfig {
