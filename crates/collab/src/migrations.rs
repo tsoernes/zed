@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::tokio_runtime::{ensure_global_tokio_runtime, run_on_global};
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use sea_orm::ConnectOptions;
@@ -12,11 +13,21 @@ pub async fn run_database_migrations(
     database_options: &ConnectOptions,
     migrations_path: impl AsRef<Path>,
 ) -> Result<Vec<(Migration, Duration)>> {
+    log::info!(
+        "migrations: resolving from path: {:?}",
+        migrations_path.as_ref()
+    );
     let migrations = MigrationSource::resolve(migrations_path.as_ref())
         .await
         .map_err(|err| anyhow!("failed to load migrations: {err:?}"))?;
+    log::info!("migrations: loaded {} migrations", migrations.len());
 
-    let mut connection = sqlx::AnyConnection::connect(database_options.get_url()).await?;
+    ensure_global_tokio_runtime()?;
+    let url = database_options.get_url().to_string();
+    log::info!("migrations: connecting with url {}", url);
+    let inner = run_on_global(async move { sqlx::AnyConnection::connect(&url).await })?;
+    let mut connection = inner.map_err(|err| anyhow!("migrations: connection error: {err:?}"))?;
+    log::info!("migrations: connected");
 
     connection.ensure_migrations_table().await?;
     let applied_migrations: HashMap<_, _> = connection

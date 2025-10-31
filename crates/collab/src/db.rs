@@ -4,6 +4,7 @@ mod tables;
 #[cfg(test)]
 pub mod tests;
 
+use crate::tokio_runtime::{ensure_global_tokio_runtime, run_on_global};
 use crate::{Error, Result};
 use anyhow::{Context as _, anyhow};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -72,9 +73,16 @@ impl Database {
     /// Connects to the database with the given options
     pub async fn new(options: ConnectOptions) -> Result<Self> {
         sqlx::any::install_default_drivers();
+        ensure_global_tokio_runtime()?; // initialize global runtime
+        let saved_options = options.clone();
+        let pool = run_on_global({
+            let connect_options = saved_options.clone();
+            async move { sea_orm::Database::connect(connect_options).await }
+        })??;
+
         Ok(Self {
-            options: options.clone(),
-            pool: sea_orm::Database::connect(options).await?,
+            options: saved_options,
+            pool,
             rooms: DashMap::with_capacity(16384),
             projects: DashMap::with_capacity(16384),
             notification_kinds_by_id: HashMap::default(),

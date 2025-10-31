@@ -2924,6 +2924,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "chat_history"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "parking_lot",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "chat_history_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chat_history",
+ "parking_lot",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21260,6 +21289,7 @@ dependencies = [
  "theme_selector",
  "time",
  "title_bar",
+ "tokio",
  "toolchain_selector",
  "tree-sitter-md",
  "tree-sitter-rust",

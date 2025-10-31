@@ -23,6 +23,7 @@ use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
 use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
+use tokio::runtime::{Handle, Runtime};
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -385,11 +386,13 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        gpui_tokio::init(cx);
+        menu::init();
+        zed_actions::init();
         menu::init();
         zed_actions::init();
 
         release_channel::init(app_version, cx);
-        gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);
         }

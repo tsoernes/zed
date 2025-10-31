@@ -73,6 +73,7 @@ gpui = { workspace = true, features = [
     "windows-manifest",
 ] }
 gpui_tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 edit_prediction_button.workspace = true
 http_client.workspace = true

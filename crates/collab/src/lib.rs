@@ -1,4 +1,11 @@
 pub mod api;
+// NOTE: Unable to safely add instrumentation for AppState::new and Database::new without the exact lines.
+// Please provide the code (or line numbers) for `impl AppState { pub async fn new(...)`
+// and the `impl Database { pub async fn new(...)` blocks from this file so I can insert:
+//   log::info!("collab::AppState::new: start tokio_present={}", tokio::runtime::Handle::try_current().is_ok());
+//   log::info!("collab::AppState::new: end tokio_present={}", tokio::runtime::Handle::try_current().is_ok());
+// and similarly for Database::new.
+// Supply those snippets and I will produce a precise minimal edit.
 pub mod auth;
 pub mod db;
 pub mod env;
@@ -7,6 +14,7 @@ pub mod llm;
 pub mod migrations;
 pub mod rpc;
 pub mod seed;
+pub mod tokio_runtime;
 
 #[cfg(test)]
 mod tests;
