@@ -1,4 +1,3 @@
-
 use std::collections::{HashMap, HashSet};
 use std::f32::EPSILON;
 use std::sync::Arc;
@@ -505,13 +504,14 @@ impl ChatStore {
 
         // Perform operations that require &mut self but not a simultaneous borrow of chat metadata.
         self.lexical.index_message(&msg, msg_index);
-        self.pending_embedding.push((cid.clone(), msg.message_id.clone()));
+        self.pending_embedding
+            .push((cid.clone(), msg.message_id.clone()));
         self.maybe_run_embedding_batch()?;
 
         // Potential summary refresh after other mutations while avoiding overlapping mutable borrows.
-        if let Some(meta) = self.chats.get_mut(&cid) {
-            self.maybe_trigger_summary(meta);
-        }
+        // Avoid overlapping &mut borrows of self and chat metadata by delegating
+        // summary logic to a method that acquires the metadata internally.
+        self.maybe_trigger_summary_for(&cid);
 
         // Snapshot metadata for return.
         let meta_snapshot = self
@@ -891,7 +891,10 @@ impl ChatStore {
         Ok(())
     }
 
-    fn maybe_trigger_summary(&mut self, meta: &mut ChatMetadata) {
+    fn maybe_trigger_summary_for(&mut self, chat_id: &ChatId) {
+        let Some(meta) = self.chats.get_mut(chat_id) else {
+            return;
+        };
         if meta.total_characters < self.config.summary_refresh_chars {
             return;
         }
@@ -899,8 +902,7 @@ impl ChatStore {
         if delta < self.config.summary_delta_chars {
             return;
         }
-        // Simple extractive compression: first N chars of earliest messages
-        if let Some(msgs) = self.messages.get(&meta.chat_id) {
+        if let Some(msgs) = self.messages.get(chat_id) {
             let mut acc = String::new();
             for m in msgs.iter().take(8) {
                 if acc.len() + m.content.len() > 512 {
