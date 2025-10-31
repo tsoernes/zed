@@ -231,34 +231,19 @@ impl ChatHistoryTools {
     }
 
     fn do_update_metadata(&self, input: UpdateMetadataInput) -> Result<ChatMetadata> {
-        let guard = self.store.lock();
+        let mut guard = self.store.lock();
         let cid = ChatId::new(&input.chat_id);
-        let (meta, _msgs) = guard.get_chat(&cid)?;
-        let mut meta = meta;
-        if let Some(t) = input.title {
-            meta.title = Some(t);
-        }
-        if let Some(s) = input.summary {
-            meta.summary = Some(s);
-        }
-        if let Some(a) = input.archived {
-            meta.archived = a;
-        }
-        if let Some(p) = input.pinned {
-            meta.pinned = p;
-        }
-        if let Some(add) = input.tags_add {
-            for tag in add {
-                if !meta.tags.iter().any(|t| t == &tag) {
-                    meta.tags.push(tag);
-                }
-            }
-        }
-        if let Some(remove) = input.tags_remove {
-            meta.tags.retain(|t| !remove.iter().any(|r| r == t));
-        }
-        // TODO: persist metadata update once ChatStore exposes a public setter
-        Ok(meta)
+        // Use core store's persistence method so changes are durable and reflected in subsequent reads.
+        let updated = guard.update_metadata(
+            &cid,
+            input.title.map(Some),
+            input.summary.map(Some),
+            input.archived,
+            input.pinned,
+            input.tags_add,
+            input.tags_remove,
+        )?;
+        Ok(updated)
     }
 
     fn redact_config(cfg: &ChatHistoryConfig) -> Value {
@@ -606,13 +591,17 @@ mod tests {
             .await;
         assert!(upd.contains("Latency Discussion"));
         let listed = adapter.chat_list(r#"{"limit":10}"#).await;
+        let listed = adapter.chat_list(r#"{"limit":10}"#).await;
+        assert!(
+            listed.contains("Latency Discussion"),
+            "updated title not found in chat_list: {listed}"
+        );
         let fetched = adapter
             .chat_get(&format!(r#"{{"chat_id":"{chat_id}"}}"#))
             .await;
-        // Title persistence not yet implemented; ensure request succeeded.
         assert!(
-            fetched.contains("\"ok\":true"),
-            "chat_get did not return success envelope: {fetched}"
+            fetched.contains("Latency Discussion"),
+            "updated title not reflected in chat_get response: {fetched}"
         );
     }
 }

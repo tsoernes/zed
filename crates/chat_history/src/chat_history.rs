@@ -630,6 +630,50 @@ impl ChatStore {
         Ok((meta, msgs))
     }
 
+    /// Update selected metadata fields for a chat.
+    /// Each parameter is an Option indicating whether to mutate; for strings an inner Option sets/clears the value.
+    /// Returns the updated metadata or an error if the chat does not exist.
+    pub fn update_metadata(
+        &mut self,
+        chat_id: &ChatId,
+        title: Option<Option<String>>,
+        summary: Option<Option<String>>,
+        archived: Option<bool>,
+        pinned: Option<bool>,
+        tags_add: Option<Vec<String>>,
+        tags_remove: Option<Vec<String>>,
+    ) -> ChatResult<ChatMetadata> {
+        let meta = self
+            .chats
+            .get_mut(chat_id)
+            .ok_or_else(|| ChatHistoryError::ChatNotFound(chat_id.as_str().into()))?;
+
+        if let Some(t) = title {
+            meta.title = t;
+        }
+        if let Some(s) = summary {
+            meta.summary = s;
+        }
+        if let Some(a) = archived {
+            meta.archived = a;
+        }
+        if let Some(p) = pinned {
+            meta.pinned = p;
+        }
+        if let Some(add) = tags_add {
+            for tag in add {
+                if !meta.tags.iter().any(|existing| existing == &tag) {
+                    meta.tags.push(tag);
+                }
+            }
+        }
+        if let Some(remove) = tags_remove {
+            meta.tags.retain(|t| !remove.iter().any(|r| r == t));
+        }
+        meta.updated_at = Utc::now();
+        Ok(meta.clone())
+    }
+
     /* WHY: Legacy function signature retained for tools adapter compatibility (substring lexical search). */
     pub fn search_messages(
         &self,
@@ -968,27 +1012,6 @@ pub struct SimilarChat {
 }
 
 /* WHY: Helper trait for consistent ordering without allocating intermediate Vec for keys. */
-trait SortDesc<T> {
-    fn sorted_by_key_desc<F, K>(self, f: F) -> Vec<T>
-    where
-        F: FnMut(&T) -> K,
-        K: Ord;
-}
-
-impl<T, I> SortDesc<T> for I
-where
-    I: IntoIterator<Item = T>,
-{
-    fn sorted_by_key_desc<F, K>(self, mut f: F) -> Vec<T>
-    where
-        F: FnMut(&T) -> K,
-        K: Ord,
-    {
-        let mut v: Vec<T> = self.into_iter().collect();
-        v.sort_by(|a, b| f(b).cmp(&f(a)));
-        v
-    }
-}
 
 /* WHY: Cosine used in multiple retrieval pathways; tolerant of dimension mismatch (returns 0). */
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
