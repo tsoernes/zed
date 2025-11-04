@@ -950,6 +950,9 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     thread.update(cx, |thread, cx| thread.set_title(name.into(), cx));
                 }
 
+                // Load project info for this thread
+                thread.update(cx, |thread, cx| thread.load_project_info(cx));
+
                 // Register and obtain corresponding AcpThread.
                 let acp_thread = agent.register_session(thread.clone(), cx);
 

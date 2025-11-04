@@ -295,6 +295,15 @@ impl ThreadsDatabase {
         "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
 
+        connection.exec(indoc! {"
+            CREATE TABLE IF NOT EXISTS project_info (
+                project_path TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        "})?()
+        .map_err(|e| anyhow!("Failed to create project_info table: {}", e))?;
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -409,6 +418,53 @@ impl ThreadsDatabase {
             "})?;
 
             delete(id.0)?;
+
+            Ok(())
+        })
+    }
+
+    pub fn load_project_info(&self, project_path: Arc<str>) -> Task<Result<Option<String>>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+            let mut select = connection.select_bound::<Arc<str>, String>(indoc! {"
+                SELECT content FROM project_info WHERE project_path = ? LIMIT 1
+            "})?;
+
+            let rows = select(project_path)?;
+            Ok(rows.into_iter().next())
+        })
+    }
+
+    pub fn save_project_info(&self, project_path: Arc<str>, content: String) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+            let updated_at = Utc::now().to_rfc3339();
+
+            let mut insert = connection.exec_bound::<(Arc<str>, String, String)>(indoc! {"
+                INSERT OR REPLACE INTO project_info (project_path, content, updated_at) VALUES (?, ?, ?)
+            "})?;
+
+            insert((project_path, content, updated_at))?;
+
+            Ok(())
+        })
+    }
+
+    pub fn delete_project_info(&self, project_path: Arc<str>) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+
+        self.executor.spawn(async move {
+            let connection = connection.lock();
+
+            let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
+                DELETE FROM project_info WHERE project_path = ?
+            "})?;
+
+            delete(project_path)?;
 
             Ok(())
         })

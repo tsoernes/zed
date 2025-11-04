@@ -43,6 +43,7 @@ pub struct SystemPromptTemplate<'a> {
     pub usage_pct: Option<f64>,
     pub memory_segment_count: Option<usize>,
     pub memory_saved_tokens: Option<u64>,
+    pub project_info: Option<String>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -89,6 +90,7 @@ mod tests {
             usage_pct: None,
             memory_segment_count: None,
             memory_saved_tokens: None,
+            project_info: None,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

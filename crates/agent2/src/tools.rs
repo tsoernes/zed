@@ -12,6 +12,7 @@ mod grep_tool;
 mod list_directory_tool;
 mod list_history_tool;
 mod memory_tool;
+mod project_info_tool;
 mod shell_detector_tool;
 mod token_usage_tool;
 
@@ -38,6 +39,7 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         ListHistoryTool::name(),
         ChatHistoryAgentTool::name(),
         MemoryAgentTool::name(),
+        ProjectInfoTool::name(),
         TokenUsageTool::name(),
         EnhancedTerminalTool::name(),
         ShellDetectorTool::name(),
@@ -66,6 +68,7 @@ pub use grep_tool::*;
 pub use list_directory_tool::*;
 pub use list_history_tool::*;
 pub use memory_tool::*;
+pub use project_info_tool::*;
 pub use shell_detector_tool::*;
 pub use token_usage_tool::*;
 
