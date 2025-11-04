@@ -674,6 +674,7 @@ pub fn main() {
 
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
+        legacy_import::schedule_legacy_import(cx);
         ui_prompt::init(cx);
 
         go_to_line::init(cx);
