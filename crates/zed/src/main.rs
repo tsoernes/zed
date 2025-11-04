@@ -58,8 +58,77 @@ use zed::{
 use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
 fn init_chat_history(app_state: Arc<AppState>, cx: &mut App) {
-    ::log::info!("init_chat_history: helper invoked");
-    let _ = (app_state, cx);
+    use chat_history_tools::{
+        init::{init_chat_history_tools_async, ChatHistoryInitOptions},
+        migrations::run_chat_history_migrations,
+    };
+    use sea_orm::Database;
+    use std::path::PathBuf;
+
+    // Prepare directory + db
+    let dir = paths::database_dir().join("chat_history");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        ::log::error!("chat_history: create_dir_all failed: {e}");
+        return;
+    }
+    let db_path = dir.join("chat_history.db");
+    if !db_path.exists() {
+        if let Err(e) = std::fs::OpenOptions::new().create(true).write(true).open(&db_path) {
+            ::log::error!("chat_history: pre-create failed: {e}");
+            return;
+        }
+    }
+
+    // Connect DB
+    let url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+    let handle = gpui_tokio::Tokio::handle(cx);
+    let conn = match handle.block_on(async { Database::connect(url).await }) {
+        Ok(c) => c,
+        Err(e) => {
+            ::log::error!("chat_history: connect failed: {e}");
+            return;
+        }
+    };
+
+    // Run migrations
+    let mig_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("parent of zed crate")
+        .join("chat_history_tools")
+        .join("migrations");
+    if let Err(e) = handle.block_on(run_chat_history_migrations(&conn, &mig_dir)) {
+        ::log::error!("chat_history: migrations failed: {e}");
+        return;
+    }
+
+    // Initialize tools and install adapter
+    let options = ChatHistoryInitOptions {
+        db_conn: Some(conn),
+        rebuild_index: true,
+        ..Default::default()
+    };
+    let handles = match handle.block_on(init_chat_history_tools_async(options)) {
+        Ok(h) => h,
+        Err(e) => {
+            ::log::error!("chat_history: tool initialization failed: {e}");
+            return;
+        }
+    };
+    assistant_tools::install_chat_history_adapter(&handles);
+    acp_thread::chat_history_integration::init(handles.tools.clone());
+
+    // Enable tool in existing profiles so it’s available in agent UI
+    use settings::update_settings_file;
+    update_settings_file(app_state.fs.clone(), cx, |settings, _| {
+        let agent = settings.agent.get_or_insert_default();
+        if let Some(profiles) = agent.profiles.as_mut() {
+            for (_pid, profile) in profiles.iter_mut() {
+                profile.tools.entry("chat_history".into()).or_insert(true);
+            }
+        }
+    });
+
+    ::log::info!("chat_history: adapter installed and persistence enabled");
 }
 
 #[cfg(feature = "mimalloc")]
