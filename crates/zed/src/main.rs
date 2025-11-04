@@ -57,6 +57,11 @@ use zed::{
 
 use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
+fn init_chat_history(app_state: Arc<AppState>, cx: &mut App) {
+    ::log::info!("init_chat_history: helper invoked");
+    let _ = (app_state, cx);
+}
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -1003,10 +1008,7 @@ async fn installation_id() -> Result<IdType> {
         return Ok(IdType::Existing(installation_id));
     }
 
-    fn init_chat_history(app_state: Arc<AppState>, cx: &mut App) {
-        ::log::info!("init_chat_history: helper invoked");
-        let _ = (app_state, cx);
-    }
+
 
     let installation_id = Uuid::new_v4().to_string();
 
