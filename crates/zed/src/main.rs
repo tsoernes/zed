@@ -990,30 +990,37 @@ pub fn main() {
 	                        payload["title"] = json!(title);
 	                        first = false;
 	                    }
-	                    let raw = tools.chat_append(&payload.to_string()).await;
-	                    if chat_id.is_none() {
-	                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-	                            if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
-	                                if let Some(cid) = v
-	                                    .get("chat")
-	                                    .and_then(|c| c.get("chat_id"))
-	                                    .and_then(|s| s.as_str())
-	                                {
-	                                    chat_id = Some(cid.to_string());
+	                            let raw = tools.chat_append(&payload.to_string()).await;
+	                            // Log raw response for visibility per append
+	                            ::log::info!("legacy_replay: append raw for '{}' -> {}", title, raw);
+	                            // Parse result and update chat_id on first append; count message only on success
+	                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+	                                let ok = v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+	                                if chat_id.is_none() && ok {
+	                                    if let Some(cid) = v
+	                                        .get("chat")
+	                                        .and_then(|c| c.get("chat_id"))
+	                                        .and_then(|s| s.as_str())
+	                                    {
+	                                        chat_id = Some(cid.to_string());
+	                                    }
+	                                }
+	                                if ok {
+	                                    imported_messages += 1;
+	                                } else {
+	                                    ::log::warn!(
+	                                        "legacy_replay: append failed for thread {} (title='{}', project_id='{}'): {}",
+	                                        meta.id,
+	                                        title,
+	                                        project_id,
+	                                        raw
+	                                    );
+	                                    break;
 	                                }
 	                            } else {
-	                                                    ::log::warn!(
-	                                                        "legacy_replay: first append failed for thread {} (title='{}', project_id='{}'): {}",
-	                                                        meta.id,
-	                                                        title,
-	                                                        project_id,
-	                                                        raw
-	                                                    );
+	                                ::log::warn!("legacy_replay: invalid append JSON for '{}': {}", title, raw);
 	                                break;
 	                            }
-	                        }
-	                    }
-	                    imported_messages += 1;
 	                }
 	                                    if let Some(cid) = chat_id {
 	                                        let meta_update = serde_json::json!({
@@ -1021,7 +1028,8 @@ pub fn main() {
 	                                            "tags_add": ["imported"],
 	                                            "archived": false,
 	                                            "pinned": false,
-	                                            "title": title
+	                                            "title": title,
+	                                            "summary": title
 	                                        }).to_string();
 	                                        let result = tools.chat_update_metadata(&meta_update).await;
 	                                        ::log::info!("legacy_replay: metadata updated for '{}' -> {}", title, result);
