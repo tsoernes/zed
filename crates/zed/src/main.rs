@@ -1002,20 +1002,31 @@ pub fn main() {
 	                                    chat_id = Some(cid.to_string());
 	                                }
 	                            } else {
-	                                ::log::warn!(
-	                                    "legacy_replay: first append failed for thread {}: {}",
-	                                    meta.id,
-	                                    raw
-	                                );
+	                                                    ::log::warn!(
+	                                                        "legacy_replay: first append failed for thread {} (title='{}', project_id='{}'): {}",
+	                                                        meta.id,
+	                                                        title,
+	                                                        project_id,
+	                                                        raw
+	                                                    );
 	                                break;
 	                            }
 	                        }
 	                    }
 	                    imported_messages += 1;
 	                }
-	                if chat_id.is_some() {
-	                    imported_threads += 1;
-	                }
+	                                    if let Some(cid) = chat_id {
+	                                        let meta_update = serde_json::json!({
+	                                            "chat_id": cid,
+	                                            "tags_add": ["imported"],
+	                                            "archived": false,
+	                                            "pinned": false,
+	                                            "title": title
+	                                        }).to_string();
+	                                        let result = tools.chat_update_metadata(&meta_update).await;
+	                                        ::log::info!("legacy_replay: metadata updated for '{}' -> {}", title, result);
+	                                        imported_threads += 1;
+	                                    }
 	            }
 
 	            let summary =
