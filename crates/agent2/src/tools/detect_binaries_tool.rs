@@ -66,6 +66,15 @@ pub struct DetectBinariesToolInput {
     version_timeout_ms: u64,
 }
 
+impl Default for DetectBinariesToolInput {
+    fn default() -> Self {
+        Self {
+            filter_categories: None,
+            max_concurrency: default_max_concurrency(),
+            version_timeout_ms: default_version_timeout_ms(),
+        }
+    }
+}
 fn default_max_concurrency() -> usize {
     12
 }
@@ -341,7 +350,7 @@ impl AgentTool for DetectBinariesTool {
                         let version_result = detect_version_with_timeout(probe_path, timeout_ms);
                         let elapsed = start.elapsed().as_millis();
 
-                        let mut push_report =
+                        let push_report =
                             |found: bool, version: Option<String>, error: Option<String>| {
                                 if let Ok(mut vec) = results.lock() {
                                     vec.push(BinaryReport {
