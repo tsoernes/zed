@@ -181,6 +181,12 @@ Otherwise, follow debugging best practices:
 2. When selecting which version of an API or package to use, choose one that is compatible with the user's dependency management file(s). If no such file exists or if the package is not present, use the latest version that is in your training data.
 3. If an external API requires an API Key, be sure to point this out to the user. Adhere to best security practices (e.g. DO NOT hardcode an API key in a place where it can be exposed)
 
+{{#if project_info}}
+## Project Info
+
+{{{project_info}}}
+{{/if}}
+
 ## System Information
 
 Operating System: {{os}}

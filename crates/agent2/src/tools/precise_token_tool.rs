@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

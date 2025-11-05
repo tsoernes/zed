@@ -1532,7 +1532,7 @@ impl Thread {
                 }
             };
 
-            let project_key = cx.read_entity(&project, |project, cx| {
+            let project_key: Arc<str> = cx.read_entity(&project, |project, cx| {
                 let worktree_roots: Vec<String> = project
                     .worktree_root_names(cx)
                     .map(|s| s.to_string())
@@ -1545,10 +1545,91 @@ impl Thread {
                 Arc::from(project_key)
             })?;
 
-            let project_info = db.load_project_info(project_key).await?;
+            // Load any existing project info
+            let existing_info = db.load_project_info(project_key.clone()).await?;
 
+            // Background environment detection (summarized) to attach into project_info.
+            // Best-effort: detect key binaries and versions without blocking the UI for long.
+            fn path_is_executable(p: &std::path::Path) -> bool {
+                match std::fs::metadata(p) {
+                    Ok(meta) => meta.is_file(),
+                    Err(_) => false,
+                }
+            }
+            fn which_first(bin: &str) -> Option<std::path::PathBuf> {
+                let path_os = std::env::var_os("PATH")?;
+
+                for entry in std::env::split_paths(&path_os) {
+                    let candidate = entry.join(bin);
+                    if path_is_executable(&candidate) {
+                        return Some(candidate);
+                    }
+                }
+                None
+            }
+            fn version_string(bin_path: &std::path::Path) -> Option<String> {
+                let output = std::process::Command::new(bin_path)
+                    .arg("--version")
+                    .output()
+                    .ok()?;
+                if !output.status.success() {
+                    return None;
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if stdout.is_empty() {
+                    None
+                } else {
+                    Some(stdout.lines().next().unwrap_or(&stdout).to_string())
+                }
+            }
+
+            // Core set mirrors DetectBinariesTool base group emphasis; small set to keep it fast.
+            let candidates = [
+                "git", "gh",
+                "cargo", "rustc",
+                "pnpm", "yarn", "npm",
+                "pip", "pipx", "uv", "uvx", "poetry",
+                "dnf", "apt", "pacman", "zypper", "snap", "flatpak",
+            ];
+
+            let mut detected: Vec<(String, Option<String>)> = Vec::new();
+            for &bin in &candidates {
+                if let Some(p) = which_first(bin) {
+                    let ver = version_string(&p);
+                    detected.push((bin.to_string(), ver));
+                }
+            }
+
+            // Build a concise markdown summary
+            let mut summary = String::new();
+            summary.push_str("### Environment Binaries\n\n");
+            if detected.is_empty() {
+                summary.push_str("- No common developer binaries detected on PATH.\n");
+            } else {
+                for (name, ver) in detected {
+                    match ver {
+                        Some(v) => {
+                            summary.push_str(&format!("- {}: {}\n", name, v));
+                        }
+                        None => {
+                            summary.push_str(&format!("- {}: present\n", name));
+                        }
+                    }
+                }
+            }
+
+            // Merge with any existing project info (place environment first for freshness).
+            let merged = match existing_info {
+                Some(prev) if !prev.trim().is_empty() => {
+                    format!("{}\n\n{}", summary, prev)
+                }
+                _ => summary,
+            };
+
+            // Persist to DB and update thread field
+            db.save_project_info(project_key.clone(), merged.clone()).await?;
             thread.update(cx, |thread, _cx| {
-                thread.project_info = project_info;
+                thread.project_info = Some(merged);
             })?;
 
             Ok::<(), anyhow::Error>(())

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol as acp;
 use anyhow::Result;
-use futures::FutureExt;
+use itertools::Itertools;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -54,7 +54,7 @@ pub struct ProjectInfoTool {
 }
 
 impl ProjectInfoTool {
-    pub fn new(
+    pub(crate) fn new(
         project: Entity<Project>,
         db: futures::future::Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
     ) -> Self {
@@ -62,11 +62,16 @@ impl ProjectInfoTool {
     }
 
     fn get_project_key(&self, cx: &App) -> Arc<str> {
-        let worktree_roots = self.project.read(cx).worktree_root_names(cx);
+        let worktree_roots: Vec<String> = self
+            .project
+            .read(cx)
+            .worktree_root_names(cx)
+            .map(|s| s.to_string())
+            .collect();
         let project_key = if worktree_roots.is_empty() {
             "default".to_string()
         } else {
-            worktree_roots.join(";")
+            worktree_roots.iter().join(";")
         };
         Arc::from(project_key)
     }
