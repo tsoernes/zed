@@ -86,9 +86,9 @@ impl AgentTool for PreciseTokenTool {
             Vec<LanguageModelRequestMessage>,
         ) = thread.read_with(cx, |t, _| {
             (
-                t.model.clone(),
-                Some(t.prompt_id.to_string()),
-                Some(t.completion_mode),
+                t.model().cloned(),
+                None,
+                Some(t.completion_mode()),
                 t.messages().iter().flat_map(|m| m.to_request()).collect::<Vec<_>>(),
             )
         });
@@ -134,7 +134,7 @@ impl AgentTool for PreciseTokenTool {
 
         // Spawn an async foreground task that has access to an async App context.
         // This mirrors how other precise counting flows run inside the app's async runtime.
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |cx| {
             // Try the precise per-message computation first (may be expensive).
             // The precise helpers will fall back to heuristics if the provider doesn't support counting.
             match crate::token_usage::precise_per_message_tokens(&model, &base_request, &slice, cx).await {

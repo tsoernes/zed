@@ -838,9 +838,39 @@ struct GlobalThreadsDatabase(
 
 impl Global for GlobalThreadsDatabase {}
 
-pub(crate) struct ThreadsDatabase {
+pub struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
+}
+
+impl ThreadsDatabase {
+    /// Public wrapper to obtain (and initialize if needed) the shared ThreadsDatabase future.
+    pub fn connect(cx: &mut App) -> Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
+        Self::global_future(cx)
+    }
+}
+
+/// Public helper: fetch legacy thread metadata (for migration into chat_history).
+pub fn legacy_threads_metadata(cx: &mut App) -> Task<anyhow::Result<Vec<SerializedThreadMetadata>>> {
+    use anyhow::anyhow;
+    let shared = ThreadsDatabase::connect(cx);
+    cx.spawn(async move |_cx| {
+        let db = shared.await.map_err(|e| anyhow!(e))?;
+        db.list_threads().await.map_err(|e| anyhow!(e))
+    })
+}
+
+/// Public helper: load a full legacy serialized thread by id.
+pub fn legacy_load_thread(
+    cx: &mut App,
+    id: ThreadId,
+) -> Task<anyhow::Result<Option<SerializedThread>>> {
+    use anyhow::anyhow;
+    let shared = ThreadsDatabase::connect(cx);
+    cx.spawn(async move |_cx| {
+        let db = shared.await.map_err(|e| anyhow!(e))?;
+        db.try_find_thread(id).await.map_err(|e| anyhow!(e))
+    })
 }
 
 impl ThreadsDatabase {
@@ -885,6 +915,14 @@ impl ThreadsDatabase {
 
         cx.set_global(GlobalThreadsDatabase(database_future));
     }
+
+
+
+    /// Public helper: fetch legacy thread metadata (for migration into chat_history).
+
+
+    /// Public helper: load a full legacy serialized thread by id.
+
 
     pub async fn new(
         fs: Arc<dyn Fs>,

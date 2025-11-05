@@ -22,6 +22,7 @@
 ///
 /// The caller constructs and owns the underlying `ChatStore`.
 pub mod init;
+pub mod migrations;
 
 use std::sync::Arc;
 
@@ -145,13 +146,22 @@ pub struct ChatSummary {
 // Adapter
 // -----------------------------
 
+
+
 pub struct ChatHistoryTools {
     store: Arc<Mutex<ChatStore>>,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl ChatHistoryTools {
     pub fn new(store: Arc<Mutex<ChatStore>>) -> Self {
-        Self { store }
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("chat history dedicated tokio runtime"),
+        );
+        Self { store, runtime }
     }
 
     fn err_json(msg: impl ToString) -> String {
@@ -207,8 +217,8 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             role,
             content: input.content,
         };
-        let store = self.store.lock().await;
-        match store.tool_append(req).await {
+        let store = self.runtime.block_on(self.store.lock());
+        match self.runtime.block_on(async { store.tool_append(req).await }) {
             Ok(ToolAppendResult { chat, message }) => {
                 Self::ok_json(json!({ "chat": chat, "message": message }))
             }
@@ -267,8 +277,10 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let n = input.n.unwrap_or(10);
         let project_scoped = input.project_scoped.unwrap_or(true);
-        let store = self.store.lock().await;
-        match store.similar_chats(&ChatId(input.chat_id), n, project_scoped).await {
+        let store = self.runtime.block_on(self.store.lock());
+        match self.runtime.block_on(async {
+            store.similar_chats(&ChatId(input.chat_id), n, project_scoped).await
+        }) {
             Ok(list) => {
                 let payload: Vec<_> = list
                     .into_iter()
@@ -287,8 +299,10 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let limit = input.limit.unwrap_or(20);
         let offset = input.offset.unwrap_or(0);
-        let store = self.store.lock().await;
-        match store.list_chats(input.project_id.as_deref(), limit, offset).await {
+        let store = self.runtime.block_on(self.store.lock());
+        match self.runtime.block_on(async {
+            store.list_chats(input.project_id.as_deref(), limit, offset).await
+        }) {
             Ok(chats) => {
                 let summaries: Vec<ChatSummary> = chats
                     .into_iter()
@@ -315,8 +329,8 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             Ok(v) => v,
             Err(e) => return Self::err_json(format!("parse error: {e}")),
         };
-        let store = self.store.lock().await;
-        match store.get_chat(&ChatId(input.chat_id)).await {
+        let store = self.runtime.block_on(self.store.lock());
+        match self.runtime.block_on(async { store.get_chat(&ChatId(input.chat_id)).await }) {
             Ok((meta, messages)) => {
                 Self::ok_json(json!({ "chat": meta, "messages": messages }))
             }
@@ -344,26 +358,27 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let tags_add = input.tags_add.unwrap_or_default();
         let tags_remove = input.tags_remove.unwrap_or_default();
-        let store = self.store.lock().await;
-        match store
-            .update_metadata(
-                &ChatId(input.chat_id),
-                input.title,
-                input.summary,
-                &tags_add,
-                &tags_remove,
-                input.archived,
-                input.pinned,
-            )
-            .await
-        {
+        let store = self.runtime.block_on(self.store.lock());
+        match self.runtime.block_on(async {
+            store
+                .update_metadata(
+                    &ChatId(input.chat_id),
+                    input.title,
+                    input.summary,
+                    &tags_add,
+                    &tags_remove,
+                    input.archived,
+                    input.pinned,
+                )
+                .await
+        }) {
             Ok(updated) => Self::ok_json(json!({ "chat": updated })),
             Err(e) => Self::err_json(e),
         }
     }
 
     async fn chat_config_get(&self) -> String {
-        let store = self.store.lock().await;
+        let store = self.runtime.block_on(self.store.lock());
         // Clone so we can redact secrets before returning.
         let mut cfg = store.config().clone();
         if let Some(k) = cfg.openai.api_key.as_mut() {

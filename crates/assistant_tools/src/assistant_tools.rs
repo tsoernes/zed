@@ -23,6 +23,7 @@ mod schema;
 pub mod templates;
 mod terminal_tool;
 mod thinking_tool;
+mod token_usage_adapter_tool;
 mod ui;
 mod web_search_tool;
 
@@ -33,6 +34,7 @@ use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
 use std::sync::Arc;
+use token_usage_adapter_tool::TokenUsageAdapterTool;
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
@@ -90,6 +92,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
+    registry.register_tool(TokenUsageAdapterTool);
+    // Agent2 tools are now registered during thread/session creation inside agent2 (see agent2/src/agent.rs).
+    // Removed local registration block to avoid cyclic dependency and duplicate registration.
 
     // Context management tools
     log::info!("Registering context management tools: list_history, memory, chat_history");

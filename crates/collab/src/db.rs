@@ -88,6 +88,10 @@ impl Database {
         &self.options
     }
 
+    pub fn connection(&self) -> &DatabaseConnection {
+        &self.pool
+    }
+
     #[cfg(test)]
     pub fn reset(&self) {
         self.rooms.clear();

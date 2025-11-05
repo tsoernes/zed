@@ -114,8 +114,74 @@ fn init_chat_history(app_state: Arc<AppState>, cx: &mut App) {
             return;
         }
     };
+    // If sentinel missing, wipe tables to force a clean re-import
+    let sentinel = dir.join("imported.sentinel");
+    if !sentinel.exists() {
+        let _ = handle.block_on(async {
+            // Order deletion to satisfy FK constraints
+            let _ = conn.execute_unprepared("DELETE FROM message_embeddings;").await;
+            let _ = conn.execute_unprepared("DELETE FROM embeddings;").await;
+            let _ = conn.execute_unprepared("DELETE FROM chat_tags;").await;
+            let _ = conn.execute_unprepared("DELETE FROM chat_messages;").await;
+            let _ = conn.execute_unprepared("DELETE FROM chats;").await;
+            Ok::<(), anyhow::Error>(())
+        });
+    }
     assistant_tools::install_chat_history_adapter(&handles);
     acp_thread::chat_history_integration::init(handles.tools.clone());
+
+    // Import legacy threads into chat_history database when empty (messages + tags via auto-tagging).
+    {
+        use agent::thread_store::{legacy_threads_metadata, legacy_load_thread};
+        use chat_history::MessageRole as CHRole;
+        use language_model::Role as LMRole;
+
+        let store_mutex = handles.store.clone();
+        let _ = handle.block_on(async {
+            let store = store_mutex.lock().await;
+
+            // If no chats exist yet, import from legacy threads database.
+            if let Ok(chats) = store.list_chats(None, 1, 0).await {
+                if chats.is_empty() {
+                    if let Ok(metas) = legacy_threads_metadata(cx).await {
+                        for meta in metas {
+                            if let Ok(Some(thread)) = legacy_load_thread(cx, meta.id.clone()).await {
+                                // Create a new chat using the legacy summary as the title.
+                                if let Ok(mut chat_meta) =
+                                    store.create_chat(None, Some(meta.summary.to_string())).await
+                                {
+                                    // Append only text segments from legacy messages, mapping roles.
+                                    for msg in thread.messages {
+                                        let role = match msg.role {
+                                            LMRole::User => CHRole::User,
+                                            LMRole::Assistant => CHRole::Assistant,
+                                            LMRole::System => CHRole::System,
+                                        };
+                                        let mut text = String::new();
+                                        for seg in msg.segments {
+                                            if let agent::legacy_thread::SerializedMessageSegment::Text { text: t } = seg {
+                                                if !text.is_empty() { text.push(' '); }
+                                                text.push_str(&t);
+                                            }
+                                        }
+                                        if !text.is_empty() {
+                                            // Persist message; ChatStore will auto-suggest tags when enabled.
+                                            let _ = store.append_message(&mut chat_meta, role, text).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Create sentinel after successful import to prevent re-import on next launch
+            let sentinel = paths::database_dir().join("chat_history").join("imported.sentinel");
+            let _ = std::fs::write(sentinel, b"ok");
+            Ok::<(), anyhow::Error>(())
+        });
+    }
 
     // Enable tool in existing profiles so it’s available in agent UI
     use settings::update_settings_file;

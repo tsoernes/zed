@@ -70,6 +70,10 @@ pub struct ChatHistoryHandles {
     pub tools: Arc<ChatHistoryTools>,
 }
 
+/// Ensure required persistence schema exists when a DatabaseConnection is supplied.
+/// Uses IF NOT EXISTS so it is safe to call on every startup.
+
+
 /// Initialize the chat history subsystem and return both `ChatStore` and tool adapter.
 ///
 /// This currently instantiates a local FastEmbed backend by default. When
@@ -343,16 +347,16 @@ pub async fn init_chat_history_tools_async(
     };
 
     // Optional DB-backed persistence.
-    let db_opt = if let Some(conn) = options.db_conn.take() {
-        let mut db = ChatHistoryDb::new(conn, config.clone(), backend_arc.clone());
-        if options.rebuild_index {
-            // Rebuild lexical index from persisted messages.
-            db.rebuild_message_index().await?;
-        }
-        Some(Arc::new(Mutex::new(db)))
-    } else {
-        None
-    };
+        let db_opt = if let Some(conn) = options.db_conn.take() {
+            let mut db = ChatHistoryDb::new(conn, config.clone(), backend_arc.clone());
+            if options.rebuild_index {
+                // Rebuild lexical index from persisted messages.
+                db.rebuild_message_index().await?;
+            }
+            Some(Arc::new(Mutex::new(db)))
+        } else {
+            None
+        };
 
     let store = ChatStore::new(backend_arc, config, db_opt);
     let store_arc = Arc::new(Mutex::new(store));

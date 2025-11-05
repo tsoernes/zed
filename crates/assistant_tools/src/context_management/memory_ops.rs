@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use gpui::{App, Global, UpdateGlobal};
+use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 
 /// Metadata describing a stored memory segment.
@@ -111,10 +111,5 @@ impl GlobalMemoryBackend {
     pub fn get(cx: &mut App) -> Arc<dyn MemoryBackend> {
         // If not installed yet, create the default (noop) instance.
         cx.default_global::<GlobalMemoryBackendInner>().0.clone()
-    }
-
-    /// Install / replace the global backend.
-    pub fn set_backend(cx: &mut App, backend: Arc<dyn MemoryBackend>) {
-        GlobalMemoryBackendInner::set_global(cx, GlobalMemoryBackendInner(backend));
     }
 }

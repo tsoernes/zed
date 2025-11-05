@@ -946,6 +946,20 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     )
                 });
 
+                // Agent2 tool registration block commented out to avoid trait mismatch with assistant_tool::Tool.
+                /*
+                {
+                    use assistant_tool::ToolRegistry;
+                    use crate::tools::{TokenUsageTool, MemoryAgentTool, ShellDetectorTool};
+                    let registry = ToolRegistry::global(cx);
+                    let weak = thread.downgrade();
+                    registry.register_tool(TokenUsageTool::new(weak.clone()));
+                    registry.register_tool(MemoryAgentTool::new(weak.clone()));
+                    registry.register_tool(ShellDetectorTool::new(weak));
+                    log::info!("Registered agent2 tools for session {}", thread.read(cx).id());
+                }
+                */
+
                 if let Some(name) = initial_title.clone() {
                     thread.update(cx, |thread, cx| thread.set_title(name.into(), cx));
                 }

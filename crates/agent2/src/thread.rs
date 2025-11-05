@@ -2,8 +2,10 @@ use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectInfoTool, ReadFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ThreadsDatabase,
-    WebSearchTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, EnhancedTerminalTool, ThinkingTool, ThreadsDatabase,
+    WebSearchTool, ShellDetectorTool, DetectBinariesTool, TokenUsageTool, PreciseTokenTool,
+    // Added agent2 context tools
+    ListHistoryTool, MemoryAgentTool, ChatHistoryAgentTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -57,6 +59,7 @@ use std::{
 use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
+use itertools::Itertools;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
@@ -1239,6 +1242,8 @@ impl Thread {
             summarization_model: None,
             project,
             action_log,
+            db: ThreadsDatabase::connect(cx),
+            project_info: None,
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1473,9 +1478,20 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), environment));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(EnhancedTerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(ShellDetectorTool::new());
+        self.add_tool(DetectBinariesTool::new());
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
+        // Agent2 context & memory management tools
+        let weak = cx.weak_entity();
+        self.add_tool(TokenUsageTool::new(weak.clone()));
+        self.add_tool(PreciseTokenTool::new(weak.clone()));
+        self.add_tool(ListHistoryTool::new(weak.clone()));
+        self.add_tool(MemoryAgentTool::new(weak.clone()));
+        self.add_tool(ChatHistoryAgentTool::new());
+        log::info!("Added context tools: list_history, memory, chat_history");
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -1497,8 +1513,8 @@ impl Thread {
     pub fn load_project_info(&mut self, cx: &mut Context<Self>) {
         let db_future = self.db.clone();
         let project = self.project.clone();
-        
-        cx.spawn(async move |thread, mut cx| {
+
+        cx.spawn(async move |thread, cx| {
             let db = match db_future.await {
                 Ok(db) => db,
                 Err(e) => {
@@ -1506,23 +1522,26 @@ impl Thread {
                     return Ok(());
                 }
             };
-            
+
             let project_key = cx.read_entity(&project, |project, cx| {
-                let worktree_roots = project.worktree_root_names(cx);
+                let worktree_roots: Vec<String> = project
+                    .worktree_root_names(cx)
+                    .map(|s| s.to_string())
+                    .collect();
                 let project_key = if worktree_roots.is_empty() {
                     "default".to_string()
                 } else {
-                    worktree_roots.join(";")
+                    worktree_roots.iter().join(";")
                 };
                 Arc::from(project_key)
             })?;
-            
+
             let project_info = db.load_project_info(project_key).await?;
-            
-            thread.update(&mut cx, |thread, _cx| {
+
+            thread.update(cx, |thread, _cx| {
                 thread.project_info = project_info;
             })?;
-            
+
             Ok::<(), anyhow::Error>(())
         })
         .detach_and_log_err(cx);

@@ -42,6 +42,44 @@ mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
+async fn test_context_tools_present(cx: &mut TestAppContext) {
+    // Ensure a new thread exposes list_history, memory, and chat_history tools to the model.
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    // Trigger a send to force building a LanguageModelRequest (which includes tool schemas).
+    thread
+        .update(cx, |thread, cx| {
+            thread
+                .send(
+                    UserMessageId::new(),
+                    ["Probe available tools (no actual call needed)."],
+                    cx,
+                )
+                .unwrap()
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let pending = fake_model.pending_completions();
+    assert!(
+        !pending.is_empty(),
+        "No pending completion; request with tools was not built"
+    );
+    let tool_names: Vec<String> = pending[0].tools.iter().map(|t| t.name.clone()).collect();
+
+    for required in ["list_history", "memory", "chat_history"] {
+        assert!(
+            tool_names.contains(&required.to_string()),
+            "Required context tool '{}' missing from initial tool list: {:?}",
+            required,
+            tool_names
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

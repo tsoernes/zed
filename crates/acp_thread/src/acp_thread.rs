@@ -38,7 +38,7 @@ use ui::App;
 use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
-mod chat_history_integration {
+pub mod chat_history_integration {
     use super::*;
     use std::sync::{Arc, OnceLock};
     use chat_history_tools::{ChatHistoryTools, ChatHistoryToolApi};
@@ -46,9 +46,8 @@ mod chat_history_integration {
 
     static TOOLS: OnceLock<Arc<ChatHistoryTools>> = OnceLock::new();
 
-    #[allow(dead_code)]
-    pub fn init(tools: ChatHistoryTools) {
-        let _ = TOOLS.set(Arc::new(tools));
+    pub fn init(tools: Arc<ChatHistoryTools>) {
+        let _ = TOOLS.set(tools);
     }
 
     pub fn append_user_chunk(chunk: &acp::ContentBlock, project_id: Option<String>, cx: &mut Context<AcpThread>) {
