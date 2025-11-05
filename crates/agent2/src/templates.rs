@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::SharedString;
 use handlebars::Handlebars;
 use rust_embed::RustEmbed;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::sync::Arc;
 
 #[derive(RustEmbed)]
@@ -40,12 +40,16 @@ pub struct SystemPromptTemplate<'a> {
     pub available_tools: Vec<SharedString>,
     pub active_tokens: Option<usize>,
     pub max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_pct_i64")]
     pub usage_pct: Option<f64>,
     pub memory_segment_count: Option<usize>,
     pub memory_saved_tokens: Option<u64>,
     pub project_info: Option<String>,
     pub active_precise_tokens: Option<usize>,
     pub max_precise_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(serialize_with = "serialize_pct_i64")]
     pub precise_usage_pct: Option<f64>,
     pub memory_archive_threshold_pct: Option<f64>,
     pub detect_binaries_hint: Option<bool>,
@@ -53,6 +57,16 @@ pub struct SystemPromptTemplate<'a> {
 
 impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
+}
+
+fn serialize_pct_i64<S>(value: &Option<f64>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) => serializer.serialize_i64((*v).round() as i64),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Handlebars helper for checking if an item is in a list
