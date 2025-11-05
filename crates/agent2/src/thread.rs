@@ -801,14 +801,7 @@ impl Thread {
             },
             memory_archive_threshold_pct: Some(80.0),
             detect_binaries_hint: Some(true),
-            linux_package_managers: Some(vec![
-                "dnf".into(),
-                "apt".into(),
-                "pacman".into(),
-                "zypper".into(),
-                "snap".into(),
-                "flatpak".into(),
-            ]),
+
         };
         let prompt = tpl.render(&self.templates).unwrap_or_default();
         // Very rough: char/4; real precise counting could use model.count_tokens if exposed for system-only slice.
@@ -2604,14 +2597,7 @@ impl Thread {
             memory_archive_threshold_pct: Some(80.0),
             // Hint to run detect_binaries and include Linux package managers
             detect_binaries_hint: Some(true),
-            linux_package_managers: Some(vec![
-                "dnf".into(),
-                "apt".into(),
-                "pacman".into(),
-                "zypper".into(),
-                "snap".into(),
-                "flatpak".into(),
-            ]),
+
         }
         .render(&self.templates)
         .context("failed to build system prompt")

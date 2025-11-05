@@ -49,7 +49,6 @@ pub struct SystemPromptTemplate<'a> {
     pub precise_usage_pct: Option<f64>,
     pub memory_archive_threshold_pct: Option<f64>,
     pub detect_binaries_hint: Option<bool>,
-    pub linux_package_managers: Option<Vec<SharedString>>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -102,7 +101,6 @@ mod tests {
             precise_usage_pct: None,
             memory_archive_threshold_pct: None,
             detect_binaries_hint: None,
-            linux_package_managers: None,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

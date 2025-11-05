@@ -33,13 +33,8 @@ When token usage exceeds 80%, proactively archive recent non-essential message s
 {{#if (contains available_tools 'detect_binaries')}}
 - At the start of a session, run the detect_binaries tool to scan for common developer binaries and versions.
 {{/if}}
-- Include Linux package managers in the scan (e.g., dnf, apt, pacman, zypper, snap, flatpak).
-{{#if linux_package_managers}}
-- Detected package managers:
-{{#each linux_package_managers}}
-  - {{this}}
-{{/each}}
-{{/if}}
+
+
 
 ## Communication
 
