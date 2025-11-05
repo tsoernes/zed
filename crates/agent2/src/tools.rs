@@ -26,7 +26,7 @@ mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
 
-/// A list of all built in tool names, for use in deduplicating MCP tool names
+/// A list of all built in tool names, for use in deduplicating MCP tool names (context tools emit ctx_* names)
 pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
     [
         CopyPathTool::name(),
@@ -38,9 +38,9 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         FindPathTool::name(),
         GrepTool::name(),
         ListDirectoryTool::name(),
-        ListHistoryTool::name(),
-        ChatHistoryAgentTool::name(),
-        MemoryAgentTool::name(),
+        ListHistoryTool::name(),      // ctx_list_history
+        ChatHistoryAgentTool::name(), // ctx_chat_history
+        MemoryAgentTool::name(),      // ctx_memory
         ProjectInfoTool::name(),
         TokenUsageTool::name(),
         PreciseTokenTool::name(),

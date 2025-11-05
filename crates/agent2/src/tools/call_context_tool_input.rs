@@ -10,17 +10,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// Fields:
 /// * `name` - The target tool to invoke. Supported values (currently):
-///            - "list_history"
+///            - "ctx_list_history"
 /// * `arguments` - JSON object containing the concrete tool's input parameters,
 ///                 matching the schema of `ListHistoryToolInput`. If omitted
-///                 and `name` is "list_history", defaults to an empty object
+///                 and `name` is "ctx_list_history", defaults to an empty object
 ///                 (all defaults).
 ///
 /// Unknown tool names or invalid argument shapes are reported as errors by
 /// the executor layer that deserializes this struct.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CallContextToolInput {
-    /// Target context-compaction tool name ("list_history").
+    /// Target context-compaction tool name ("ctx_list_history").
     pub name: String,
     /// Raw JSON arguments forwarded to the chosen tool.
     pub arguments: Option<serde_json::Value>,

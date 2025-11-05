@@ -43,7 +43,7 @@ use test_tools::*;
 
 #[gpui::test]
 async fn test_context_tools_present(cx: &mut TestAppContext) {
-    // Ensure a new thread exposes list_history, memory, and chat_history tools to the model.
+    // Ensure a new thread exposes ctx_list_history, ctx_memory, and ctx_chat_history tools to the model.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
@@ -69,7 +69,7 @@ async fn test_context_tools_present(cx: &mut TestAppContext) {
     );
     let tool_names: Vec<String> = pending[0].tools.iter().map(|t| t.name.clone()).collect();
 
-    for required in ["list_history", "memory", "chat_history"] {
+    for required in ["ctx_list_history", "ctx_memory", "ctx_chat_history"] {
         assert!(
             tool_names.contains(&required.to_string()),
             "Required context tool '{}' missing from initial tool list: {:?}",

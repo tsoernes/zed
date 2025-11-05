@@ -52,7 +52,7 @@ impl AgentTool for ListHistoryTool {
     type Output = String;
 
     fn name() -> &'static str {
-        "list_history"
+        "ctx_list_history"
     }
 
     fn kind() -> ToolKind {

@@ -39,7 +39,7 @@ impl AgentTool for ChatHistoryAgentTool {
     type Output = ChatHistoryAgentToolOutput;
 
     fn name() -> &'static str {
-        "chat_history"
+        "ctx_chat_history"
     }
 
     fn kind() -> agent_client_protocol::ToolKind {

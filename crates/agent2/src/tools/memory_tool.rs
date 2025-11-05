@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use gpui::{App, SharedString, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,7 @@ impl AgentTool for MemoryAgentTool {
     type Output = MemoryToolOutput;
 
     fn name() -> &'static str {
-        "memory"
+        "ctx_memory"
     }
 
     fn kind() -> agent_client_protocol::ToolKind {
