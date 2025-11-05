@@ -102,17 +102,10 @@ run_command:
       "output": "<joined stdout+stderr>",
       "duration_ms": 1234 }
 
-list_jobs:
-  Input: {}
-  Output:
-    { "ok": true,
-      "jobs": [
-        { "job_id": "...", "command": "...", "state": "Running|Succeeded|Failed", "started_at": "...", "duration_ms": null }
-      ] }
-
-job_status:
-  Input: { "job_id": "..." }
-  Output: { "ok": true, "job": { ...same fields plus maybe partial output... } }
+Jobs lifecycle (dedicated tools):
+  - List jobs: enhanced_terminal_list_jobs -> { "jobs": [ ... ] }
+  - Status / cancel / full output: enhanced_terminal_job_status { "job_id": "...", "cancel": true|false, "full_output": true|false }
+(Inline list_jobs and job_status inputs in this tool have been removed.)
 ```
 
 (Actual implementation can start smaller, omitting job listing if not yet required.)
@@ -127,17 +120,17 @@ struct TerminalJob {
     command: String,
     started_at: Instant,
     state: JobState,
-    output_buffer: String,
+    preview: String,        // truncated preview
+    full_output: String,    // complete output (accessed via enhanced_terminal_job_status)
     exit_code: Option<i32>,
     duration: Option<Duration>,
 }
 
 enum JobState {
-    Pending,
     Running,
-    Succeeded,
-    Failed,
-    Cancelled,
+    Finished,   // exit_code == 0
+    Failed,     // exit_code != 0
+    Canceled,
 }
 ```
 
@@ -213,13 +206,13 @@ Repeated identical commands with unchanged working directory could be cached (fi
 User triggers long command
    |
    v
-run_command -> job_id returned early (streaming variant)
+enhanced_terminal_async -> returns { "job_id": "...", "state": "running" }
    |
-User cancels (job_cancel job_id)
+Poll: enhanced_terminal_job_status (preview updates)
    |
-Foreground: sends SIGTERM -> updates state Cancelled
+Optional cancel: enhanced_terminal_job_status { "job_id": "...", "cancel": true }
    |
-job_status => { state: "Cancelled", partial_output: ... }
+Completion: enhanced_terminal_job_status { "job_id": "...", "full_output": true }
 ```
 
 ---
@@ -245,8 +238,8 @@ job_status => { state: "Cancelled", partial_output: ... }
 |       collect_output(handle)                                  |
 |       finalize(job)                                           |
 |                                                               |
-|  - list_jobs()  -> Vec<JobSummary>                            |
-|  - job_status(id) -> TerminalJob (sanitized)                  |
+|  - (moved) use enhanced_terminal_list_jobs tool -> Vec<JobSummary> |
+|  - status/cancel/full output handled by enhanced_terminal_job_status |
 +-------------------------+-------------------------------------+
                           |
                           v
@@ -272,7 +265,7 @@ On a fresh upstream main:
 3. Implement `run_command` (spawn + collect).
 4. Add validation helpers (deny patterns).
 5. Add output normalization (size limit, UTF-8 restore).
-6. Implement `list_jobs`, `job_status` (optional if jobs stored).
+6. Implement external listing/status tools (`enhanced_terminal_list_jobs`, `enhanced_terminal_job_status`) (optional if jobs stored).
 7. Wrap all responses in JSON envelopes with `ok` flag.
 8. Integrate with agent tool registry (snake_case names).
 9. Add tests:
