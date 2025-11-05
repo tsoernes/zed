@@ -1549,7 +1549,7 @@ impl Thread {
             let existing_info = db.load_project_info(project_key.clone()).await?;
 
             // Run detect_binaries tool to produce full JSON and attach to project_info.
-            let detect_task = thread.update(cx, |thread, cx| {
+            let detect_task = thread.update(cx, |_thread, cx| {
                 let tool = Arc::new(DetectBinariesTool::new());
                 // Use a non-interactive event stream to avoid UI authorization blocking at init.
                 let event_stream = ToolCallEventStream::noop("detect_binaries_init");
