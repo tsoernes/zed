@@ -80,7 +80,7 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "package_managers",
         &[
-            "pnpm", "yarn", "npm", "pip", "pipx", "uv", "uvx", "poetry", "cargo", "rustup",
+            "pnpm", "yarn", "npm", "pip", "pipx", "uv", "uvx", "poetry", "cargo", "rustup", "dnf", "apt", "pacman", "zypper", "snap", "flatpak",
         ],
     ),
     (

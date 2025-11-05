@@ -44,6 +44,12 @@ pub struct SystemPromptTemplate<'a> {
     pub memory_segment_count: Option<usize>,
     pub memory_saved_tokens: Option<u64>,
     pub project_info: Option<String>,
+    pub active_precise_tokens: Option<usize>,
+    pub max_precise_tokens: Option<usize>,
+    pub precise_usage_pct: Option<f64>,
+    pub memory_archive_threshold_pct: Option<f64>,
+    pub detect_binaries_hint: Option<bool>,
+    pub linux_package_managers: Option<Vec<SharedString>>,
 }
 
 impl Template for SystemPromptTemplate<'_> {
@@ -91,6 +97,12 @@ mod tests {
             memory_segment_count: None,
             memory_saved_tokens: None,
             project_info: None,
+            active_precise_tokens: None,
+            max_precise_tokens: None,
+            precise_usage_pct: None,
+            memory_archive_threshold_pct: None,
+            detect_binaries_hint: None,
+            linux_package_managers: None,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();

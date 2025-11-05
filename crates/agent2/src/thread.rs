@@ -793,6 +793,22 @@ impl Thread {
             memory_segment_count: None,
             memory_saved_tokens: None,
             project_info: self.project_info.clone(),
+            active_precise_tokens: self.precise_active_tokens.map(|v| v as usize),
+            max_precise_tokens: self.precise_max_tokens.map(|v| v as usize),
+            precise_usage_pct: match (self.precise_active_tokens, self.precise_max_tokens) {
+                (Some(u), Some(m)) if m > 0 => Some((u as f64 / m as f64) * 100.0),
+                _ => None,
+            },
+            memory_archive_threshold_pct: Some(80.0),
+            detect_binaries_hint: Some(true),
+            linux_package_managers: Some(vec![
+                "dnf".into(),
+                "apt".into(),
+                "pacman".into(),
+                "zypper".into(),
+                "snap".into(),
+                "flatpak".into(),
+            ]),
         };
         let prompt = tpl.render(&self.templates).unwrap_or_default();
         // Very rough: char/4; real precise counting could use model.count_tokens if exposed for system-only slice.
@@ -2577,6 +2593,25 @@ impl Thread {
             memory_segment_count: mem_count_opt,
             memory_saved_tokens: mem_saved_opt,
             project_info: self.project_info.clone(),
+            // Precise token usage fields
+            active_precise_tokens: self.precise_active_tokens.map(|v| v as usize),
+            max_precise_tokens: self.precise_max_tokens.map(|v| v as usize),
+            precise_usage_pct: match (self.precise_active_tokens, self.precise_max_tokens) {
+                (Some(u), Some(m)) if m > 0 => Some((u as f64 / m as f64) * 100.0),
+                _ => None,
+            },
+            // Memory archiving threshold advice (80%)
+            memory_archive_threshold_pct: Some(80.0),
+            // Hint to run detect_binaries and include Linux package managers
+            detect_binaries_hint: Some(true),
+            linux_package_managers: Some(vec![
+                "dnf".into(),
+                "apt".into(),
+                "pacman".into(),
+                "zypper".into(),
+                "snap".into(),
+                "flatpak".into(),
+            ]),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
