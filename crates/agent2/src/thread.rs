@@ -1,8 +1,9 @@
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, SystemPromptTemplate,
-    Template, Templates, TerminalTool, ThinkingTool, WebSearchTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectInfoTool, ReadFileTool,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ThinkingTool, ThreadsDatabase,
+    WebSearchTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -608,6 +609,8 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
+    pub(crate) db: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
+    project_info: Option<String>,
 
     // Memory segment / precise token usage fields
     memory_segments: Vec<ThreadMemorySegment>,
@@ -672,6 +675,7 @@ impl Thread {
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
+        let db = ThreadsDatabase::connect(cx);
         Self {
             id: acp::SessionId(uuid::Uuid::new_v4().to_string().into()),
             prompt_id: PromptId::new(),
@@ -703,6 +707,8 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
+            db,
+            project_info: None,
             // Newly added memory / precise token usage fields
             memory_segments: Vec::new(),
             next_memory_segment_id: 0,
@@ -783,6 +789,7 @@ impl Thread {
             usage_pct: None,
             memory_segment_count: None,
             memory_saved_tokens: None,
+            project_info: self.project_info.clone(),
         };
         let prompt = tpl.render(&self.templates).unwrap_or_default();
         // Very rough: char/4; real precise counting could use model.count_tokens if exposed for system-only slice.
@@ -1461,6 +1468,7 @@ impl Thread {
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
+        self.add_tool(ProjectInfoTool::new(self.project.clone(), self.db.clone()));
         self.add_tool(ReadFileTool::new(
             self.project.clone(),
             self.action_log.clone(),
@@ -1484,6 +1492,40 @@ impl Thread {
 
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.profile_id = profile_id;
+    }
+
+    pub fn load_project_info(&mut self, cx: &mut Context<Self>) {
+        let db_future = self.db.clone();
+        let project = self.project.clone();
+        
+        cx.spawn(async move |thread, mut cx| {
+            let db = match db_future.await {
+                Ok(db) => db,
+                Err(e) => {
+                    log::error!("Failed to connect to database for project_info: {}", e);
+                    return Ok(());
+                }
+            };
+            
+            let project_key = cx.read_entity(&project, |project, cx| {
+                let worktree_roots = project.worktree_root_names(cx);
+                let project_key = if worktree_roots.is_empty() {
+                    "default".to_string()
+                } else {
+                    worktree_roots.join(";")
+                };
+                Arc::from(project_key)
+            })?;
+            
+            let project_info = db.load_project_info(project_key).await?;
+            
+            thread.update(&mut cx, |thread, _cx| {
+                thread.project_info = project_info;
+            })?;
+            
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
@@ -2515,6 +2557,7 @@ impl Thread {
             usage_pct: usage_pct_opt,
             memory_segment_count: mem_count_opt,
             memory_saved_tokens: mem_saved_opt,
+            project_info: self.project_info.clone(),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
