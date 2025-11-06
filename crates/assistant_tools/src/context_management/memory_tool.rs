@@ -12,7 +12,7 @@ use ui::IconName;
 
 /// Operation the memory tool should perform.
 /// Uses thread-backed archive (agent2 Thread) instead of an internal stub store.
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryOperation {
     /// List stored memory segments (optionally limited).
@@ -21,7 +21,7 @@ pub enum MemoryOperation {
         limit: Option<usize>,
     },
     /// Show aggregate statistics.
-    Stats,
+    Stats {},
     /// Store (archive) a contiguous range of messages [start, end) (end exclusive).
     Store {
         start: usize,
@@ -37,6 +37,94 @@ pub enum MemoryOperation {
     },
     /// Restore a stored segment (reinsert original messages).
     Restore { id: u64 },
+}
+
+/// Helper struct for deserialization that uses the standard serde derive.
+/// This avoids infinite recursion in the custom deserializer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MemoryOperationHelper {
+    List {
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    Stats {},
+    Store {
+        start: usize,
+        end: usize,
+        #[serde(default)]
+        summary: Option<String>,
+    },
+    Load {
+        id: u64,
+        #[serde(default)]
+        include_messages: bool,
+    },
+    Restore {
+        id: u64,
+    },
+}
+
+impl From<MemoryOperationHelper> for MemoryOperation {
+    fn from(helper: MemoryOperationHelper) -> Self {
+        match helper {
+            MemoryOperationHelper::List { limit } => MemoryOperation::List { limit },
+            MemoryOperationHelper::Stats {} => MemoryOperation::Stats {},
+            MemoryOperationHelper::Store {
+                start,
+                end,
+                summary,
+            } => MemoryOperation::Store {
+                start,
+                end,
+                summary,
+            },
+            MemoryOperationHelper::Load {
+                id,
+                include_messages,
+            } => MemoryOperation::Load {
+                id,
+                include_messages,
+            },
+            MemoryOperationHelper::Restore { id } => MemoryOperation::Restore { id },
+        }
+    }
+}
+
+/// Custom deserializer to handle both direct JSON and string-wrapped JSON.
+/// This works around an issue where MCP invocations wrap parameters as strings.
+impl<'de> Deserialize<'de> for MemoryOperation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // Try direct deserialization first (normal case)
+        match serde_json::from_value::<MemoryOperationHelper>(value.clone()) {
+            Ok(helper) => return Ok(helper.into()),
+            Err(_) => {
+                // Handle string-wrapped JSON (MCP invocation case)
+                if let serde_json::Value::String(ref s) = value {
+                    match serde_json::from_str::<MemoryOperationHelper>(s) {
+                        Ok(helper) => return Ok(helper.into()),
+                        Err(e) => {
+                            return Err(D::Error::custom(format!(
+                                "Failed to parse string-wrapped MemoryOperation: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+
+                return Err(D::Error::custom(format!(
+                    "Failed to deserialize MemoryOperation from: {:?}",
+                    value
+                )));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -93,7 +181,7 @@ impl Tool for MemoryTool {
         if let Ok(parsed) = serde_json::from_value::<MemoryToolInput>(input.clone()) {
             match parsed.operation {
                 MemoryOperation::List { .. } => "List stored memories".into(),
-                MemoryOperation::Stats => "Memory stats".into(),
+                MemoryOperation::Stats {} => "Memory stats".into(),
                 MemoryOperation::Store { start, end, .. } => {
                     format!("Archive messages [{}..{})", start, end)
                 }
@@ -182,7 +270,7 @@ impl Tool for MemoryTool {
                     md.push_str("\n```\n");
                     Ok(md.into())
                 }
-                MemoryOperation::Stats => {
+                MemoryOperation::Stats {} => {
                     let stats = backend.stats(cx)?;
                     let json = serde_json::json!({
                         "segments": stats.segments,
