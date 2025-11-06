@@ -1171,8 +1171,16 @@ impl Thread {
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
             );
-            tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
-                .log_err();
+            if let Err(err) = tool.replay(tool_use.input.clone(), output, tool_event_stream, cx) {
+                // If replay fails (e.g., deserialization error from stored error string),
+                // log it but don't let it propagate to avoid cascading failures
+                log::debug!(
+                    "Failed to replay tool call {} ({}): {:?}",
+                    tool_use.name,
+                    tool_use.id,
+                    err
+                );
+            }
         }
 
         stream.update_tool_call_fields(
@@ -2133,7 +2141,7 @@ impl Thread {
                     tool_name: tool_use.name,
                     is_error: true,
                     content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                    output: Some(error.to_string().into()),
+                    output: None,
                 },
             }
         }))
@@ -2152,7 +2160,7 @@ impl Thread {
             tool_name,
             is_error: true,
             content: LanguageModelToolResultContent::Text(tool_output.into()),
-            output: Some(serde_json::Value::String(raw_input.to_string())),
+            output: None,
         }
     }
 
