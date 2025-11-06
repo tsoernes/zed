@@ -108,8 +108,7 @@ fn adapter() -> Result<Arc<ChatHistoryTools>> {
 /// ```
 ///
 /// Each variant maps directly to a JSON method on `ChatHistoryTools`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub enum ChatHistoryOperation {
     /// Append a message to a chat (creates chat if missing).
     Append {
@@ -226,6 +225,183 @@ pub enum ChatHistoryOperation {
         #[serde(default)]
         default_retrieval_mode: Option<RetrievalMode>,
     },
+}
+
+/// Helper struct for deserialization that uses the standard serde derive.
+/// This avoids infinite recursion in the custom deserializer.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ChatHistoryOperationHelper {
+    Append {
+        #[serde(default)]
+        chat_id: Option<String>,
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        role: Option<MessageRole>,
+        content: String,
+    },
+    Search {
+        query: String,
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        chat_id: Option<String>,
+        #[serde(default)]
+        top_k: Option<usize>,
+        #[serde(default)]
+        mode: Option<RetrievalMode>,
+        #[serde(default)]
+        alpha: Option<f32>,
+    },
+    Answer {
+        question: String,
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        chat_id: Option<String>,
+        #[serde(default)]
+        top_k: Option<usize>,
+        #[serde(default)]
+        mode: Option<RetrievalMode>,
+        #[serde(default)]
+        alpha: Option<f32>,
+    },
+    Similar {
+        #[serde(default)]
+        chat_id: Option<String>,
+        #[serde(default)]
+        n: Option<usize>,
+        #[serde(default)]
+        project_scoped: Option<bool>,
+    },
+    List {
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        offset: Option<usize>,
+    },
+    Get {
+        chat_id: String,
+    },
+    CreateChat {
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    DeleteChat {
+        chat_id: String,
+    },
+    Reembed {
+        #[serde(default)]
+        chat_id: Option<String>,
+    },
+    UpdateMetadata {
+        chat_id: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        summary: Option<String>,
+        #[serde(default)]
+        tags_add: Option<Vec<String>>,
+        #[serde(default)]
+        tags_remove: Option<Vec<String>>,
+        #[serde(default)]
+        archived: Option<bool>,
+        #[serde(default)]
+        pinned: Option<bool>,
+    },
+    ConfigGet {},
+    ConfigSet {
+        #[serde(default)]
+        embedding_model: Option<String>,
+        #[serde(default)]
+        hybrid_alpha: Option<f32>,
+        #[serde(default)]
+        similar_chats_k: Option<usize>,
+        #[serde(default)]
+        summary_refresh_chars: Option<usize>,
+        #[serde(default)]
+        summary_delta_chars: Option<usize>,
+        #[serde(default)]
+        rag_top_k: Option<usize>,
+        #[serde(default)]
+        auto_tag: Option<bool>,
+        #[serde(default)]
+        default_retrieval_mode: Option<RetrievalMode>,
+    },
+}
+
+impl From<ChatHistoryOperationHelper> for ChatHistoryOperation {
+    fn from(helper: ChatHistoryOperationHelper) -> Self {
+        match helper {
+            ChatHistoryOperationHelper::Append { chat_id, project_id, title, role, content } =>
+                ChatHistoryOperation::Append { chat_id, project_id, title, role, content },
+            ChatHistoryOperationHelper::Search { query, project_id, chat_id, top_k, mode, alpha } =>
+                ChatHistoryOperation::Search { query, project_id, chat_id, top_k, mode, alpha },
+            ChatHistoryOperationHelper::Answer { question, project_id, chat_id, top_k, mode, alpha } =>
+                ChatHistoryOperation::Answer { question, project_id, chat_id, top_k, mode, alpha },
+            ChatHistoryOperationHelper::Similar { chat_id, n, project_scoped } =>
+                ChatHistoryOperation::Similar { chat_id, n, project_scoped },
+            ChatHistoryOperationHelper::List { project_id, limit, offset } =>
+                ChatHistoryOperation::List { project_id, limit, offset },
+            ChatHistoryOperationHelper::Get { chat_id } =>
+                ChatHistoryOperation::Get { chat_id },
+            ChatHistoryOperationHelper::CreateChat { project_id, title } =>
+                ChatHistoryOperation::CreateChat { project_id, title },
+            ChatHistoryOperationHelper::DeleteChat { chat_id } =>
+                ChatHistoryOperation::DeleteChat { chat_id },
+            ChatHistoryOperationHelper::Reembed { chat_id } =>
+                ChatHistoryOperation::Reembed { chat_id },
+            ChatHistoryOperationHelper::UpdateMetadata { chat_id, title, summary, tags_add, tags_remove, archived, pinned } =>
+                ChatHistoryOperation::UpdateMetadata { chat_id, title, summary, tags_add, tags_remove, archived, pinned },
+            ChatHistoryOperationHelper::ConfigGet {} =>
+                ChatHistoryOperation::ConfigGet {},
+            ChatHistoryOperationHelper::ConfigSet { embedding_model, hybrid_alpha, similar_chats_k, summary_refresh_chars, summary_delta_chars, rag_top_k, auto_tag, default_retrieval_mode } =>
+                ChatHistoryOperation::ConfigSet { embedding_model, hybrid_alpha, similar_chats_k, summary_refresh_chars, summary_delta_chars, rag_top_k, auto_tag, default_retrieval_mode },
+        }
+    }
+}
+
+/// Custom deserializer to handle both direct JSON and string-wrapped JSON.
+/// This works around an issue where MCP invocations wrap parameters as strings.
+impl<'de> serde::Deserialize<'de> for ChatHistoryOperation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // Try direct deserialization first (normal case)
+        match serde_json::from_value::<ChatHistoryOperationHelper>(value.clone()) {
+            Ok(helper) => return Ok(helper.into()),
+            Err(_) => {
+                // Handle string-wrapped JSON (MCP invocation case)
+                if let serde_json::Value::String(ref s) = value {
+                    match serde_json::from_str::<ChatHistoryOperationHelper>(s) {
+                        Ok(helper) => return Ok(helper.into()),
+                        Err(e) => {
+                            return Err(D::Error::custom(format!(
+                                "Failed to parse string-wrapped ChatHistoryOperation: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+
+                return Err(D::Error::custom(format!(
+                    "Failed to deserialize ChatHistoryOperation from: {:?}",
+                    value
+                )));
+            }
+        }
+    }
 }
 
 /// Tool input envelope.
