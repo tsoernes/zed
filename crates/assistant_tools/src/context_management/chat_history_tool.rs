@@ -77,6 +77,36 @@ fn adapter() -> Result<Arc<ChatHistoryTools>> {
 
 /// High‑level operations exposed by the `chat_history` tool.
 ///
+/// Chat history operations that can be performed.
+///
+/// # Serialization Format
+///
+/// This enum uses serde's default tagged representation with `#[serde(rename_all = "snake_case")]`.
+///
+/// ## Examples of correct JSON format:
+///
+/// ```json
+/// // List chats (all fields optional)
+/// {"list": {"limit": 10, "offset": 0}}
+/// {"list": {}}  // Use defaults
+///
+/// // Find similar chats to current conversation (chat_id optional)
+/// {"similar": {"n": 10, "project_scoped": true}}
+/// {"similar": {"chat_id": "abc123", "n": 5}}
+///
+/// // Search messages
+/// {"search": {"query": "rust async", "mode": "hybrid", "top_k": 10}}
+///
+/// // Answer question with RAG
+/// {"answer": {"question": "how did I solve this before?"}}
+///
+/// // Get config (unit variant)
+/// {"config_get": {}}
+///
+/// // Append message
+/// {"append": {"content": "Hello", "role": "User"}}
+/// ```
+///
 /// Each variant maps directly to a JSON method on `ChatHistoryTools`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -121,9 +151,10 @@ pub enum ChatHistoryOperation {
         #[serde(default)]
         alpha: Option<f32>,
     },
-    /// Find similar chats to the given chat id.
+    /// Find similar chats to the given chat id. If chat_id is omitted, uses current conversation.
     Similar {
-        chat_id: String,
+        #[serde(default)]
+        chat_id: Option<String>,
         #[serde(default)]
         n: Option<usize>,
         #[serde(default)]
@@ -212,27 +243,58 @@ impl Tool for ChatHistoryTool {
     }
 
     fn description(&self) -> String {
-        // Expanded tool description for the LLM / agent:
-        // - This tool exposes persistent chat history functionality backed by an embedding + BM25 hybrid store.
-        // - Use Append to record a new message (creates the chat if chat_id is absent).
-        // - Use Search for keyword / semantic retrieval (supports mode + alpha to tune BM25 vs embedding fusion).
-        // - Use Answer to perform lightweight RAG synthesis over prior chats (returns an answer string).
-        // - Use Similar to locate chats related to a given chat_id.
-        // - Use List to enumerate stored chats with pagination.
-        // - Use Get to fetch full messages + metadata for a single chat.
-        // - Use Reembed to recompute embeddings (optionally for a single chat or all).
-        // - Use UpdateMetadata to edit title / summary / tags / archived / pinned flags.
-        // - Use ConfigGet / ConfigSet to inspect or adjust non-secret config fields (secrets redacted on get).
-        // Guidance:
-        // * Prefer Search then Answer (two-step) when you need explicit context objects before synthesis.
-        // * Reembed should be used sparingly (confirmation required) after major model/config changes.
-        // * Append should not be used to store extremely large blobs; chunk them or summarize first.
-        // * Alpha controls hybrid weighting (0.0 = BM25 only, 1.0 = embedding only) when mode=Hybrid.
-        // Error Handling:
-        // * All adapter responses wrap {"ok": true|false}; failures surface as tool errors.
-        // * Mutating operations (reembed, update metadata, config set) may require confirmation.
-        "Persistent chat history operations: append, search, answer (RAG), list, get, similar, reembed, update metadata, config get/set."
-            .into()
+        r#"Persistent chat history with semantic search, RAG, and similarity matching.
+
+OPERATIONS:
+• similar - Find chats semantically similar to THIS chat or a specified chat_id (discovers related conversations)
+• search - Keyword/semantic search across all chat messages (hybrid BM25 + embeddings)
+• answer - RAG synthesis: retrieve relevant context and generate an answer with citations
+• list - List stored chats with metadata (paginated)
+• get - Retrieve full chat with all messages
+• append - Add a message to a chat (auto-creates if needed)
+• create_chat - Create a new empty chat session
+• delete_chat - Delete a chat and all its messages
+• update_metadata - Edit title, summary, tags, archived/pinned status
+• reembed - Recompute embeddings (requires confirmation)
+• config_get/config_set - View/modify configuration
+
+USAGE - Correct JSON format (tagged union):
+The 'operation' parameter expects a tagged union format. Each operation is an object with the operation name as the key.
+
+Examples:
+1. Find chats related to THIS conversation:
+   {"similar": {"n": 10, "project_scoped": true}}
+
+2. Find chats similar to a specific chat:
+   {"similar": {"chat_id": "abc123", "n": 10}}
+
+3. Search all chats:
+   {"search": {"query": "rust async", "mode": "hybrid", "top_k": 10}}
+
+4. Answer from history:
+   {"answer": {"question": "how did I solve X before?", "project_id": "my-project"}}
+
+5. List recent chats:
+   {"list": {"limit": 20, "offset": 0}}
+
+6. Get config:
+   {"config_get": {}}
+
+7. Append message:
+   {"append": {"content": "Some text", "role": "User", "chat_id": "abc123"}}
+
+PARAMETERS:
+- chat_id: Optional for 'similar' (defaults to current conversation's thread_id), required for get/delete/update_metadata
+- mode: "bm25" (keyword), "embedding" (semantic), "hybrid" (both, default)
+- alpha: 0.0 (keyword only) to 1.0 (semantic only), default 0.55 for hybrid
+- project_scoped: limit search to current project (default: true for 'similar')
+- top_k/n: number of results to return
+
+TIPS:
+- Use 'similar' without chat_id to find conversations related to the current topic
+- Use 'search' for keyword/semantic queries across all messages
+- Use 'answer' when you want a synthesized response with citations
+- All struct fields are optional unless marked as required (e.g., query, question, content)"#.into()
     }
 
     fn icon(&self) -> IconName {
@@ -265,10 +327,8 @@ impl Tool for ChatHistoryTool {
     }
 
     fn input_schema(&self, _format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        // Simplified schema: single "operation" object with a string discriminator "type"
-        // and a flat set of optional fields used by the various operation variants.
-        // The tool runtime still expects a structured ChatHistoryToolInput, but the LLM
-        // can supply only the needed fields for the chosen type.
+        // Comprehensive schema with detailed descriptions for each operation type.
+        // Structured as a flat discriminated union for easier LLM consumption.
         let schema = json!({
             "type": "object",
             "properties": {
@@ -277,44 +337,204 @@ impl Tool for ChatHistoryTool {
                     "properties": {
                         "type": {
                             "type": "string",
+                            "description": "Operation type. Use 'similar' to find related chats, 'search' for keyword/semantic search, 'answer' for RAG synthesis.",
                             "enum": [
-                                "append","search","answer","similar","list","get",
-                                "create_chat","delete_chat","reembed","update_metadata",
-                                "config_get","config_set"
+                                "similar", "search", "answer", "list", "get", "append",
+                                "create_chat", "delete_chat", "reembed", "update_metadata",
+                                "config_get", "config_set"
                             ]
                         },
-                        "chat_id": { "type": "string" },
-                        "project_id": { "type": "string" },
-                        "title": { "type": "string" },
-                        "role": { "type": "string", "description": "User|Assistant" },
-                        "content": { "type": "string" },
-                        "query": { "type": "string" },
-                        "question": { "type": "string" },
-                        "top_k": { "type": "integer" },
-                        "mode": { "type": "string", "description": "bm25|embedding|hybrid" },
-                        "alpha": { "type": "number" },
-                        "n": { "type": "integer" },
-                        "project_scoped": { "type": "boolean" },
-                        "limit": { "type": "integer" },
-                        "offset": { "type": "integer" },
-                        "summary": { "type": "string" },
-                        "tags_add": { "type": "array", "items": { "type": "string" } },
-                        "tags_remove": { "type": "array", "items": { "type": "string" } },
-                        "archived": { "type": "boolean" },
-                        "pinned": { "type": "boolean" },
-                        "embedding_model": { "type": "string" },
-                        "hybrid_alpha": { "type": "number" },
-                        "similar_chats_k": { "type": "integer" },
-                        "summary_refresh_chars": { "type": "integer" },
-                        "summary_delta_chars": { "type": "integer" },
-                        "rag_top_k": { "type": "integer" },
-                        "auto_tag": { "type": "boolean" },
-                        "default_retrieval_mode": { "type": "string", "description": "bm25|embedding|hybrid" }
+
+                        // Core identifiers
+                        "chat_id": {
+                            "type": "string",
+                            "description": "Chat identifier. Required for: get, delete_chat, update_metadata. Optional for: similar (defaults to current chat), search (scope to one chat), append (auto-creates if missing)."
+                        },
+                        "project_id": {
+                            "type": "string",
+                            "description": "Project identifier. Optional for: list, search, answer, create_chat, append."
+                        },
+
+                        // Search/retrieval parameters
+                        "query": {
+                            "type": "string",
+                            "description": "Search query text. Required for 'search' operation. Supports keyword and semantic matching."
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "Question for RAG synthesis. Required for 'answer' operation. Returns answer with citations from chat history."
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["bm25", "embedding", "hybrid"],
+                            "description": "Retrieval mode. 'bm25' = keyword only, 'embedding' = semantic only, 'hybrid' = both (default). Used by: search, answer."
+                        },
+                        "alpha": {
+                            "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
+                            "description": "Hybrid fusion weight. 0.0 = pure keyword, 1.0 = pure semantic, 0.55 = balanced (default). Only applies when mode='hybrid'."
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Number of results to return. Used by: search, answer. Default varies by operation."
+                        },
+
+                        // Similarity parameters
+                        "n": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Number of similar chats to return. Used by 'similar' operation. Default: 10."
+                        },
+                        "project_scoped": {
+                            "type": "boolean",
+                            "description": "Limit similarity search to current project. Used by 'similar' operation. Default: true."
+                        },
+
+                        // List/pagination
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Maximum number of chats to return. Used by 'list' operation."
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Pagination offset for 'list' operation."
+                        },
+
+                        // Message content
+                        "title": {
+                            "type": "string",
+                            "description": "Chat title. Used by: create_chat, append (sets title on creation), update_metadata."
+                        },
+                        "role": {
+                            "type": "string",
+                            "enum": ["User", "Assistant", "System", "Tool"],
+                            "description": "Message role. Used by 'append' operation. Default: User."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Message content. Required for 'append' operation."
+                        },
+
+                        // Metadata updates
+                        "summary": {
+                            "type": "string",
+                            "description": "Chat summary. Used by 'update_metadata' operation."
+                        },
+                        "tags_add": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Tags to add. Used by 'update_metadata' operation."
+                        },
+                        "tags_remove": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Tags to remove. Used by 'update_metadata' operation."
+                        },
+                        "archived": {
+                            "type": "boolean",
+                            "description": "Archive status. Used by 'update_metadata' operation."
+                        },
+                        "pinned": {
+                            "type": "boolean",
+                            "description": "Pin status. Used by 'update_metadata' operation."
+                        },
+
+                        // Configuration
+                        "embedding_model": {
+                            "type": "string",
+                            "description": "Embedding model name. Used by 'config_set' operation."
+                        },
+                        "hybrid_alpha": {
+                            "type": "number",
+                            "description": "Default hybrid fusion weight. Used by 'config_set' operation."
+                        },
+                        "similar_chats_k": {
+                            "type": "integer",
+                            "description": "Default number of similar chats to return. Used by 'config_set' operation."
+                        },
+                        "summary_refresh_chars": {
+                            "type": "integer",
+                            "description": "Character threshold for summary refresh. Used by 'config_set' operation."
+                        },
+                        "summary_delta_chars": {
+                            "type": "integer",
+                            "description": "Delta for summary updates. Used by 'config_set' operation."
+                        },
+                        "rag_top_k": {
+                            "type": "integer",
+                            "description": "Default top-k for RAG retrieval. Used by 'config_set' operation."
+                        },
+                        "auto_tag": {
+                            "type": "boolean",
+                            "description": "Enable automatic tagging. Used by 'config_set' operation."
+                        },
+                        "default_retrieval_mode": {
+                            "type": "string",
+                            "enum": ["bm25", "embedding", "hybrid"],
+                            "description": "Default retrieval mode. Used by 'config_set' operation."
+                        }
                     },
                     "required": ["type"]
                 }
             },
-            "required": ["operation"]
+            "required": ["operation"],
+            "examples": [
+                {
+                    "description": "Find chats similar to the current one (omit chat_id to use current conversation)",
+                    "value": {
+                        "operation": {
+                            "type": "similar",
+                            "n": 10,
+                            "project_scoped": true
+                        }
+                    }
+                },
+                {
+                    "description": "Find chats similar to a specific chat",
+                    "value": {
+                        "operation": {
+                            "type": "similar",
+                            "chat_id": "specific-chat-123",
+                            "n": 10
+                        }
+                    }
+                },
+                {
+                    "description": "Search for messages about async programming",
+                    "value": {
+                        "operation": {
+                            "type": "search",
+                            "query": "async await rust",
+                            "mode": "hybrid",
+                            "top_k": 10
+                        }
+                    }
+                },
+                {
+                    "description": "Get answer from chat history with citations",
+                    "value": {
+                        "operation": {
+                            "type": "answer",
+                            "question": "How did I implement error handling in the last project?",
+                            "project_id": "my-project"
+                        }
+                    }
+                },
+                {
+                    "description": "List recent chats",
+                    "value": {
+                        "operation": {
+                            "type": "list",
+                            "limit": 20,
+                            "offset": 0
+                        }
+                    }
+                }
+            ]
         });
         Ok(schema)
     }
@@ -329,7 +549,11 @@ impl Tool for ChatHistoryTool {
                     format!("Answer from history: {question}")
                 }
                 ChatHistoryOperation::Similar { chat_id, .. } => {
-                    format!("Similar chats to {chat_id}")
+                    if let Some(id) = chat_id {
+                        format!("Similar chats to {id}")
+                    } else {
+                        "Similar chats to current conversation".into()
+                    }
                 }
                 ChatHistoryOperation::List { .. } => "List chats".into(),
                 ChatHistoryOperation::Get { chat_id } => format!("Get chat {chat_id}"),
@@ -353,7 +577,7 @@ impl Tool for ChatHistoryTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
+        request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -455,18 +679,10 @@ impl Tool for ChatHistoryTool {
                         }
                     }
                     "similar" => {
-                        match build_string("chat_id") {
-                            Some(chat_id) => ChatHistoryOperation::Similar {
-                                chat_id,
-                                n: build_usize("n"),
-                                project_scoped: build_bool("project_scoped"),
-                            },
-                            None => {
-                                return ToolResult {
-                                    output: Task::ready(Err(anyhow!("similar: 'chat_id' required"))),
-                                    card: None,
-                                }
-                            }
+                        ChatHistoryOperation::Similar {
+                            chat_id: build_string("chat_id"),
+                            n: build_usize("n"),
+                            project_scoped: build_bool("project_scoped"),
                         }
                     }
                     "list" => ChatHistoryOperation::List {
@@ -625,8 +841,13 @@ impl Tool for ChatHistoryTool {
                     n,
                     project_scoped,
                 } => {
+                    // Use current conversation's thread_id if chat_id not provided
+                    let effective_chat_id = chat_id.or_else(|| request.thread_id.clone());
+                    if effective_chat_id.is_none() {
+                        return Err(anyhow!("similar: 'chat_id' required or current conversation must have thread_id"));
+                    }
                     let payload = json!({
-                        "chat_id": chat_id,
+                        "chat_id": effective_chat_id,
                         "n": n,
                         "project_scoped": project_scoped
                     })
