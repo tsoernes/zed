@@ -38,8 +38,8 @@ One context management tool has been successfully implemented and integrated int
      "profiles": {
        "write": {
          "tools": {
-           "list_history": true,
-           // "memory": true, (removed)
+           "ctx_list_history": true,
+           // "ctx_memory": true, (removed)
            ...
          }
        }

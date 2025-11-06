@@ -47,15 +47,15 @@ Tools must be added to the default agent profile settings in `assets/settings/de
     "profiles": {
       "write": {
         "tools": {
-          "list_history": true,
-          // "memory": true,  (removed)
+          "ctx_list_history": true,
+          // "ctx_memory": true,  (removed)
           // ... other tools
         }
       },
       "ask": {
         "tools": {
-          "list_history": true,
-          // "memory": true,  (removed)
+          "ctx_list_history": true,
+          // "ctx_memory": true,  (removed)
           // ... other tools
         }
       }
