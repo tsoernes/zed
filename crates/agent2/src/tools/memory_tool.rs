@@ -12,7 +12,7 @@ use crate::{AgentTool, ToolCallEventStream};
 /// Store uses a half-open range [start, end) (end is exclusive) to mirror the
 /// assistant_tools MemoryTool semantics. Thread APIs require an inclusive end
 /// index; conversion happens internally.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryAction {
     /// List stored memory segments. Optional limit returns the most recent N
@@ -22,7 +22,7 @@ pub enum MemoryAction {
         limit: Option<usize>,
     },
     /// Aggregate statistics across all archived segments.
-    Stats {},
+    Stats,
     /// Archive (store) a contiguous range of messages [start, end) (end exclusive).
     /// Replaces them with a single placeholder summary message by default.
     /// If a custom `summary` is provided it is used (subject to sanitization and length limits).
@@ -40,94 +40,6 @@ pub enum MemoryAction {
     },
     /// Restore a previously archived segment (reinsert messages, keep archive).
     Restore { id: u64 },
-}
-
-/// Helper struct for deserialization that uses the standard serde derive.
-/// This avoids infinite recursion in the custom deserializer.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum MemoryActionHelper {
-    List {
-        #[serde(default)]
-        limit: Option<usize>,
-    },
-    Stats {},
-    Store {
-        start: usize,
-        end: usize,
-        #[serde(default)]
-        summary: Option<String>,
-    },
-    Load {
-        id: u64,
-        #[serde(default)]
-        include_messages: bool,
-    },
-    Restore {
-        id: u64,
-    },
-}
-
-impl From<MemoryActionHelper> for MemoryAction {
-    fn from(helper: MemoryActionHelper) -> Self {
-        match helper {
-            MemoryActionHelper::List { limit } => MemoryAction::List { limit },
-            MemoryActionHelper::Stats {} => MemoryAction::Stats {},
-            MemoryActionHelper::Store {
-                start,
-                end,
-                summary,
-            } => MemoryAction::Store {
-                start,
-                end,
-                summary,
-            },
-            MemoryActionHelper::Load {
-                id,
-                include_messages,
-            } => MemoryAction::Load {
-                id,
-                include_messages,
-            },
-            MemoryActionHelper::Restore { id } => MemoryAction::Restore { id },
-        }
-    }
-}
-
-/// Custom deserializer to handle both direct JSON and string-wrapped JSON.
-/// This works around an issue where MCP invocations wrap parameters as strings.
-impl<'de> Deserialize<'de> for MemoryAction {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::Error;
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        // Try direct deserialization first (normal case)
-        match serde_json::from_value::<MemoryActionHelper>(value.clone()) {
-            Ok(helper) => return Ok(helper.into()),
-            Err(_) => {
-                // Handle string-wrapped JSON (MCP invocation case)
-                if let serde_json::Value::String(ref s) = value {
-                    match serde_json::from_str::<MemoryActionHelper>(s) {
-                        Ok(helper) => return Ok(helper.into()),
-                        Err(e) => {
-                            return Err(D::Error::custom(format!(
-                                "Failed to parse string-wrapped MemoryAction: {}",
-                                e
-                            )))
-                        }
-                    }
-                }
-
-                return Err(D::Error::custom(format!(
-                    "Failed to deserialize MemoryAction from: {:?}",
-                    value
-                )));
-            }
-        }
-    }
 }
 
 /// Input schema for the native agent memory tool.
@@ -174,8 +86,8 @@ impl AgentTool for MemoryAgentTool {
     ) -> SharedString {
         match input {
             Ok(i) => match i.operation {
-                MemoryAction::List { .. } => "List memory".into(),
-                MemoryAction::Stats {} => "Memory stats".into(),
+                MemoryAction::List { .. } => "List memories".into(),
+                MemoryAction::Stats => "Memory stats".into(),
                 MemoryAction::Store { start, end, .. } => {
                     format!("Archive [{}..{})", start, end).into()
                 }
@@ -245,7 +157,7 @@ impl AgentTool for MemoryAgentTool {
                     Err(e) => Err(anyhow!(e)),
                 }
             }
-            MemoryAction::Stats {} => {
+            MemoryAction::Stats => {
                 let metas = thread.read_with(cx, |t, _| t.memory_segment_metas());
                 let stats = serde_json::json!({
                     "segments": metas.len(),

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use gpui::{App, SharedString, Task};
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{AgentTool, ToolCallEventStream};
@@ -16,37 +16,9 @@ use serde_json::json;
 
 /// Agent-side input wrapper (mirrors adapter input; kept separate to allow future
 /// agent-specific extensions like thread-scoped overrides).
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ChatHistoryAgentToolInput {
     pub operation: ChatHistoryOperation,
-}
-
-/// Custom deserializer to handle both direct JSON and string-wrapped JSON.
-/// This works around an issue where MCP invocations wrap parameters as strings.
-impl<'de> Deserialize<'de> for ChatHistoryAgentToolInput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        // Try direct deserialization first (normal case)
-        if let Ok(input) = serde_json::from_value::<Self>(value.clone()) {
-            return Ok(input);
-        }
-
-        // Handle string-wrapped JSON (MCP invocation case)
-        if let Value::String(ref s) = value {
-            if let Ok(parsed) = serde_json::from_str::<Self>(s) {
-                return Ok(parsed);
-            }
-        }
-
-        Err(serde::de::Error::custom(format!(
-            "Failed to deserialize ChatHistoryAgentToolInput from: {:?}",
-            value
-        )))
-    }
 }
 
 /// Output type: markdown string embedding any structured JSON blocks.
