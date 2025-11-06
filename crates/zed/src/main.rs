@@ -100,7 +100,7 @@ fn init_chat_history(app_state: Arc<AppState>, cx: &mut App) {
         .join("chat_history_tools")
         .join("migrations");
 
-    cx.background_spawn({
+    let _chat_history_task = cx.background_spawn({
         let dir = dir.clone();
         async move {
             // Connect DB

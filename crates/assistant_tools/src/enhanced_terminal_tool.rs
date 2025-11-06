@@ -10,8 +10,6 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::Project;
 
 use agent_settings::AgentSettings;
-#[cfg(unix)]
-use libc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;

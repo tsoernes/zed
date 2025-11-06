@@ -23,6 +23,23 @@ This directory contains comprehensive documentation for the `ctx_chat_history` t
 
 ---
 
+#### [MEMORY_TOOL_FIX.md](MEMORY_TOOL_FIX.md)
+**Memory tool custom deserializer fix (293 lines)**
+
+- Overview of problem and solution
+- Detailed changes for both enum variants (MemoryOperation & MemoryAction)
+- Implementation pattern explanation
+- Usage examples for all 5 operations
+- Testing checklist
+- Compatibility notes
+- Performance impact analysis
+
+**Target Audience**: Developers, users of ctx_memory tool
+
+**Purpose**: Documents the same custom deserializer fix applied to memory tools.
+
+---
+
 ### 🔧 Technical Documentation
 
 #### [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md)
@@ -111,6 +128,9 @@ This directory contains comprehensive documentation for the `ctx_chat_history` t
 
 **Get a complete overview**
 → Read [SESSION_SUMMARY.md](SESSION_SUMMARY.md)
+
+**Understand memory tool fix**
+→ Read [MEMORY_TOOL_FIX.md](MEMORY_TOOL_FIX.md)
 
 ---
 
