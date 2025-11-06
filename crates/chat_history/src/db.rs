@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 // NOTE: Pending edit: need precise line numbers for fetch_message_vectors implementation block to insert
 // actual embedding retrieval join against global embeddings table. Please provide a numbered excerpt
 // (e.g. 20 lines before and after fetch_message_vectors) so I can add:
@@ -233,6 +233,22 @@ impl ChatHistoryDb {
             .one(&self.conn)
             .await?;
         Ok(row.map(|r| r.digest))
+    }
+
+    /// Delete a chat and all associated data (messages, tags, embeddings).
+    /// Uses CASCADE foreign keys to automatically remove related records.
+    pub async fn delete_chat(&self, chat_id: &ChatId) -> Result<()> {
+        // Delete the chat; CASCADE handles messages, tags, and message_embeddings
+        let result = ChatModelEntity::delete_many()
+            .filter(crate::entities::ChatColumn::Id.eq(chat_id.0.clone()))
+            .exec(&self.conn)
+            .await?;
+
+        if result.rows_affected == 0 {
+            return Err(anyhow!("chat not found: {}", chat_id.0));
+        }
+
+        Ok(())
     }
 
     /// Fetch chat metadata and all messages ordered by created_at ascending.

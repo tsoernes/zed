@@ -53,7 +53,12 @@ static CHAT_HISTORY_ADAPTER: OnceLock<Arc<ChatHistoryTools>> = OnceLock::new();
 /// Must be invoked during startup before the tool can be used.
 pub fn install_chat_history_adapter(handles: &ChatHistoryHandles) {
     // Ignore duplicate install attempts; first wins.
-    let _ = CHAT_HISTORY_ADAPTER.set(handles.tools.clone());
+    let result = CHAT_HISTORY_ADAPTER.set(handles.tools.clone());
+    if result.is_ok() {
+        log::info!("chat_history: adapter successfully installed and ready");
+    } else {
+        log::warn!("chat_history: adapter already installed, ignoring duplicate install attempt");
+    }
 }
 
 /// Public getter for the installed chat history adapter.
@@ -135,6 +140,17 @@ pub enum ChatHistoryOperation {
     },
     /// Get a chat (metadata + messages).
     Get {
+        chat_id: String,
+    },
+    /// Create a new empty chat session.
+    CreateChat {
+        #[serde(default)]
+        project_id: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    /// Delete a chat and all its messages.
+    DeleteChat {
         chat_id: String,
     },
     /// Recompute embeddings (optionally for one chat).
@@ -263,7 +279,8 @@ impl Tool for ChatHistoryTool {
                             "type": "string",
                             "enum": [
                                 "append","search","answer","similar","list","get",
-                                "reembed","update_metadata","config_get","config_set"
+                                "create_chat","delete_chat","reembed","update_metadata",
+                                "config_get","config_set"
                             ]
                         },
                         "chat_id": { "type": "string" },
@@ -316,6 +333,8 @@ impl Tool for ChatHistoryTool {
                 }
                 ChatHistoryOperation::List { .. } => "List chats".into(),
                 ChatHistoryOperation::Get { chat_id } => format!("Get chat {chat_id}"),
+                ChatHistoryOperation::CreateChat { .. } => "Create new chat".into(),
+                ChatHistoryOperation::DeleteChat { chat_id } => format!("Delete chat {chat_id}"),
                 ChatHistoryOperation::Reembed { chat_id } => match chat_id {
                     Some(id) => format!("Reembed chat {id}"),
                     None => "Reembed all chats".into(),
@@ -461,6 +480,21 @@ impl Tool for ChatHistoryTool {
                             None => {
                                 return ToolResult {
                                     output: Task::ready(Err(anyhow!("get: 'chat_id' required"))),
+                                    card: None,
+                                }
+                            }
+                        }
+                    }
+                    "create_chat" => ChatHistoryOperation::CreateChat {
+                        project_id: build_string("project_id"),
+                        title: build_string("title"),
+                    },
+                    "delete_chat" => {
+                        match build_string("chat_id") {
+                            Some(chat_id) => ChatHistoryOperation::DeleteChat { chat_id },
+                            None => {
+                                return ToolResult {
+                                    output: Task::ready(Err(anyhow!("delete_chat: 'chat_id' required"))),
                                     card: None,
                                 }
                             }
@@ -615,6 +649,18 @@ impl Tool for ChatHistoryTool {
                 ChatHistoryOperation::Get { chat_id } => {
                     let payload = json!({ "chat_id": chat_id }).to_string();
                     adapter.chat_get(&payload).await
+                }
+                ChatHistoryOperation::CreateChat { project_id, title } => {
+                    let payload = json!({
+                        "project_id": project_id,
+                        "title": title
+                    })
+                    .to_string();
+                    adapter.chat_create(&payload).await
+                }
+                ChatHistoryOperation::DeleteChat { chat_id } => {
+                    let payload = json!({ "chat_id": chat_id }).to_string();
+                    adapter.chat_delete(&payload).await
                 }
                 ChatHistoryOperation::Reembed { chat_id } => {
                     let payload = json!({ "chat_id": chat_id }).to_string();

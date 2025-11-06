@@ -62,6 +62,8 @@ impl AgentTool for ChatHistoryAgentTool {
                     ChatHistoryOperation::Similar { .. } => "Similar chats",
                     ChatHistoryOperation::List { .. } => "List chats",
                     ChatHistoryOperation::Get { .. } => "Get chat",
+                    ChatHistoryOperation::CreateChat { .. } => "Create chat",
+                    ChatHistoryOperation::DeleteChat { .. } => "Delete chat",
                     ChatHistoryOperation::Reembed { .. } => "Reembed chats",
                     ChatHistoryOperation::UpdateMetadata { .. } => "Update chat metadata",
                     ChatHistoryOperation::ConfigGet => "Get chat config",
@@ -190,6 +192,18 @@ impl AgentTool for ChatHistoryAgentTool {
                     ChatHistoryOperation::Get { chat_id } => {
                         let payload = json!({ "chat_id": chat_id }).to_string();
                         mk("Chat", adapter.chat_get(&payload).await)
+                    }
+                    ChatHistoryOperation::CreateChat { project_id, title } => {
+                        let payload = json!({
+                            "project_id": project_id,
+                            "title": title
+                        })
+                        .to_string();
+                        mk("Chat Created", adapter.chat_create(&payload).await)
+                    }
+                    ChatHistoryOperation::DeleteChat { chat_id } => {
+                        let payload = json!({ "chat_id": chat_id }).to_string();
+                        mk("Chat Deleted", adapter.chat_delete(&payload).await)
                     }
                     ChatHistoryOperation::Reembed { chat_id } => {
                         let payload = json!({ "chat_id": chat_id }).to_string();

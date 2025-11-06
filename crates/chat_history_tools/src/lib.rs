@@ -26,13 +26,11 @@ pub mod migrations;
 
 use std::sync::Arc;
 
-
 use async_trait::async_trait;
 use chat_history::{
+    MessageRole, RetrievalMode,
     prelude::*,
     tools::{ToolAppendRequest, ToolAppendResult, ToolSearchRequest, ToolSearchResult},
-    RetrievalMode,
-    MessageRole,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -98,6 +96,19 @@ pub struct GetInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct CreateChatInput {
+    pub project_id: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DeleteChatInput {
+    pub chat_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ReembedInput {
     pub chat_id: Option<String>,
 }
@@ -146,8 +157,6 @@ pub struct ChatSummary {
 // Adapter
 // -----------------------------
 
-
-
 pub struct ChatHistoryTools {
     store: Arc<Mutex<ChatStore>>,
     runtime: Arc<tokio::runtime::Runtime>,
@@ -176,7 +185,7 @@ impl ChatHistoryTools {
                     "ok": true,
                     "value": other
                 })
-                .to_string()
+                .to_string();
             }
         };
         obj.insert("ok".into(), serde_json::Value::Bool(true));
@@ -196,6 +205,8 @@ pub trait ChatHistoryToolApi {
     async fn chat_similar(&self, input_json: &str) -> String;
     async fn chat_list(&self, input_json: &str) -> String;
     async fn chat_get(&self, input_json: &str) -> String;
+    async fn chat_create(&self, input_json: &str) -> String;
+    async fn chat_delete(&self, input_json: &str) -> String;
     async fn chat_reembed(&self, input_json: &str) -> String;
     async fn chat_update_metadata(&self, input_json: &str) -> String;
     async fn chat_config_get(&self) -> String;
@@ -218,7 +229,10 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             content: input.content,
         };
         let store = self.runtime.block_on(self.store.lock());
-        match self.runtime.block_on(async { store.tool_append(req).await }) {
+        match self
+            .runtime
+            .block_on(async { store.tool_append(req).await })
+        {
             Ok(ToolAppendResult { chat, message }) => {
                 Self::ok_json(json!({ "chat": chat, "message": message }))
             }
@@ -241,9 +255,7 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let store = self.store.lock().await;
         match store.tool_search(req).await {
-            Ok(ToolSearchResult { contexts }) => {
-                Self::ok_json(json!({ "contexts": contexts }))
-            }
+            Ok(ToolSearchResult { contexts }) => Self::ok_json(json!({ "contexts": contexts })),
             Err(e) => Self::err_json(e),
         }
     }
@@ -279,7 +291,9 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         let project_scoped = input.project_scoped.unwrap_or(true);
         let store = self.runtime.block_on(self.store.lock());
         match self.runtime.block_on(async {
-            store.similar_chats(&ChatId(input.chat_id), n, project_scoped).await
+            store
+                .similar_chats(&ChatId(input.chat_id), n, project_scoped)
+                .await
         }) {
             Ok(list) => {
                 let payload: Vec<_> = list
@@ -301,7 +315,9 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         let offset = input.offset.unwrap_or(0);
         let store = self.runtime.block_on(self.store.lock());
         match self.runtime.block_on(async {
-            store.list_chats(input.project_id.as_deref(), limit, offset).await
+            store
+                .list_chats(input.project_id.as_deref(), limit, offset)
+                .await
         }) {
             Ok(chats) => {
                 let summaries: Vec<ChatSummary> = chats
@@ -330,10 +346,35 @@ impl ChatHistoryToolApi for ChatHistoryTools {
             Err(e) => return Self::err_json(format!("parse error: {e}")),
         };
         let store = self.runtime.block_on(self.store.lock());
-        match self.runtime.block_on(async { store.get_chat(&ChatId(input.chat_id)).await }) {
-            Ok((meta, messages)) => {
-                Self::ok_json(json!({ "chat": meta, "messages": messages }))
-            }
+        match self
+            .runtime
+            .block_on(async { store.get_chat(&ChatId(input.chat_id)).await })
+        {
+            Ok((meta, messages)) => Self::ok_json(json!({ "chat": meta, "messages": messages })),
+            Err(e) => Self::err_json(e),
+        }
+    }
+
+    async fn chat_create(&self, input_json: &str) -> String {
+        let input: CreateChatInput = match serde_json::from_str(input_json) {
+            Ok(v) => v,
+            Err(e) => return Self::err_json(format!("parse error: {e}")),
+        };
+        let store = self.store.lock().await;
+        match store.create_chat(input.project_id, input.title).await {
+            Ok(meta) => Self::ok_json(json!({ "chat": meta })),
+            Err(e) => Self::err_json(e),
+        }
+    }
+
+    async fn chat_delete(&self, input_json: &str) -> String {
+        let input: DeleteChatInput = match serde_json::from_str(input_json) {
+            Ok(v) => v,
+            Err(e) => return Self::err_json(format!("parse error: {e}")),
+        };
+        let store = self.store.lock().await;
+        match store.delete_chat(&ChatId(input.chat_id)).await {
+            Ok(_) => Self::ok_json(json!({ "deleted": true })),
             Err(e) => Self::err_json(e),
         }
     }
@@ -401,14 +442,30 @@ impl ChatHistoryToolApi for ChatHistoryTools {
         };
         let mut store = self.store.lock().await;
         let mut cfg = store.config().clone();
-        if let Some(v) = input.embedding_model { cfg.embedding_model = v; }
-        if let Some(v) = input.hybrid_alpha { cfg.hybrid_alpha = v; }
-        if let Some(v) = input.similar_chats_k { cfg.similar_chats_k = v; }
-        if let Some(v) = input.summary_refresh_chars { cfg.summary_refresh_chars = v; }
-        if let Some(v) = input.summary_delta_chars { cfg.summary_delta_chars = v; }
-        if let Some(v) = input.rag_top_k { cfg.rag_top_k = v; }
-        if let Some(v) = input.auto_tag { cfg.auto_tag = v; }
-        if let Some(v) = input.default_retrieval_mode { cfg.default_retrieval_mode = v; }
+        if let Some(v) = input.embedding_model {
+            cfg.embedding_model = v;
+        }
+        if let Some(v) = input.hybrid_alpha {
+            cfg.hybrid_alpha = v;
+        }
+        if let Some(v) = input.similar_chats_k {
+            cfg.similar_chats_k = v;
+        }
+        if let Some(v) = input.summary_refresh_chars {
+            cfg.summary_refresh_chars = v;
+        }
+        if let Some(v) = input.summary_delta_chars {
+            cfg.summary_delta_chars = v;
+        }
+        if let Some(v) = input.rag_top_k {
+            cfg.rag_top_k = v;
+        }
+        if let Some(v) = input.auto_tag {
+            cfg.auto_tag = v;
+        }
+        if let Some(v) = input.default_retrieval_mode {
+            cfg.default_retrieval_mode = v;
+        }
         store.set_config(cfg);
         Self::ok_json(json!({ "config": store.config() }))
     }

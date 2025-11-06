@@ -924,6 +924,16 @@ impl ChatStore {
         }
     }
 
+    /// Delete a chat and all its messages.
+    pub async fn delete_chat(&self, chat_id: &ChatId) -> Result<()> {
+        if let Some(db_mutex) = &self.db {
+            let db = db_mutex.lock().await;
+            db.delete_chat(chat_id).await
+        } else {
+            Err(anyhow!("chat persistence unavailable"))
+        }
+    }
+
     /// List chats (project-scoped by default).
     pub async fn list_chats(
         &self,
