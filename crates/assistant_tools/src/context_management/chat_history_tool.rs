@@ -109,7 +109,7 @@ fn adapter() -> Result<Arc<ChatHistoryTools>> {
 ///
 /// Each variant maps directly to a JSON method on `ChatHistoryTools`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatHistoryOperation {
     /// Append a message to a chat (creates chat if missing).
     Append {
@@ -206,7 +206,7 @@ pub enum ChatHistoryOperation {
         pinned: Option<bool>,
     },
     /// Fetch current config (secrets redacted).
-    ConfigGet,
+    ConfigGet {},
     /// Set selected config fields.
     ConfigSet {
         #[serde(default)]
@@ -566,7 +566,7 @@ TIPS:
                 ChatHistoryOperation::UpdateMetadata { chat_id, .. } => {
                     format!("Update metadata for {chat_id}")
                 }
-                ChatHistoryOperation::ConfigGet => "Get chat history config".into(),
+                ChatHistoryOperation::ConfigGet {} => "Get chat history config".into(),
                 ChatHistoryOperation::ConfigSet { .. } => "Set chat history config".into(),
             }
         } else {
@@ -738,7 +738,7 @@ TIPS:
                             }
                         }
                     }
-                    "config_get" => ChatHistoryOperation::ConfigGet,
+                    "config_get" => ChatHistoryOperation::ConfigGet {},
                     "config_set" => ChatHistoryOperation::ConfigSet {
                         embedding_model: build_string("embedding_model"),
                         hybrid_alpha: build_f32("hybrid_alpha"),
@@ -908,7 +908,7 @@ TIPS:
                     .to_string();
                     adapter.chat_update_metadata(&payload).await
                 }
-                ChatHistoryOperation::ConfigGet => adapter.chat_config_get().await,
+                ChatHistoryOperation::ConfigGet {} => adapter.chat_config_get().await,
                 ChatHistoryOperation::ConfigSet {
                     embedding_model,
                     hybrid_alpha,

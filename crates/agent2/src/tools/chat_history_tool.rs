@@ -66,7 +66,7 @@ impl AgentTool for ChatHistoryAgentTool {
                     ChatHistoryOperation::DeleteChat { .. } => "Delete chat",
                     ChatHistoryOperation::Reembed { .. } => "Reembed chats",
                     ChatHistoryOperation::UpdateMetadata { .. } => "Update chat metadata",
-                    ChatHistoryOperation::ConfigGet => "Get chat config",
+                    ChatHistoryOperation::ConfigGet {} => "Get chat config",
                     ChatHistoryOperation::ConfigSet { .. } => "Set chat config",
                 };
                 label.into()
@@ -233,7 +233,7 @@ impl AgentTool for ChatHistoryAgentTool {
                             adapter.chat_update_metadata(&payload).await,
                         )
                     }
-                    ChatHistoryOperation::ConfigGet => {
+                    ChatHistoryOperation::ConfigGet {} => {
                         mk("Chat Config", adapter.chat_config_get().await)
                     }
                     ChatHistoryOperation::ConfigSet {
