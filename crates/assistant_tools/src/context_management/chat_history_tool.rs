@@ -5,30 +5,58 @@ mod adapter_schema_tests {
     use super::*;
     use assistant_tool::Tool;
     use gpui::App;
+    use serde_json;
 
     #[gpui::test]
-    fn chat_history_tool_schema_contains_operation(cx: &mut App) {
+    fn chat_history_tool_schema_contains_operation(_cx: &mut App) {
         let tool = ChatHistoryTool;
         let schema = tool
             .input_schema(language_model::LanguageModelToolSchemaFormat::JsonSchemaSubset)
             .expect("schema");
+
+        // Debug: print the full schema to understand structure
+        eprintln!("Full schema:\n{}", serde_json::to_string_pretty(&schema).unwrap());
+
         assert!(schema.get("properties").is_some(), "schema missing properties object");
         let op = &schema["properties"]["operation"];
         assert!(op.is_object(), "operation property should be an object");
+
+        // Debug: print the operation schema
+        eprintln!("Operation schema:\n{}", serde_json::to_string_pretty(op).unwrap());
     }
 
     #[gpui::test]
-    fn chat_history_adapter_initially_none(cx: &mut App) {
+    fn chat_history_adapter_initially_none(_cx: &mut App) {
         // Adapter should not be installed until startup code calls install_chat_history_adapter.
         assert!(chat_history_adapter().is_none(), "adapter unexpectedly installed at test start");
     }
 
     #[gpui::test]
-    fn chat_history_adapter_install_and_retrieve(cx: &mut App) {
+    fn chat_history_adapter_install_and_retrieve(_cx: &mut App) {
         use chat_history_tools::init::init_chat_history_tools;
         let handles = init_chat_history_tools(Default::default()).expect("init handles");
         install_chat_history_adapter(&handles);
         assert!(chat_history_adapter().is_some(), "adapter should be installed");
+    }
+
+    #[test]
+    fn test_chat_history_operation_deserialization() {
+        // Test internally-tagged enum deserialization with "type" field
+        let json_similar = r#"{"type": "similar", "n": 5}"#;
+        let result: Result<ChatHistoryOperation, _> = serde_json::from_str(json_similar);
+        eprintln!("Deserializing similar: {:?}", result);
+        assert!(result.is_ok(), "Failed to deserialize similar operation");
+
+        let json_list = r#"{"type": "list", "limit": 10}"#;
+        let result: Result<ChatHistoryOperation, _> = serde_json::from_str(json_list);
+        eprintln!("Deserializing list: {:?}", result);
+        assert!(result.is_ok(), "Failed to deserialize list operation");
+
+        // Test with wrapper
+        let json_wrapped = r#"{"operation": {"type": "similar", "n": 5}}"#;
+        let result: Result<ChatHistoryToolInput, _> = serde_json::from_str(json_wrapped);
+        eprintln!("Deserializing wrapped: {:?}", result);
+        assert!(result.is_ok(), "Failed to deserialize wrapped operation");
     }
 }
 
@@ -81,31 +109,79 @@ fn adapter() -> Result<Arc<ChatHistoryTools>> {
 ///
 /// # Serialization Format
 ///
-/// This enum uses serde's default tagged representation with `#[serde(rename_all = "snake_case")]`.
+/// This enum uses internally-tagged representation with `#[serde(tag = "type", rename_all = "snake_case")]`.
+/// All operation parameters are flattened into a single object with a discriminator field named "type".
 ///
-/// ## Examples of correct JSON format:
+/// ## Usage Examples
+///
+/// When calling the `ctx_chat_history` tool, wrap the operation in an object with an "operation" field:
 ///
 /// ```json
-/// // List chats (all fields optional)
-/// {"list": {"limit": 10, "offset": 0}}
-/// {"list": {}}  // Use defaults
+/// // Find similar chats to the current conversation
+/// {
+///   "operation": {
+///     "type": "similar",
+///     "n": 5
+///   }
+/// }
 ///
-/// // Find similar chats to current conversation (chat_id optional)
-/// {"similar": {"n": 10, "project_scoped": true}}
-/// {"similar": {"chat_id": "abc123", "n": 5}}
+/// // Search for messages about a topic
+/// {
+///   "operation": {
+///     "type": "search",
+///     "query": "rust async await",
+///     "mode": "hybrid",
+///     "top_k": 10
+///   }
+/// }
 ///
-/// // Search messages
-/// {"search": {"query": "rust async", "mode": "hybrid", "top_k": 10}}
+/// // List recent chats
+/// {
+///   "operation": {
+///     "type": "list",
+///     "limit": 20
+///   }
+/// }
 ///
-/// // Answer question with RAG
-/// {"answer": {"question": "how did I solve this before?"}}
+/// // Answer a question using RAG over chat history
+/// {
+///   "operation": {
+///     "type": "answer",
+///     "question": "how did I solve error handling before?"
+///   }
+/// }
 ///
-/// // Get config (unit variant)
-/// {"config_get": {}}
+/// // Append a message to a chat
+/// {
+///   "operation": {
+///     "type": "append",
+///     "content": "Hello world",
+///     "role": "User"
+///   }
+/// }
 ///
-/// // Append message
-/// {"append": {"content": "Hello", "role": "User"}}
+/// // Get configuration
+/// {
+///   "operation": {
+///     "type": "config_get"
+///   }
+/// }
 /// ```
+///
+/// ## Operation Types
+///
+/// - **similar**: Find chats semantically similar to the current or specified chat
+/// - **search**: Keyword/semantic search across all chat messages (hybrid BM25 + embeddings)
+/// - **answer**: RAG-based question answering over chat history with citations
+/// - **list**: List chat metadata with pagination
+/// - **get**: Retrieve a specific chat by ID with full message history
+/// - **append**: Add a message to a chat (creates chat if it doesn't exist)
+/// - **create_chat**: Create a new empty chat session
+/// - **delete_chat**: Permanently delete a chat and all its messages
+/// - **reembed**: Recompute embeddings for a chat or all chats
+/// - **update_metadata**: Update chat title, summary, tags, archive/pin status
+/// - **config_get**: Fetch current configuration settings
+/// - **config_set**: Update configuration (embedding model, fusion weights, etc.)
 ///
 /// Each variant maps directly to a JSON method on `ChatHistoryTools`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

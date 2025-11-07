@@ -137,6 +137,7 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
 mod tests {
     use super::*;
     use agent_settings::AgentSettings;
+    use assistant_tool::Tool;
     use client::Client;
     use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
