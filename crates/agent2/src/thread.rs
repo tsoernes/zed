@@ -5,7 +5,9 @@ use crate::{
     SystemPromptTemplate, Template, Templates, TerminalTool, EnhancedTerminalTool, ThinkingTool, ThreadsDatabase,
     WebSearchTool, ShellDetectorTool, DetectBinariesTool, TokenUsageTool, PreciseTokenTool,
     // Added agent2 context tools
-    ListHistoryTool, MemoryAgentTool, ChatHistoryAgentTool,
+    ListHistoryTool, MemoryAgentTool,
+    // Chat history tools (split from ChatHistoryAgentTool)
+    ChatSearchTool, ChatSimilarTool, ChatAnswerTool, ChatListTool, ChatGetTool, ChatUpdateTool,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -1507,8 +1509,13 @@ impl Thread {
         self.add_tool(PreciseTokenTool::new(weak.clone()));
         self.add_tool(ListHistoryTool::new(weak.clone()));
         self.add_tool(MemoryAgentTool::new(weak.clone()));
-        self.add_tool(ChatHistoryAgentTool::new());
-        log::info!("Added context tools: list_history, memory, chat_history");
+        self.add_tool(ChatSearchTool::new());
+        self.add_tool(ChatSimilarTool::new());
+        self.add_tool(ChatAnswerTool::new());
+        self.add_tool(ChatListTool::new());
+        self.add_tool(ChatGetTool::new());
+        self.add_tool(ChatUpdateTool::new());
+        log::info!("Added context tools: list_history, memory, chat_search, chat_similar, chat_answer, chat_list, chat_get, chat_update");
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {

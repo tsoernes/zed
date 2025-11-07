@@ -1,4 +1,9 @@
-mod chat_history_tool;
+mod chat_answer_tool;
+mod chat_get_tool;
+mod chat_list_tool;
+mod chat_search_tool;
+mod chat_similar_tool;
+mod chat_update_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -38,9 +43,14 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
         FindPathTool::name(),
         GrepTool::name(),
         ListDirectoryTool::name(),
-        ListHistoryTool::name(),      // ctx_list_history
-        ChatHistoryAgentTool::name(), // ctx_chat_history
-        MemoryAgentTool::name(),      // ctx_memory
+        ListHistoryTool::name(), // ctx_list_history
+        ChatSearchTool::name(),  // chat_search
+        ChatSimilarTool::name(), // chat_similar
+        ChatAnswerTool::name(),  // chat_answer
+        ChatListTool::name(),    // chat_list
+        ChatGetTool::name(),     // chat_get
+        ChatUpdateTool::name(),  // chat_update
+        MemoryAgentTool::name(), // ctx_memory
         ProjectInfoTool::name(),
         TokenUsageTool::name(),
         PreciseTokenTool::name(),
@@ -58,7 +68,12 @@ pub fn default_tool_names() -> impl Iterator<Item = &'static str> {
     .into_iter()
 }
 
-pub use chat_history_tool::*;
+pub use chat_answer_tool::*;
+pub use chat_get_tool::*;
+pub use chat_list_tool::*;
+pub use chat_search_tool::*;
+pub use chat_similar_tool::*;
+pub use chat_update_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
