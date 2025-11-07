@@ -1758,7 +1758,7 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
             let mut events = model
-                .stream_completion(request, cx)
+                .stream_completion(request.clone(), cx)
                 .await
                 .map_err(|error| anyhow!(error))?;
             let mut tool_results = FuturesUnordered::new();
