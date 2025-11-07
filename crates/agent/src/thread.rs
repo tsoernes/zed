@@ -1624,6 +1624,8 @@ impl Thread {
             .mode
             .unwrap_or(cloud_llm_client::CompletionMode::Normal);
 
+        // Clone the request so we can log it if the prompt exceeds the token limit.
+        let request_for_logging = request.clone();
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
@@ -1969,6 +1971,50 @@ impl Thread {
                                             model_id: model.id(),
                                             token_count: tokens,
                                         });
+
+                                        // Log entire request to help diagnose token overflow.
+                                        log::error!(
+                                            "Prompt too large: tokens={}, model_id={:?}",
+                                            tokens,
+                                            model.id()
+                                        );
+                                        for (i, msg) in request_for_logging.messages.iter().enumerate() {
+                                            log::error!("Message {} role={:?}", i, msg.role);
+                                            for content in &msg.content {
+                                                match content {
+                                                    MessageContent::Text(t) => {
+                                                        log::error!("  Text: {}", t);
+                                                    }
+                                                    MessageContent::Thinking { text, .. } => {
+                                                        log::error!("  Thinking: {}", text);
+                                                    }
+                                                    MessageContent::RedactedThinking(data) => {
+                                                        log::error!("  RedactedThinking: {}", data);
+                                                    }
+                                                    MessageContent::Image(img) => {
+                                                        log::error!("  Image: <{} bytes>", img.len());
+                                                    }
+                                                    MessageContent::ToolUse(tool_use) => {
+                                                        log::error!(
+                                                            "  ToolUse: name={}, id={}",
+                                                            tool_use.name,
+                                                            tool_use.id
+                                                        );
+                                                    }
+                                                    MessageContent::ToolResult(tool_result) => {
+                                                        match &tool_result.content {
+                                                            language_model::LanguageModelToolResultContent::Text(t) => {
+                                                                log::error!("  ToolResult(Text): {}", t);
+                                                            }
+                                                            language_model::LanguageModelToolResultContent::Image(img) => {
+                                                                log::error!("  ToolResult(Image): <{} bytes>", img.len());
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         cx.notify();
                                     }
                                     _ => {
