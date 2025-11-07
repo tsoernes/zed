@@ -2044,6 +2044,38 @@ impl Thread {
 
                                         cx.notify();
                                     }
+                                    LanguageModelCompletionError::UpstreamProviderError { status, .. } => {
+                                        log::error!("Upstream provider error: status={:?}, model_id={:?}", status, model.id());
+                                        let mut aggregated_prompt = String::new();
+                                        for msg in &request_for_logging.messages {
+                                            for content in &msg.content {
+                                                match content {
+                                                    MessageContent::Text(t) => {
+                                                        aggregated_prompt.push_str(t);
+                                                        aggregated_prompt.push('\n');
+                                                    }
+                                                    MessageContent::Thinking { text, .. } => {
+                                                        aggregated_prompt.push_str(text);
+                                                        aggregated_prompt.push('\n');
+                                                    }
+                                                    MessageContent::RedactedThinking(data) => {
+                                                        aggregated_prompt.push_str(data);
+                                                        aggregated_prompt.push('\n');
+                                                    }
+                                                    MessageContent::Image(_)
+                                                    | MessageContent::ToolUse(_)
+                                                    | MessageContent::ToolResult(_) => {}
+                                                }
+                                            }
+                                        }
+                                        let max_chars = 4000usize;
+                                        let truncated_prompt: String = aggregated_prompt.chars().take(max_chars).collect();
+                                        log::error!(
+                                            "Aggregated prompt (truncated to {} chars):\n{}",
+                                            truncated_prompt.len(),
+                                            truncated_prompt
+                                        );
+                                    }
                                     _ => {
                                         if let Some(retry_strategy) =
                                             Thread::get_retry_strategy(completion_error)
