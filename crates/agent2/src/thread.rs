@@ -1809,6 +1809,43 @@ impl Thread {
             })?;
 
             if let Some(error) = error {
+                // Log aggregated prompt (Text/Thinking/RedactedThinking) when provider rejects or prompt too large.
+                match &error {
+                    language_model::LanguageModelCompletionError::PromptTooLarge { .. }
+                    | language_model::LanguageModelCompletionError::UpstreamProviderError { .. } => {
+                        let mut aggregated_prompt = String::new();
+                        for msg in &request.messages {
+                            for content in &msg.content {
+                                match content {
+                                    language_model::MessageContent::Text(t) => {
+                                        aggregated_prompt.push_str(t);
+                                        aggregated_prompt.push('\n');
+                                    }
+                                    language_model::MessageContent::Thinking { text, .. } => {
+                                        aggregated_prompt.push_str(text);
+                                        aggregated_prompt.push('\n');
+                                    }
+                                    language_model::MessageContent::RedactedThinking(data) => {
+                                        aggregated_prompt.push_str(data);
+                                        aggregated_prompt.push('\n');
+                                    }
+                                    language_model::MessageContent::Image(_)
+                                    | language_model::MessageContent::ToolUse(_)
+                                    | language_model::MessageContent::ToolResult(_) => {}
+                                }
+                            }
+                        }
+                        let max_chars = 4000usize;
+                        let truncated_prompt: String = aggregated_prompt.chars().take(max_chars).collect();
+                        log::error!(
+                            "Aggregated prompt (truncated to {} chars):\n{}",
+                            truncated_prompt.len(),
+                            truncated_prompt
+                        );
+                    }
+                    _ => {}
+                }
+
                 attempt += 1;
                 let retry =
                     this.update(cx, |this, _| this.handle_completion_error(error, attempt))??;
