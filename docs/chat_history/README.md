@@ -40,6 +40,22 @@ This directory contains comprehensive documentation for the `ctx_chat_history` t
 
 ---
 
+#### [ENUM_FIX_SUMMARY.md](ENUM_FIX_SUMMARY.md)
+**Serialization format fix (107 lines)**
+
+- Problem: Mismatch between Rust serialization and JSON schema
+- Root cause analysis of untagged vs internally-tagged enums
+- Solution: Added `tag = "type"` to serde attribute
+- Correct usage examples
+- Testing verification
+- Explanation of why internal tagging is preferred
+
+**Target Audience**: Developers, maintainers
+
+**Purpose**: Documents the fix that aligns Rust deserialization with OpenAPI 3 schema generation.
+
+---
+
 ### 🔧 Technical Documentation
 
 #### [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md)
@@ -132,6 +148,9 @@ This directory contains comprehensive documentation for the `ctx_chat_history` t
 **Understand memory tool fix**
 → Read [MEMORY_TOOL_FIX.md](MEMORY_TOOL_FIX.md)
 
+**Understand enum serialization fix**
+→ Read [ENUM_FIX_SUMMARY.md](ENUM_FIX_SUMMARY.md)
+
 ---
 
 ## Key Concepts
@@ -200,7 +219,8 @@ ChatHistoryOperation (Enum)
 
 ✅ **Tool not discoverable** - Enhanced schema with comprehensive descriptions
 ✅ **chat_id required for similar** - Made optional, auto-uses current conversation
-✅ **Enum deserialization failure** - Implemented custom deserializer workaround
+✅ **Enum deserialization failure** - Implemented custom deserializer workaround (deprecated)
+✅ **Serialization format mismatch** - Fixed enum to use internal tagging matching schema
 
 ### Known Issues
 
@@ -261,6 +281,7 @@ When working on chat history tools:
   - Made chat_id optional for similar operation
   - Investigated and fixed deserialization issue
   - Created comprehensive documentation suite
+  - Fixed enum serialization to use internal tagging (proper fix)
 
 ---
 
