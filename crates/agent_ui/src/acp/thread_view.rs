@@ -4018,118 +4018,44 @@ impl AcpThreadView {
     }
 
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<Div> {
-        // Display active prompt (current context sent to model) plus projected full (if all archives expanded).
-        let acp_thread = self.thread()?.read(cx);
-        let is_generating = acp_thread.status() != ThreadStatus::Idle;
+        let thread = self.thread()?.read(cx);
+        let usage = thread.token_usage()?;
+        let is_generating = thread.status() != ThreadStatus::Idle;
 
-        let fallback_usage = acp_thread.token_usage();
-
-        // Gather active, full, and memory savings from native thread if available.
-        let (active_used, active_max, full_used_opt, memory_seg_count, memory_saved_tokens) =
-            if let Some(native_thread) = self.as_native_thread(cx) {
-                let native = native_thread.read(cx);
-                let mut full_used = None;
-                let (used, max) = if let Some((active, full)) = native.active_and_full_token_usage() {
-                    full_used = Some(full.used_tokens);
-                    (active.used_tokens, active.max_tokens)
-                } else if let Some(latest) = native.latest_token_usage() {
-                    (latest.used_tokens, latest.max_tokens)
-                } else if let Some(fallback) = fallback_usage {
-                    (fallback.used_tokens, fallback.max_tokens)
-                } else {
-                    return None;
-                };
-
-                // Memory segment metadata: (id,start,end,count,message_chars,placeholder_chars,token_savings_estimate,summary,stored_epoch_ms)
-                let metas = native.memory_segment_metas();
-                let saved: usize = metas.iter().map(|m| m.6).sum();
-                (used, max, full_used, metas.len(), saved)
-            } else if let Some(fallback) = fallback_usage {
-                (fallback.used_tokens, fallback.max_tokens, None, 0, 0)
-            } else {
-                return None;
-            };
-
-        let active_used_h = crate::text_thread_editor::humanize_token_count(active_used);
-        let active_max_h = crate::text_thread_editor::humanize_token_count(active_max);
-        let full_used_h = full_used_opt
-            .map(crate::text_thread_editor::humanize_token_count)
-            .unwrap_or_else(|| active_used_h.clone());
-
-        // Build inline label text: active / max (full: X) if full differs.
-        let inline_full_part = if let Some(full) = full_used_opt {
-            if full > active_used {
-                format!(" (full: {})", full_used_h)
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-
-        // Tooltip with precise integer counts (no humanization).
-        let tooltip_text = format!(
-            "Active context: {active_used} / {active_max} tokens\nProjected full (expanded): {full_used} / {active_max} tokens\nArchived segments: {memory_seg_count}\nSaved tokens: {memory_saved_tokens}\n{}",
-            if is_generating { "Streaming…" } else { "Idle" },
-            full_used = full_used_opt.unwrap_or(active_used)
-        );
-
-// Animation intent:
-// - Pulsate while generating.
-// - If we have memory savings, fade between two alpha ranges a bit faster to emphasize compression.
-// Prefixed with underscore to acknowledge intentional non-use (future reintroduction possible).
-let _animation = if is_generating {
-    Some(
-        Animation::new(Duration::from_millis(if memory_saved_tokens > 0 { 1200 } else { 2000 }))
-            .repeat()
-            .with_easing(pulsating_between(
-                if memory_saved_tokens > 0 { 0.25 } else { 0.3 },
-                if memory_saved_tokens > 0 { 0.9 } else { 0.8 },
-            )),
-    )
-} else {
-    None
-};
+        let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
+        let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
 
         Some(
             h_flex()
                 .flex_shrink_0()
                 .gap_0p5()
                 .mr_1p5()
-                .child({
-                    Button::new("context-tokens", active_used_h + inline_full_part.as_str())
-                        .style(ButtonStyle::Transparent)
-                        .label_size(LabelSize::Small)
-                        .color(if memory_saved_tokens > 0 {
-                            Color::Custom(cx.theme().colors().text_muted.opacity(0.85))
-                        } else {
-                            Color::Muted
-                        })
-                        .tooltip(Tooltip::text(tooltip_text))
-                })
+                .child(
+                    Label::new(used)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .map(|label| {
+                            if is_generating {
+                                label
+                                    .with_animation(
+                                        "used-tokens-label",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.3, 0.8)),
+                                        |label, delta| label.alpha(delta),
+                                    )
+                                    .into_any()
+                            } else {
+                                label.into_any_element()
+                            }
+                        }),
+                )
                 .child(
                     Label::new("/")
                         .size(LabelSize::Small)
                         .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.5))),
                 )
-                .child(
-                    Label::new(active_max_h)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .when(memory_saved_tokens > 0, |this| {
-                    // Add a small savings badge (raw token delta).
-                    let savings_label = Label::new(format!("-{}", memory_saved_tokens))
-                        .size(LabelSize::XSmall)
-                        .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)));
-                    this.child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(Label::new("(").size(LabelSize::XSmall).color(Color::Muted))
-                            .child(savings_label)
-                            .child(Label::new("saved)").size(LabelSize::XSmall).color(Color::Muted)),
-                    )
-                }),
+                .child(Label::new(max).size(LabelSize::Small).color(Color::Muted)),
         )
     }
 
