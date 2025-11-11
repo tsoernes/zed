@@ -353,7 +353,11 @@ impl WrappedLineLayout {
                 Ok(self
                     .unwrapped_layout
                     .index_for_x(position_in_unwrapped_line.x)
-                    .unwrap())
+                    .unwrap_or_else(|| {
+                        self
+                            .unwrapped_layout
+                            .closest_index_for_x(position_in_unwrapped_line.x)
+                    }))
             }
         }
     }
