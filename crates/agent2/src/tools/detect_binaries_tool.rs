@@ -161,6 +161,10 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
         &["sqlite3", "psql", "mysql", "redis-cli", "mongosh", "duckdb"],
     ),
     ("docs", &["pandoc", "sphinx-build", "mkdocs", "mdbook"]),
+    (
+        "latex",
+        &["pdflatex", "xelatex", "lualatex", "latexmk", "bibtex", "biber", "texdoc", "kpsewhich", "tectonic", "latexindent", "chktex", "texcount"],
+    ),
     ("vcs", &["git", "gh"]),
 ];
 
