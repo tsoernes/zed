@@ -109,8 +109,28 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "build_systems",
+        &["make", "cmake", "ninja", "gradle", "maven", "bazel", "meson", "just"],
+    ),
+    (
+        "node_js_tools",
+        &["node", "deno", "bun", "tsx", "ts-node", "eslint", "prettier", "turbo", "vitest", "jest"],
+    ),
+    (
+        "go_tools",
+        &["go", "gofmt", "goimports", "golangci-lint", "goreleaser", "delve"],
+    ),
+    (
+        "version_managers",
+        &["direnv", "pyenv", "asdf", "mise", "nvm", "fnm", "rbenv", "rvm"],
+    ),
+    (
+        "editors_dev",
+        &["vim", "nvim", "emacs", "code", "zed", "subl", "tmux", "screen"],
+    ),
+    (
         "search_productivity",
-        &["rg", "ag", "fd", "fzf", "jq", "exa", "bat", "tree", "tldr"],
+        &["rg", "ag", "fd", "fzf", "jq", "yq", "exa", "bat", "tree", "tldr", "httpie", "xh", "diff-so-fancy", "delta", "lazygit", "tig", "watch", "entr"],
     ),
     ("system_perf", &["htop", "lsof", "strace", "perf", "time"]),
     (
