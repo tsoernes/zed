@@ -99,6 +99,8 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "python_quality",
         &[
+            "python",
+            "python3",
             "black",
             "ruff",
             "mypy",
@@ -111,6 +113,22 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "build_systems",
         &["make", "cmake", "ninja", "gradle", "maven", "bazel", "meson", "just"],
+    ),
+    (
+        "c_cpp_tools",
+        &["gcc", "g++", "clang", "clang++", "gdb", "lldb", "valgrind", "ccache", "cppcheck", "clang-tidy", "clang-format", "ar", "nm", "objdump", "ldd"],
+    ),
+    (
+        "java_jvm_tools",
+        &["java", "javac", "kotlin", "kotlinc", "scala", "scalac", "sbt", "groovy", "jshell"],
+    ),
+    (
+        "ruby_tools",
+        &["ruby", "irb", "gem", "bundler", "rake", "rubocop", "rails", "rspec"],
+    ),
+    (
+        "php_tools",
+        &["php", "composer", "phpunit", "psalm", "phpstan", "php-cs-fixer"],
     ),
     (
         "node_js_tools",
@@ -130,9 +148,12 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "search_productivity",
-        &["rg", "ag", "fd", "fzf", "jq", "yq", "exa", "bat", "tree", "tldr", "httpie", "xh", "diff-so-fancy", "delta", "lazygit", "tig", "watch", "entr"],
+        &["rg", "ag", "fd", "fzf", "jq", "yq", "jless", "fx", "exa", "bat", "tree", "tldr", "httpie", "xh", "diff-so-fancy", "delta", "lazygit", "tig", "watch", "entr"],
     ),
-    ("system_perf", &["htop", "lsof", "strace", "perf", "time"]),
+    (
+        "system_perf",
+        &["htop", "lsof", "strace", "perf", "time", "systemctl", "journalctl", "ps", "top", "kill", "killall", "df", "du", "ncdu", "lsblk", "fdisk", "parted", "ss", "netstat"],
+    ),
     (
         "containers",
         &[
@@ -154,13 +175,24 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
             "nslookup",
             "ip",
             "traceroute",
+            "ab",
+            "wrk",
+            "hey",
+            "bombardier",
         ],
+    ),
+    (
+        "security",
+        &["nmap", "nc", "netcat", "tcpdump", "tshark", "wireshark", "openssl", "gpg", "age", "sops", "ssh-keygen", "ssh-agent", "vault", "trivy", "grype"],
     ),
     (
         "databases",
         &["sqlite3", "psql", "mysql", "redis-cli", "mongosh", "duckdb"],
     ),
-    ("docs", &["pandoc", "sphinx-build", "mkdocs", "mdbook"]),
+    (
+        "docs",
+        &["pandoc", "sphinx-build", "mkdocs", "mdbook", "hugo", "jekyll", "eleventy", "gatsby", "astro", "pelican"],
+    ),
     (
         "latex",
         &["pdflatex", "xelatex", "lualatex", "latexmk", "bibtex", "biber", "texdoc", "kpsewhich", "tectonic", "latexindent", "chktex", "texcount"],
@@ -168,6 +200,42 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "pdf_tools",
         &["evince", "okular", "zathura", "mupdf", "xpdf", "qpdfview", "pdfinfo", "pdftotext", "pdftk", "qpdf", "gs"],
+    ),
+    (
+        "compression",
+        &["tar", "gzip", "bzip2", "xz", "zstd", "zip", "unzip", "7z", "rar", "unrar"],
+    ),
+    (
+        "media_processing",
+        &["ffmpeg", "ffprobe", "convert", "identify", "mogrify", "exiftool", "sox"],
+    ),
+    (
+        "file_sync_backup",
+        &["rsync", "scp", "sftp", "rclone", "restic", "borg", "duplicity", "syncthing"],
+    ),
+    (
+        "serialization_rpc",
+        &["protoc", "flatc", "thrift", "grpcurl", "grpc_cli"],
+    ),
+    (
+        "ci_cd",
+        &["gitlab-runner", "circleci", "travis", "act", "drone"],
+    ),
+    (
+        "message_queues",
+        &["kafka-console-producer", "kafka-console-consumer", "rabbitmqadmin", "rabbitmqctl", "kcat", "kafkacat"],
+    ),
+    (
+        "api_testing",
+        &["k6", "locust", "hurl", "bruno"],
+    ),
+    (
+        "config_data_tools",
+        &["yamllint", "yamlfmt", "toml-cli", "xmllint", "xmlstarlet"],
+    ),
+    (
+        "diff_merge_tools",
+        &["meld", "vimdiff", "kdiff3", "colordiff", "icdiff", "patch"],
     ),
     ("vcs", &["git", "gh"]),
 ];
