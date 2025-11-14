@@ -165,6 +165,10 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
         "latex",
         &["pdflatex", "xelatex", "lualatex", "latexmk", "bibtex", "biber", "texdoc", "kpsewhich", "tectonic", "latexindent", "chktex", "texcount"],
     ),
+    (
+        "pdf_tools",
+        &["evince", "okular", "zathura", "mupdf", "xpdf", "qpdfview", "pdfinfo", "pdftotext", "pdftk", "qpdf", "gs"],
+    ),
     ("vcs", &["git", "gh"]),
 ];
 
