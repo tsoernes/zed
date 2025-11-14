@@ -116,7 +116,7 @@ const BASE_CANDIDATE_GROUPS: &[(&str, &[&str])] = &[
     (
         "containers",
         &[
-            "docker", "podman", "nerdctl", "kubectl", "helm", "kind", "minikube", "k9s",
+            "docker", "podman", "nerdctl", "kubectl", "radixcli", "helm", "kind", "minikube", "k9s",
         ],
     ),
     (
