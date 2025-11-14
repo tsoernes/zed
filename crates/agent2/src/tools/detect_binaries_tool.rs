@@ -734,4 +734,71 @@ fi
         assert!(v.contains("FallbackTool"));
         assert!(v.contains("0.9.0"));
     }
+
+    #[test]
+    #[ignore] // Run with: cargo test --package agent2 --lib -- tools::detect_binaries_tool::tests::benchmark_timing --exact --nocapture --ignored
+    fn benchmark_timing() {
+        use std::time::Instant;
+
+        println!("\n\nBinary Detection Timing Benchmark");
+        println!("==================================================");
+
+        // Count total binaries
+        let settings = load_settings_file();
+        let groups = build_effective_groups(&settings, &None);
+        let total_binaries: usize = groups.iter().map(|(_, bins)| bins.len()).sum();
+        println!("Total binaries to detect: {}", total_binaries);
+        println!("Total categories: {}", groups.len());
+        println!("==================================================\n");
+
+        // Test different concurrency levels
+        for concurrency in [1, 4, 8, 12, 16, 24, 32] {
+            let start = Instant::now();
+
+            // Simulate the detection process by counting which binaries exist
+            let mut found_count = 0;
+            let mut missing_count = 0;
+
+            let binaries: Vec<(String, String)> = groups
+                .iter()
+                .flat_map(|(cat, bins)| {
+                    bins.iter().map(move |b| (cat.clone(), b.clone()))
+                })
+                .collect();
+
+            // Process in chunks based on concurrency
+            let chunk_size = concurrency.max(1);
+            for chunk in binaries.chunks(chunk_size) {
+                let mut handles = vec![];
+                for (_, bin) in chunk {
+                    let bin_clone = bin.clone();
+                    handles.push(std::thread::spawn(move || {
+                        which_all(&bin_clone)
+                    }));
+                }
+
+                for handle in handles {
+                    if let Ok(paths) = handle.join() {
+                        if paths.is_empty() {
+                            missing_count += 1;
+                        } else {
+                            found_count += 1;
+                        }
+                    }
+                }
+            }
+
+            let elapsed = start.elapsed();
+            println!(
+                "Concurrency {}: {:.3}s (found: {}, missing: {})",
+                concurrency,
+                elapsed.as_secs_f64(),
+                found_count,
+                missing_count
+            );
+        }
+
+        println!("\n==================================================");
+        println!("Benchmark complete!");
 }
+    }
