@@ -64,6 +64,8 @@ pub struct DetectBinariesToolInput {
     max_concurrency: usize,
     #[serde(default = "default_version_timeout_ms")]
     version_timeout_ms: u64,
+    #[serde(default)]
+    include_missing: bool,
 }
 
 impl Default for DetectBinariesToolInput {
@@ -72,6 +74,7 @@ impl Default for DetectBinariesToolInput {
             filter_categories: None,
             max_concurrency: default_max_concurrency(),
             version_timeout_ms: default_version_timeout_ms(),
+            include_missing: false,
         }
     }
 }
@@ -559,6 +562,12 @@ impl AgentTool for DetectBinariesTool {
             });
 
             let found = reports.iter().filter(|r| r.found).count();
+
+            // Optionally filter out missing entries from the binaries list.
+            if !input.include_missing {
+                reports.retain(|r| r.found);
+            }
+
             let output = DetectBinariesOutput {
                 binaries: reports,
                 summary: Summary {
