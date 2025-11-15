@@ -12,7 +12,6 @@
   - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
 * When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
 * Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
-* When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
 * Avoid creative additions unless explicitly requested
 * Use full words for variable names (no abbreviations like "q" for "queue")
 * Use variable shadowing to scope clones in async contexts for clarity, minimizing the lifetime of borrowed references.
@@ -141,3 +140,1601 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 ## General guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+
+
+# Repository Summary
+
+## Executive Overview
+
+Zed is a GPU‑accelerated, cross‑platform editor built as a large Rust workspace. Its architecture centers on GPUI, an immediate‑mode UI framework, and a Project/Workspace orchestration layer that wires editing, language tooling, debugging, terminals, tasks, collaboration, remote development, AI assistance, and an extension system. Functionality is decomposed into focused crates, each exposing clean APIs and global registries with event/subscription patterns to compose features coherently.
+
+Core subsystems:
+- UI and editing: gpui (platform/window/rendering), ui (components/styles), editor (buffer/display pipeline), text/multi_buffer (core models), theme, settings, keymaps.
+- Language services: language (registry, buffers, syntax, toolchains), languages (grammars/configs), lsp (client/stdio), project (stores for LSP, git, tasks, search, debugger), terminal/terminal_view.
+- AI assistance: agent (threads/tools/prompts), agent2 (next‑gen threads/tools/memory), language_models/providers (Anthropic/OpenAI/etc.), cloud clients, edit prediction (zeta/zeta2), assistant_tools/slash_commands.
+- Collaboration and remote: collab server (Axum/SeaORM/RPC), client/rpc/proto, livekit APIs, remote/remote_server (SSH/WSL daemon), collab_ui.
+- Debugging: dap (transport/client/registry), dap_adapters (CodeLLDB/GDB/etc.), debugger_ui, debug_adapter_extension.
+- Extensions: extension_api (WIT), extension_host (wasmtime/WASI runtime), extension (manifests/build), language_extension, extension_cli, extensions_ui.
+- Infrastructure and utilities: fs/fsevent, rope/sum_tree, http_client/reqwest_client/tls, paths, zlog/telemetry, scheduler, db/sqlez, migrator.
+
+Key patterns:
+- High‑performance data structures (SumTree, Rope) underpin rendering, diffing, indexing, and collaborative operations.
+- Global registries (languages, tools, providers, themes) with watch channels and stores decouple discovery from usage.
+- Versioned protocols and migrations (protobuf envelope, JSON schema transforms, SQL and settings/keymap migrations) maintain compatibility.
+- WASM extensions use versioned WIT surfaces, capability gating, and a host runtime for secure integration.
+- Streaming/async design with deterministic test executors for robust concurrency across UI, network, and background tasks.
+
+## Directory & File Hierarchy
+
+## .
+
+Top‑level workspace: readme, contribution guidelines, architecture clarifications (MCP/tool registry), compose/docker files, toolchain pinning, and release/process configs.
+
+**Files:**
+
+- `CONTEXT_TOOLS_INTEGRATION.md` (rel=5): Explains why registered tools were not visible to the agent and details the two-tier system (ToolRegistry vs AgentProfile enabling), code touchpoints, and required settings changes.
+- `MCP_ARCHITECTURE_CLARIFICATION.md` (rel=5): Clarifies the separation between the native ToolRegistry (internal) and the embedded MCP server (external), including clients, protocols, and configuration.
+- `MCP_TOOLS_IMPLEMENTATION.md` (rel=5): Describes the embedded MCP server architecture, tool registration, data flow, tool schemas, and usage examples.
+
+### .github
+
+GitHub directory housing CI workflow definitions for the repository.
+
+### assets
+
+Bundled assets (keymaps, prompts) used by the application and features.
+
+#### assets/prompts
+
+Handlebars prompt templates for edit/content insertion and terminal assistant behaviors.
+
+**Files:**
+
+- `assets/prompts/content_prompt.hbs` (rel=5): Handlebars template that instructs the model on how to insert or rewrite code/text sections, preserving indentation and optionally using diagnostics; it forms a core editing prompt in the assistant architecture.
+
+### crates
+
+The Rust workspace housing all feature crates (UI, editor, language, AI, collaboration, remote, debugging, extensions, tooling).
+
+##### crates/acp_thread/src
+
+Agent client protocol thread domain: messages, tool calls, diffs, terminals, mentions, serialization, and status management.
+
+**Files:**
+
+- `crates/acp_thread/src/acp_thread.rs` (rel=5): Defines the ACP thread domain: user and assistant messages, tool calls with content, diffs and terminals, status transitions, and markdown serialization, plus optional chat history integration.
+- `crates/acp_thread/src/connection.rs` (rel=5): Defines the AgentConnection trait and optional capabilities (resume, truncate, set title, session modes, model selector, telemetry) plus error types and test stubs.
+
+##### crates/agent/src
+
+Agent crate core: threads, context loading/store, edit agent, native server, tool schemas/working sets, persistence/legacy upgrade.
+
+**Files:**
+
+- `crates/agent/src/context.rs` (rel=5): Core context domain types including ContextKind, AgentContextHandle, and loaded AgentContext variants for files, directories, symbols, selections, URLs, threads, rules, and images.
+- `crates/agent/src/context_store.rs` (rel=5): Manages the set of added contexts with stable identity and deduplication, providing add/remove operations for files, directories, symbols, threads, text threads, rules, fetched URLs, and images.
+- `crates/agent/src/edit_agent.rs` (rel=5): EditAgent issues LLM requests to create, overwrite, or edit files, parses streaming chunks (XML or diff-fenced formats) into structured edits, and resolves old-text ranges via a streaming fuzzy matcher.
+- `crates/agent/src/thread.rs` (rel=5): Defines the primary agent Thread model, including message segmentation (text/thinking/redacted), project/git snapshots, retry strategies, and token usage ratio tracking.
+- `crates/agent/src/thread.rs.bak` (rel=5): Backup of the core agent thread implementation defining ThreadId, message/segment modeling (text/thinking), project/git snapshots, retry strategies, and token usage tracking.
+- `crates/agent/src/thread_store.rs` (rel=5): Central store managing threads, system prompt reloading, project context, tool working set, and context server tool IDs, with subscriptions to project and prompt changes.
+
+###### crates/agent/src/edit_agent/evals
+
+Evaluation assets for the edit agent subsystem.
+
+###### crates/agent/src/edit_agent/evals/fixtures
+
+Container for edit‑agent evaluation fixtures.
+
+###### crates/agent/src/templates
+
+Handlebars templates for system and edit prompts guiding agent behavior and diff formatting.
+
+**Files:**
+
+- `crates/agent/src/templates/system_prompt.hbs` (rel=5): Comprehensive system prompt specifying communication style, tool usage policies, search and code formatting constraints, debugging guidance, and user rule integration.
+
+###### crates/agent/src/tools
+
+Built‑in agent tools (read/edit files, grep, web search, diagnostics, FS ops, etc.) with safe project scoping and streaming outputs.
+
+**Files:**
+
+- `crates/agent/src/tools/read_file_tool.rs` (rel=5): Implements the read_file tool to safely read project files or images, enforcing global/worktree privacy and exclusion rules and supporting optional line ranges and outlines for large files.
+
+##### crates/agent2/src
+
+Agent2 core: native server, threads, templates, memory backend, token counting, active thread access, tool schema adaptation, history store.
+
+**Files:**
+
+- `crates/agent2/src/agent.rs` (rel=5): Orchestrates native agent sessions, building shared project context, loading rules files, authenticating providers, and producing grouped language model listings.
+- `crates/agent2/src/agent2.rs` (rel=5): Crate root that wires together agent core modules and re-exports the public API including server, templates, tools, token usage, threads, persistence, and tests.
+- `crates/agent2/src/db.rs` (rel=5): Defines the serialized thread metadata and thread structures, including upgrading from the agent v1 format by mapping segments, tool uses/results, and token usage into the new model.
+- `crates/agent2/src/thread.rs` (rel=5): Implements the agent2 conversation thread with message types, retry strategies, and conversion of user/agent content (mentions, images, text) into structured LanguageModelRequestMessage payloads.
+
+###### crates/agent2/src/tools
+
+Agent2 tools (edit/read files, grep, memory/chat history, token usage, terminal variants, web search, FS ops), and context server bridging.
+
+**Files:**
+
+- `crates/agent2/src/tools/chat_history_tool.rs` (rel=5): Bridges assistant_tools chat history operations into the agent tool system, executing append, search, answer, similar, list, get, create, delete, reembed, and config ops via the adapter.
+- `crates/agent2/src/tools/context_compaction_executor.rs` (rel=5): Bridges context_server to agent2 by implementing ExternalAgentToolExecutor that dynamically looks up and invokes thread-registered tools, returning ToolResponse with both text and structured content.
+- `crates/agent2/src/tools/edit_file_tool.rs` (rel=5): Agent2 edit_file tool integrating EditAgent, resolving project paths, authorizing sensitive edits, and emitting ToolCall locations while producing diffs for output.
+- `crates/agent2/src/tools/memory_tool.rs` (rel=5): Implements native memory management over a Thread, including listing, stats, storing a [start,end) range with optional summary, loading metadata/messages, and restoring segments.
+- `crates/agent2/src/tools/read_file_tool.rs` (rel=5): Reads file content or loads images from the project while enforcing global/worktree privacy and exclusion settings, supports line-range reads, and falls back to an outline for large files.
+
+##### crates/agent_servers/src
+
+External agent server integrations via ACP (Claude, Codex, Gemini), command resolution, mode persistence, and status reporting.
+
+**Files:**
+
+- `crates/agent_servers/src/acp.rs` (rel=5): Implements AcpConnection to spawn and manage an external agent process over stdio, initialize the ACP protocol, and maintain session state with tasks handling IO, wait, and stderr.
+- `crates/agent_servers/src/agent_servers.rs` (rel=5): Defines the AgentServer trait and delegate for connecting to external agents, including default mode management and a proxy environment passthrough.
+
+##### crates/agent_settings/src
+
+Typed agent settings and profiles: models, UI/behavior, tool enablement, VS Code import helpers, and defaults.
+
+**Files:**
+
+- `crates/agent_settings/src/agent_profile.rs` (rel=5): Defines AgentProfile and AgentProfileSettings, including built-in profiles and methods to create and persist profiles with inherited settings.
+- `crates/agent_settings/src/agent_settings.rs` (rel=5): Central AgentSettings model loaded from SettingsContent, covering agent configuration (models, profiles, UI, behavior, safety) and utilities like temperature lookup and VS Code import.
+
+##### crates/agent_ui/src
+
+Agent UI: panel, inline assistants (editor/terminal), context systems, diff views, model/profile selectors, codegen, and completions.
+
+**Files:**
+
+- `crates/agent_ui/src/agent_panel.rs` (rel=5): Central AgentPanel wiring workspace actions for creating and managing threads (native/external), opening history, settings, and diff views, and toggling menus and onboarding modals.
+- `crates/agent_ui/src/agent_ui.rs` (rel=5): Top-level agent UI initializer registering actions, panels, inline assistants, context servers, selectors, and slash commands while wiring feature flags and settings-driven command palette filtering.
+- `crates/agent_ui/src/context.rs` (rel=5): Defines the agent context system with stable handles and loaded snapshots for files, directories, symbols, selections, fetched URLs, threads, rules, and images.
+- `crates/agent_ui/src/context_store.rs` (rel=5): State store for added contexts with deduplication and type-specific add/remove methods (files, directories, symbols, threads, rules, URLs, images).
+- `crates/agent_ui/src/inline_assistant.rs` (rel=5): Global InlineAssistant service that registers per-workspace, injects assistant code action providers into editors, and orchestrates inline completions and edit predictions.
+- `crates/agent_ui/src/inline_prompt_editor.rs` (rel=5): Core prompt editor for inline assist that composes the editor, codegen buttons/status, context strip, and model selector with extensive action handling.
+- `crates/agent_ui/src/terminal_inline_assistant.rs` (rel=5): Global manager for terminal inline assistant sessions that embeds a prompt editor into the terminal, builds model requests from terminal context, and starts/stops streaming codegen.
+
+###### crates/agent_ui/src/acp
+
+UI for ACP threads: message editor, entry view state, history view, thread view, and mode/model selectors.
+
+**Files:**
+
+- `crates/agent_ui/src/acp/completion_provider.rs` (rel=5): Context mention completion provider that searches files, symbols, rules, threads, and actions to build completions with proper labels, icons, and confirm callbacks inserting mention URIs.
+- `crates/agent_ui/src/acp/entry_view_state.rs` (rel=5): Maintains per-entry UI state for an ACP thread, syncing user messages, assistant messages, and tool calls (terminals and diffs) into rendered views and emitting view events.
+
+#### crates/assistant_context
+
+Context management crate for assistant threads and stores.
+
+##### crates/assistant_context/src
+
+Assistant context storage and synchronization with filesystem/RPC (messages, summaries, slash commands, buffer ops).
+
+**Files:**
+
+- `crates/assistant_context/src/assistant_context.rs` (rel=5): Implements assistant context storage and operations for messages, summaries, slash command lifecycle, and buffer operations, integrating language models, telemetry, and client APIs.
+- `crates/assistant_context/src/context_store.rs` (rel=5): ContextStore tracks and synchronizes assistant contexts with the filesystem and RPC client, handling advertisements, opens, creation, updates, and synchronization messages.
+
+##### crates/assistant_slash_command/src
+
+Slash command framework, registry, working set, and extension bridging to expose commands in the assistant.
+
+**Files:**
+
+- `crates/assistant_slash_command/src/assistant_slash_command.rs` (rel=5): Core slash command framework defining the SlashCommand trait, argument completion behavior, event/content types, and the SlashCommandOutput with segmentation logic to convert text/sections to an event stream and back.
+- `crates/assistant_slash_command/src/slash_command_registry.rs` (rel=5): Defines a global registry for slash commands, tracking all commands and a featured subset with thread-safe registration, lookup, and unregistration.
+
+#### crates/assistant_slash_commands
+
+Crate exposing assistant slash commands integrated with the UI/editor.
+
+##### crates/assistant_slash_commands/src
+
+Slash commands (files/selection/tabs/prompts/fetch/diagnostics/delta/cargo workspace) with argument completion and section rendering.
+
+**Files:**
+
+- `crates/assistant_slash_commands/src/file_command.rs` (rel=5): Provides a slash command to complete and insert files/directories using fuzzy matching across visible worktrees, recent history, and glob patterns, streaming results as structured sections.
+
+#### crates/assistant_tool
+
+Shared tool plumbing crate used by agent and assistant UI.
+
+##### crates/assistant_tool/src
+
+Core tool abstractions (Tool, ToolCard/Result, sources) and working set management across native/MCP tools.
+
+**Files:**
+
+- `crates/assistant_tool/src/assistant_tool.rs` (rel=5): Defines the core tool abstractions including Tool, ToolCard, ToolResult, and ToolUseStatus, integrating with gpui entities and language models to run tools and render optional UI cards.
+
+##### crates/assistant_tools/src
+
+Assistant tools registry and implementations for editing, terminal (sync/async), web search, diagnostics, FS ops, token usage.
+
+**Files:**
+
+- `crates/assistant_tools/src/assistant_tools.rs` (rel=5): Central module that exports types and registers the suite of tools into the ToolRegistry, conditionally enabling web search based on the default model provider and subscribing to model changes.
+- `crates/assistant_tools/src/edit_agent.rs` (rel=5): Coordinates model-driven file edits (create, overwrite, granular edit) by constructing prompts, streaming and parsing edit chunks, and applying changes to buffers.
+- `crates/assistant_tools/src/edit_file_tool.rs` (rel=5): Tool wrapper for editing/creating/overwriting files via EditAgent, handling path resolution, confirmation heuristics for sensitive locations, UI text, and LSP formatting triggers.
+- `crates/assistant_tools/src/enhanced_terminal_tool.rs` (rel=5): Defines the core enhanced terminal infrastructure: global job registry, job ID generation, default and large output limits, denylist construction from settings, and dangerous command detection.
+
+###### crates/assistant_tools/src/edit_agent/evals
+
+Edit agent evaluation assets directory.
+
+###### crates/assistant_tools/src/edit_agent/evals/fixtures
+
+Container for edit agent evaluation fixtures.
+
+###### crates/assistant_tools/src/enhanced_terminal
+
+Docs for synchronous enhanced terminal tool (sudo, shell, CWD, output limits, safety).
+
+**Files:**
+
+- `crates/assistant_tools/src/enhanced_terminal/description.md` (rel=5): Documents the synchronous enhanced terminal tool for executing shell commands with optional sudo, flexible CWD resolution, custom shells, adjustable output capture, and a safety denylist.
+
+###### crates/assistant_tools/src/enhanced_terminal_async
+
+Docs for async terminal tool (jobs, status polling, env whitelist, safety).
+
+**Files:**
+
+- `crates/assistant_tools/src/enhanced_terminal_async/description.md` (rel=5): Explains the async terminal tool that launches commands in the background, supports bounded waiting, structured JSON results, environment whitelisting, and safety controls.
+
+###### crates/assistant_tools/src/enhanced_terminal_job_status
+
+Docs for querying/canceling async terminal jobs with structured states.
+
+**Files:**
+
+- `crates/assistant_tools/src/enhanced_terminal_job_status/description.md` (rel=5): Specifies how to query, cancel, and retrieve full output for asynchronous terminal jobs with consistent JSON schema and clear states.
+
+#### crates/auto_update_helper
+
+Windows‑only helper for safe app updates with job orchestration and logging.
+
+#### crates/breadcrumbs
+
+Crate implementing breadcrumbs UI integrated with Editor.
+
+##### crates/buffer_diff/src
+
+High‑performance diff engine for buffers/hunks with staged/unstaged secondary diffs and background computation.
+
+**Files:**
+
+- `crates/buffer_diff/src/buffer_diff.rs` (rel=5): Diff engine that computes and tracks hunks between a buffer and base text using SumTrees, supporting staged/unstaged secondary diffs and background computation.
+
+#### crates/call
+
+Crate coordinating real‑time calls within the collaboration stack.
+
+##### crates/call/src
+
+Container for call implementation modules.
+
+#### crates/channel
+
+Collaboration channel crate providing metadata/buffer management and messaging.
+
+##### crates/channel/src
+
+Channel store and buffer for collaborative text, applying remote/local ops, tracking collaborators, and initialization glue.
+
+**Files:**
+
+- `crates/channel/src/channel_buffer.rs` (rel=5): ChannelBuffer represents a collaborative text buffer for a channel: it joins the buffer, applies remote operations, sends local operations, manages collaborators, and acknowledges versions with a debounce to reduce chatter.
+- `crates/channel/src/channel_store.rs` (rel=5): ChannelStore manages channel metadata, invitations, participants, and per-channel state, subscribing to server updates and maintaining an ordered DAG index.
+
+#### crates/chat_history
+
+Persistent chat storage and retrieval crate with hybrid search and RAG.
+
+**Files:**
+
+- `crates/chat_history/README.md` (rel=5): Design overview for a crate providing persistent chat storage, embeddings, hybrid retrieval, and lightweight RAG, with clear trait boundaries, async background tasks, configurable embedding backends, and a planned API surface.
+
+##### crates/chat_history/src
+
+Chat history core: SeaORM entities/CRUD, hybrid search (BM25+embeddings), RAG, embedding cache, tests.
+
+**Files:**
+
+- `crates/chat_history/src/chat_history.rs` (rel=5): Core chat history module defining types, tool request/response models, and a prelude of commonly used exports, with tests for configuration parsing and an optional Azure embeddings smoke test.
+- `crates/chat_history/src/db.rs` (rel=5): Implements ChatHistoryDb over SeaORM with CRUD for chats/messages/tags, a lightweight BM25 index for lexical search, and association of messages to embeddings via digests/models, including cascade deletion.
+- `crates/chat_history/src/entities.rs` (rel=5): Defines SeaORM entities for chats, messages, tags, embeddings, and message_embeddings with relations, plus helpers to encode/decode chat vectors and convert DB models to in-memory structs.
+
+##### crates/client/src
+
+Client RPC: auth, connection lifecycle/backoff, settings (server/proxy), telemetry, and status/watch channels.
+
+**Files:**
+
+- `crates/client/src/client.rs` (rel=5): Client-side RPC layer managing authentication, connection lifecycle, reconnection backoff, and settings (server, proxy).
+- `crates/client/src/user.rs` (rel=5): Defines user domain types and a UserStore that tracks the current user, contacts, plan usage, and related events, reacting to client connection/authentication state and server messages.
+
+#### crates/clock
+
+Clock utilities crate underpinning collaborative and ordered operations.
+
+##### crates/clock/src
+
+Lamport/global vector clocks for ordering across replicas and a SystemClock abstraction for testing.
+
+**Files:**
+
+- `crates/clock/src/clock.rs` (rel=5): Implements Lamport timestamps and a Global vector clock with operations to observe, join, meet, iterate, and compare events across replicas, including special IDs for local branch and agent.
+
+##### crates/cloud_api_client/src
+
+Authenticated HTTP client for Zed Cloud (user info, LLM tokens) and versioned WebSocket connection.
+
+**Files:**
+
+- `crates/cloud_api_client/src/cloud_api_client.rs` (rel=5): CloudApiClient manages user credentials and performs authenticated HTTP requests to Zed Cloud (e.g., fetching the authenticated user, creating LLM tokens, validating credentials). It also establishes a versioned WebSocket connection and returns a Connection that integrates with gpui’s task runtime.
+
+##### crates/cloud_llm_client/src
+
+Client‑side types/protocols for cloud LLM services (plans/providers, completions, predict‑edits v3, streaming events).
+
+**Files:**
+
+- `crates/cloud_llm_client/src/cloud_llm_client.rs` (rel=5): Defines client-side types and constants for communicating with the cloud LLM service, including plan/usage models, providers, completion and predict-edits request/response schemas, streaming status/events, token counting, and web search structures.
+- `crates/cloud_llm_client/src/predict_edits_v3.rs` (rel=5): Specifies the PredictEdits v3 protocol: request payload with excerpt, cursor, signatures, referenced declarations with scoring components, events, diagnostics, and optional prompt format and limits, plus the edits response and debug info.
+
+##### crates/cloud_zeta2_prompt/src
+
+Prompt planning for code edits using a greedy knapsack selection of declaration snippets within a budget.
+
+**Files:**
+
+- `crates/cloud_zeta2_prompt/src/cloud_zeta2_prompt.rs` (rel=5): Implements prompt planning for code edit predictions, defining system prompts and a greedy one-pass knapsack algorithm that selects declaration snippets (and required parent signatures) within a byte budget based on score density.
+
+#### crates/collab
+
+Collaboration server crate powering collab.zed.dev with docs, env config, PostgREST, and extensive test deps.
+
+**Files:**
+
+- `crates/collab/README.md` (rel=5): Documents the collaboration server powering collab.zed.dev, including local Postgres setup, multi-instance testing, deployment to DigitalOcean Kubernetes, and migrations. Defines a core backend service integral to Zed’s multiplayer features.
+
+##### crates/collab/migrations
+
+SQL migrations for collaboration backend: sessions/users/channels/buffers/messages/notifications/git/debugging and future repository features.
+
+**Files:**
+
+- `crates/collab/migrations/20220620211403_create_projects.sql` (rel=5): Introduces projects with host users, worktree_extensions aggregation, and project_activity_periods tracking, with supporting indexes.
+- `crates/collab/migrations/20230819154600_add_channel_buffers.sql` (rel=5): Introduces buffers, buffer_operations, buffer_snapshots, and channel_buffer_collaborators with CRDT-like metadata (epochs, lamport timestamps, replicas) and indexes.
+- `crates/collab/migrations/20230907114200_add_channel_messages.sql` (rel=5): Creates channel_messages for user-sent messages with nonce and timing, and channel_chat_participants to track live chat connections per channel.
+- `crates/collab/migrations/20230925210437_add_channel_changes.sql` (rel=5): Adds observed_buffer_edits to track CRDT edit metadata (epoch, Lamport timestamp, replica) per user/buffer and observed_channel_messages to mark last-seen messages per user/channel.
+- `crates/collab/migrations/20240226164505_unique_channel_names.sql` (rel=5): Enforces unique channel names within a non-empty parent_path via a partial unique index.
+- `crates/collab/migrations/20240307163119_denormalize_buffer_ops.sql` (rel=5): Denormalizes latest operation metadata (epoch, lamport timestamp, replica id) onto buffers and backfills from buffer_operations via a DISTINCT ON query.
+- `crates/collab/migrations/20240315183903_channel_parent_path_not_null.sql` (rel=5): Makes channels.parent_path NOT NULL to enforce a consistent hierarchical structure. This strengthens core channel organization assumptions.
+- `crates/collab/migrations/20250530175450_add_channel_order.sql` (rel=5): Adds channel_order to channels, backfills a deterministic order per parent_path using ROW_NUMBER, and indexes for ordered queries.
+
+##### crates/collab/src
+
+Collab server core: config, auth, DB, migrations, API routes, RPC handlers, executor, seeding, and main entrypoint.
+
+**Files:**
+
+- `crates/collab/src/api.rs` (rel=5): Sets up API routes including access token creation (with optional admin impersonation) and RPC server snapshot, and adds middleware to validate an API token header.
+- `crates/collab/src/auth.rs` (rel=5): Implements auth middleware that validates user credentials from headers, supports development impersonation, and injects Principals; provides access token creation, hashing (SHA-256 or scrypt), verification, and public-key encryption.
+- `crates/collab/src/db.rs` (rel=5): Wraps the SeaORM database connection with transactional helpers that serialize operations per room/project via mutex guards, returning TransactionGuards that hold locks until drop.
+- `crates/collab/src/lib.rs` (rel=5): Defines core types including a unified Error, configuration, service modes, and AppState construction that wires the database, executor, LiveKit, S3, and optional Kinesis clients.
+- `crates/collab/src/main.rs` (rel=5): Entry point providing CLI commands for version, migrations, seeding, and serving API/collab services with tracing and graceful shutdown.
+- `crates/collab/src/rpc.rs` (rel=5): Collaboration server RPC handling with connection limits, typed message/request dispatch, and session context tracking.
+
+###### crates/collab/src/db/queries
+
+SeaORM queries for channels, rooms, buffers, projects, users, tokens, embeddings, servers, extensions, notifications.
+
+**Files:**
+
+- `crates/collab/src/db/queries/buffers.rs` (rel=5): Manages collaborative text buffers: joining assigns a unique replica, returns base text and operations, and persists observed edits; rejoining validates epoch, updates connection, and computes server version to send unseen operations.
+
+###### crates/collab/src/db/tables
+
+SeaORM entity models for collaboration (projects/rooms/channels/users/buffers/observed edits/messages/repositories).
+
+**Files:**
+
+- `crates/collab/src/db/tables/observed_buffer_edits.rs` (rel=5): Tracks each user's observed edit position for a buffer with epoch, Lamport timestamp, and replica id, relating to buffer and user.
+- `crates/collab/src/db/tables/project.rs` (rel=5): Project model with optional room and host user/connection fields, a windows_paths flag, and relations to worktrees, repositories, collaborators, and language servers.
+
+###### crates/collab/src/db/tests
+
+Database integration tests for channels, buffers, users, embeddings, extensions, and overall data flows.
+
+**Files:**
+
+- `crates/collab/src/db/tests/buffer_tests.rs` (rel=5): Database tests for channel buffers: joining, applying serialized text operations, collaborator discovery, leaving buffers and collapsing operations into base text, and tracking latest buffer versions across epochs.
+- `crates/collab/src/db/tests/channel_tests.rs` (rel=5): Database-level tests for channels: access control before invites, invitations and responses, hierarchical channel trees, role changes, deletions (single and subtree), joining channels via membership, and renames with validation.
+- `crates/collab/src/db/tests/db_tests.rs` (rel=5): Comprehensive DB tests for users, GitHub account upserts, access token rotation and impersonation limits, and contact requests lifecycle including dismissals and acceptance.
+
+###### crates/collab/src/tests
+
+End‑to‑end collaboration tests (channels, buffers, notifications, git, remote projects, randomized operations).
+
+**Files:**
+
+- `crates/collab/src/tests/channel_buffer_tests.rs` (rel=5): Validates collaborative channel buffer editing: joining buffers, applying and propagating text operations, collaborator presence changes on close/rejoin, and handling disconnects.
+- `crates/collab/src/tests/channel_guest_tests.rs` (rel=5): Exercises guest permissions in channels: joining shared projects as read-only, microphone mute behavior, promotion/demotion changing edit and audio capabilities, and enforcement of Zed CLA requirements before granting write/talker roles.
+- `crates/collab/src/tests/channel_tests.rs` (rel=5): Covers channel lifecycle and permissions: creation, subchannels, invitations, membership role updates across hierarchies, deletions cascading to subchannels, and reconnection state handling including rename propagation.
+- `crates/collab/src/tests/remote_editing_collaboration_tests.rs` (rel=5): Integration tests for sharing and collaborating on SSH-backed remote projects, including scanning worktrees, joining projects, editing and saving buffers on remote FS, and language server settings overrides.
+
+#### crates/collab_ui
+
+UI crate composing collaboration panels and notifications.
+
+#### crates/collections
+
+Crate providing fast hash collection aliases used across the workspace.
+
+#### crates/command_palette
+
+Crate implementing the command palette and invocation persistence.
+
+##### crates/context_server/src
+
+Model Context Protocol client/server: typed requests/notifications, initialization handshake, transport abstraction, listener/server wrappers.
+
+**Files:**
+
+- `crates/context_server/src/client.rs` (rel=5): Implements a generic JSON-RPC client for the Model Context Protocol, spawning IO tasks over an abstract Transport to read, write, and route responses, requests, and notifications.
+- `crates/context_server/src/context_server.rs` (rel=5): Wraps context server configuration and lifecycle, constructing a client via stdio or custom transport and initializing protocol state.
+- `crates/context_server/src/listener.rs` (rel=5): Implements a simple MCP server over a Unix socket that registers tools with schemars-derived input/output schemas and routes JSON-RPC requests to handlers.
+- `crates/context_server/src/protocol.rs` (rel=5): Implements the MCP initialization handshake, validates supported protocol versions, and announces initialization via notifications.
+- `crates/context_server/src/types.rs` (rel=5): Defines MCP request/notification traits and a comprehensive type system for initialization, resources, tools, prompts, and completions, including protocol versioning.
+
+##### crates/dap/src
+
+DAP transport/client/registry: adapters, TCP/stdio, request routing, logging, settings, and protocol conversions.
+
+**Files:**
+
+- `crates/dap/src/client.rs` (rel=5): Defines DebugAdapterClient which starts/connects to a transport, manages request sequencing and pending callbacks, supports child connections for TCP multiplexing, and exposes logging and kill semantics.
+- `crates/dap/src/registry.rs` (rel=5): Implements a global DapRegistry storing adapters and locators, supporting add/remove operations, schema enumeration, language lookup, and adapter retrieval.
+- `crates/dap/src/transport.rs` (rel=5): Implements the transport layer for DAP sessions over TCP or stdio, including connection orchestration, request/response routing, and log piping to handlers.
+
+#### crates/dap_adapters
+
+Crate registering and configuring built‑in debug adapters for DAP.
+
+##### crates/debugger_ui/src
+
+Debugger UI: panel, attach/new process modals, session management, stack trace view, and wired actions.
+
+**Files:**
+
+- `crates/debugger_ui/src/debugger_ui.rs` (rel=5): Initializes debugger UI by registering actions and handlers in Workspace, wiring core operations (start, pause, step, continue, detach/stop, rerun) to the active RunningState and panels.
+- `crates/debugger_ui/src/session.rs` (rel=5): Defines DebugSession as a workspace item wrapping a RunningState, managing session lifecycle, labels (including quirks like preferring thread names), and lazy creation of a StackTraceView.
+
+###### crates/debugger_ui/src/session/running
+
+Running session panes: console, memory view, stack frames, modules, breakpoints, and variables with event‑driven updates.
+
+**Files:**
+
+- `crates/debugger_ui/src/session/running/stack_frame_list.rs` (rel=5): Core stack frame list that subscribes to session events, debounces refresh, and builds entries including labels and collapsed deemphasized frames while filtering to user frames (persisted via a KVP store).
+
+#### crates/diagnostics
+
+Crate wiring project diagnostics into panels/editors and status UI.
+
+##### crates/diagnostics/src
+
+Diagnostics UI: editors/panels, renderer, status indicators, and toolbar controls.
+
+**Files:**
+
+- `crates/diagnostics/src/diagnostics.rs` (rel=5): Wires the diagnostics feature by initializing the renderer, registering editors, and defining actions (Deploy/ToggleWarnings/ToggleDiagnosticsRefresh).
+
+##### crates/edit_prediction/src
+
+Edit prediction core trait and types with provider handle API for enable/refresh/cycle/accept/discard.
+
+**Files:**
+
+- `crates/edit_prediction/src/edit_prediction.rs` (rel=5): Defines the core edit prediction domain: EditPrediction (local edits or jump), DataCollectionState, and the EditPredictionProvider trait with an Entity-based handle adapter for enable/refresh/cycle/accept/discard/suggest.
+
+#### crates/edit_prediction_button
+
+Crate implementing the edit prediction UI button and provider controls.
+
+##### crates/edit_prediction_context/src
+
+Gathers edit‑prediction context: excerpt selection, imports, references, declarations, scoring, syntax index, and text similarity.
+
+**Files:**
+
+- `crates/edit_prediction_context/src/declaration.rs` (rel=5): Models declarations (file or buffer) with identifiers, item and signature ranges/text truncated to line boundaries, and cached path metadata.
+- `crates/edit_prediction_context/src/declaration_scoring.rs` (rel=5): Scores candidate declarations by combining retrieval likelihood (same-file, import similarity, inclusion relationships), cursor distance, and text overlap metrics for signature/declaration styles.
+- `crates/edit_prediction_context/src/edit_prediction_context.rs` (rel=5): Orchestrates gathering edit-prediction context by computing imports, selecting an excerpt, extracting references, and scoring declarations, with options controlling imports and overlap handling.
+- `crates/edit_prediction_context/src/excerpt.rs` (rel=5): Selects an excerpt around the cursor prioritizing syntax-node boundaries with size/ratio targets, falling back to line-based expansion when needed.
+- `crates/edit_prediction_context/src/syntax_index.rs` (rel=5): Maintains an async project-wide index of declarations and identifiers from files and buffers, updating on worktree and buffer store events.
+
+##### crates/editor/src
+
+Core editor: actions, display pipeline, selection/movement, hover/popovers, LSP integration, serialization, persistence, diagnostics UI.
+
+**Files:**
+
+- `crates/editor/src/actions.rs` (rel=5): Declares the editor’s action types and parameters (selection navigation, folding, completions, code actions, diagnostics navigation, etc.) using serde schemas and gpui Action macros. This defines the command surface for triggering editor behaviors across the codebase.
+- `crates/editor/src/code_context_menus.rs` (rel=5): Defines CodeContextMenu variants for completions and code actions with fuzzy filtering, selection/navigation, and rendering including an aside for documentation.
+- `crates/editor/src/display_map.rs` (rel=5): Builds the display pipeline by layering InlayMap, FoldMap, TabMap, WrapMap, and BlockMap, producing DisplaySnapshot with highlights and creases.
+- `crates/editor/src/editor.rs` (rel=5): Core Editor managing buffer edits, selections, transactions/undo-redo, rendering coordination, LSP interactions (hover, completion, code actions), diagnostics, hover popovers, and workspace integration.
+- `crates/editor/src/element.rs` (rel=5): EditorElement renders the editor UI, registers numerous actions, and handles input, selection layout, highlights, scrollbars, gutter indicators, hover popovers, and blame overlays.
+- `crates/editor/src/movement.rs` (rel=5): Provides movement algorithms for navigating display points (left/right/up/down) with soft wrap and variable-width character awareness, preserving selection goals.
+- `crates/editor/src/scroll.rs` (rel=5): Implements scrolling behavior with a ScrollManager that tracks a ScrollAnchor, filters deltas to lock axes, clamps positions per settings, and persists scroll state to a database.
+- `crates/editor/src/selections_collection.rs` (rel=5): Maintains disjoint and pending selections over anchors, resolving them to display points or buffer points and merging overlapping ranges.
+
+###### crates/editor/src/display_map
+
+Display pipeline maps (Inlay/Fold/Tab/Wrap/Block/Highlights) that transform text into rendered chunks with creases and layout.
+
+**Files:**
+
+- `crates/editor/src/display_map/block_map.rs` (rel=5): Manages custom blocks (e.g., diagnostics, headers) within buffer display using a transform tree, computing placement relative to anchors and wrap rows. It provides reader/writer APIs, block styles, layout margins, and IDs to render and update block elements consistently.
+- `crates/editor/src/display_map/fold_map.rs` (rel=5): Handles folding ranges with placeholders via a SumTree of fold transforms layered over the inlay snapshot, producing inlay edits on fold/unfold operations.
+- `crates/editor/src/display_map/inlay_map.rs` (rel=5): Determines placement and rendering of inlays by interleaving text and inlay transforms in a SumTree, providing iterators for inlay-aware chunks and offsets/points conversions.
+- `crates/editor/src/display_map/tab_map.rs` (rel=5): Tracks hard tab expansion and synchronizes tab-related edits based on fold changes and tab size, emitting TabEdits for downstream maps.
+- `crates/editor/src/display_map/wrap_map.rs` (rel=5): Performs soft wrapping atop tab-expanded text, interpolating and batching TabEdits into WrapEdits with optional background rewrapping based on font/width.
+
+##### crates/extension/src
+
+Host‑side extension traits, manifest loading/validation/build, proxy registry, and WASM API version parsing.
+
+**Files:**
+
+- `crates/extension/src/extension.rs` (rel=5): Defines host-side extension traits and delegates (Worktree, Project, KV store) with async methods for language servers, slash commands, context servers, and DAP.
+
+##### crates/extension_api/src
+
+Public Rust API for extensions (language servers, slash commands, context servers, DAP, HTTP, settings) re‑exporting versioned WIT.
+
+**Files:**
+
+- `crates/extension_api/src/extension_api.rs` (rel=5): Public Rust API for writing Zed extensions, re-exporting curated WIT symbols and defining the Extension trait covering language servers, slash commands, context servers, DAP, and label rendering.
+
+##### crates/extension_api/wit
+
+Versioned WIT specifications underpinning the extension API across releases.
+
+###### crates/extension_api/wit/since_v0.0.1
+
+Initial WIT surfaces for extensions: platform, GitHub releases, core extension functions.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.0.1/extension.wit` (rel=5): Initial WIT interface for Zed extensions defining the 'extension' world, with functions for platform detection, Node/NPM integration, GitHub releases, file download, and language server commands/initialization.
+
+###### crates/extension_api/wit/since_v0.0.4
+
+Updated v0.0.4 WIT adding install status and executable handling; platform/GitHub specs.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.0.4/extension.wit` (rel=5): Updated extension WIT spec adding 'none' install status and make-file-executable, renaming download path semantics, and refining language server status values.
+
+###### crates/extension_api/wit/since_v0.0.6
+
+Expanded WIT with settings access, LSP labels, Node/NPM helpers for richer extension functionality.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.0.6/extension.wit` (rel=5): Expanded extension WIT interface introducing settings access, LSP-derived labeling helpers, workspace configuration, and enhanced worktree metadata.
+
+###### crates/extension_api/wit/since_v0.1.0
+
+Broader plugin WIT: HTTP client, slash commands, key‑value store, docs indexing, language servers.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.1.0/extension.wit` (rel=5): Further expanded extension WIT interface integrating HTTP client, slash commands, key-value storage, and docs indexing, alongside language server protocols.
+
+###### crates/extension_api/wit/since_v0.2.0
+
+WIT v0.2: language servers, code labels, slash commands, context server command.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.2.0/extension.wit` (rel=5): Defines the v0.2 extension world for language server integration, worktree/project resources, code labels, slash commands, docs indexing, and a context server command.
+
+###### crates/extension_api/wit/since_v0.3.0
+
+WIT v0.3: process execution API addition and expanded LS/slash/context surfaces.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.3.0/extension.wit` (rel=5): Updates the extension world to use process command types and common env-vars, retaining language server, code label, slash command, and context server capabilities.
+
+###### crates/extension_api/wit/since_v0.4.0
+
+WIT v0.4: extended language server init/workspace configuration.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.4.0/extension.wit` (rel=5): Extends the extension world with additional language server init/workspace configuration to target other servers, alongside existing LS, code label, slash command, and context server APIs.
+
+###### crates/extension_api/wit/since_v0.5.0
+
+WIT v0.5: context‑server configuration alongside language/slash/docs indexing.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.5.0/extension.wit` (rel=5): Adds context-server configuration to the extension world while preserving language server, slash command, and docs indexing contracts.
+
+###### crates/extension_api/wit/since_v0.6.0
+
+WIT v0.6: DAP types, node/NPM, process, HTTP, GitHub interfaces for debugging and tooling.
+
+**Files:**
+
+- `crates/extension_api/wit/since_v0.6.0/dap.wit` (rel=5): Introduces Debug Adapter Protocol types for debug configs, scenarios, tasks, and TCP connection parameters to drive adapter processes.
+- `crates/extension_api/wit/since_v0.6.0/extension.wit` (rel=5): Integrates debugging via DAP with exports to resolve adapter binaries, scenario conversion, and locator-driven build/run, alongside existing language server, context server, and Assistant APIs.
+
+##### crates/extension_host/src
+
+Extension host store/runtime: install/build/load/reload (WASM), capability granting, settings, and headless management.
+
+**Files:**
+
+- `crates/extension_host/src/capability_granter.rs` (rel=5): CapabilityGranter enforces that operations like process exec, file download, and npm installs are both permitted by the extension manifest and granted by the host.
+- `crates/extension_host/src/extension_host.rs` (rel=5): ExtensionStore manages installation, building, loading, and reloading of extensions (including WASM), maintains an index of provides, and tracks operations with FS/watchers and HTTP clients.
+- `crates/extension_host/src/headless_host.rs` (rel=5): HeadlessExtensionStore manages installation, uninstallation, and synchronization of extensions without a UI, loading manifests, registering languages, language servers, debug adapters, and locators with an ExtensionHostProxy and WasmHost.
+- `crates/extension_host/src/wasm_host.rs` (rel=5): Core WASM extension runtime that wraps wasmtime and the host environment, holding release channel, granted capabilities, FS, HTTP client, and proxy integration.
+
+###### crates/extension_host/src/wasm_host
+
+Versioned WIT adapter selecting the right API for an extension and dispatching host calls.
+
+**Files:**
+
+- `crates/extension_host/src/wasm_host/wit.rs` (rel=5): Versioned WIT adapter that selects and instantiates the appropriate extension API implementation based on the extension’s declared SemanticVersion and release channel, and exposes a dispatch layer for API calls across versions.
+
+###### crates/extension_host/src/wasm_host/wit
+
+Compatibility shims linking multiple WIT versions to the latest host implementation via Wasmtime.
+
+**Files:**
+
+- `crates/extension_host/src/wasm_host/wit/since_v0_6_0.rs` (rel=5): Implements the v0.6.0 WIT surface with DAP, build tasks, TCP templates, and rich type conversions to/from host-side structures, enforcing API version bounds. Sets up resources (worktree, project, KV store, HTTP streams), translates debug configurations, and provides a global linker.
+
+#### crates/extensions_ui
+
+Crate providing UI to browse, filter, and manage extensions.
+
+##### crates/feature_flags/src
+
+Feature flag system with global store and staff‑gated flags; App/View extensions to observe/defer actions.
+
+**Files:**
+
+- `crates/feature_flags/src/feature_flags.rs` (rel=5): Provides the feature flag system with a global FeatureFlags store, a FeatureFlag trait, and staff-aware gating controlled by an environment variable.
+
+#### crates/feedback
+
+Crate coordinating feedback flows and actions in the app.
+
+#### crates/file_icons
+
+Crate providing file/folder icon mapping integrated with themes.
+
+##### crates/fs/src
+
+Async filesystem abstraction and cross‑platform watcher (notify/fsevent), symlinks, and test Git repo utilities.
+
+**Files:**
+
+- `crates/fs/src/fs.rs` (rel=5): Provides an async filesystem abstraction (Fs) with creation, copy/move, delete/trash, load/save, symlink, watch, and Git repo integration, plus a global FS registry.
+- `crates/fs/src/fs_watcher.rs` (rel=5): Implements a filesystem watcher that registers per-path callbacks with a single global notify watcher, translates notify events into sorted PathEvent queues, and signals via a channel when new events arrive.
+
+##### crates/git/src
+
+Git domain: blame, hosting providers, repo status, commits, remotes, stash parsing, and actions.
+
+**Files:**
+
+- `crates/git/src/git.rs` (rel=5): Central git module exposing submodules and a comprehensive set of UI actions for git operations (staging, stashing, commit, push/pull, etc.). Defines an Oid wrapper with parsing/serialization/display utilities and common git-related constants.
+- `crates/git/src/hosting_provider.rs` (rel=5): Defines the GitHostingProvider trait for building commit/file permalinks, formatting line fragments, avatar support, remote parsing, and optional pull request extraction, plus the GitRemote wrapper and PullRequest model.
+
+##### crates/git_hosting_providers/src
+
+Provider registry initialization and settings integration to construct instances.
+
+**Files:**
+
+- `crates/git_hosting_providers/src/git_hosting_providers.rs` (rel=5): Initializes and registers Git hosting providers with the global GitHostingProviderRegistry, including public instances and self-hosted variants derived from a repository's origin URL.
+
+##### crates/git_ui/src
+
+Git UI: panels, pickers, diff views, conflict/highlights, askpass modal, remote output formatting.
+
+**Files:**
+
+- `crates/git_ui/src/commit_view.rs` (rel=5): Commit view item that asynchronously loads commit details and diffs, builds buffers and buffer diffs, and displays only hunks as excerpts with context lines in a read-only multibuffer editor.
+- `crates/git_ui/src/git_ui.rs` (rel=5): Initializes the Git UI by registering panels, pickers, conflict/blame renderers, and a comprehensive set of workspace actions (fetch/push/pull/stash/etc.). Provides glue for onboarding and utility actions like opening modified files, integrating git features throughout the app.
+
+#### crates/gpui
+
+Zed’s GPU UI framework with platform integrations, build scripts, docs, and examples.
+
+**Files:**
+
+- `crates/gpui/README.md` (rel=5): Introduces GPUI, Zed’s GPU-accelerated UI framework, covering the application model, views vs.
+
+##### crates/gpui/docs
+
+Documentation for GPUI’s contexts and key dispatch system.
+
+**Files:**
+
+- `crates/gpui/docs/contexts.md` (rel=5): Documents GPUI's context architecture (App, Context<T>, Async contexts, Test contexts), clarifying lifetimes, ownership, and interaction with entities and windows.
+- `crates/gpui/docs/key_dispatch.md` (rel=5): Explains GPUI’s keyboard action system, including defining actions, binding within key contexts, and keymap serialization.
+
+##### crates/gpui/src
+
+GPUI core: action system/macros, executors/tasks, elements/rendering, geometry/style/layout (Taffy), subscriptions/views, assets, input.
+
+**Files:**
+
+- `crates/gpui/src/_ownership_and_data_flow.rs` (rel=5): Explains GPUI’s architecture where the App owns all entity state and Entity handles access it via Context for updates and services.
+- `crates/gpui/src/action.rs` (rel=5): Defines the Action system for keyboard-driven UI with the actions!
+- `crates/gpui/src/app.rs` (rel=5): Coordinates application lifecycle and platform integration via Application wrapping AppCell, configuring assets, HTTP, executors, and launching the platform run loop.
+- `crates/gpui/src/element.rs` (rel=5): Core element system defining the layout/paint lifecycle (request_layout, prepaint, paint), and conversion traits (IntoElement, Render, RenderOnce) plus a Component wrapper.
+- `crates/gpui/src/executor.rs` (rel=5): Defines Foreground/Background executors and a Task abstraction with detach/logging, spawning, blocking, and test-aware deterministic scheduling and timers.
+- `crates/gpui/src/gpui.rs` (rel=5): Crate root wiring modules and extensive re-exports, and defines AppContext/VisualContext/BorrowAppContext traits for entity/window operations, globals, and task spawning.
+- `crates/gpui/src/platform.rs` (rel=5): Declares the Platform trait and selects the current platform implementation (macOS, Linux/Wayland/X11, Windows, headless) with feature-gated modules.
+- `crates/gpui/src/scene.rs` (rel=5): Aggregates painting primitives, manages layer push/pop, assigns draw orders via a BoundsTree, clips by content masks, and records operations for replay.
+- `crates/gpui/src/style.rs` (rel=5): Defines the Style struct and related styling primitives mirroring CSS-like properties for layout, spacing, alignment, flexbox, and overflow.
+- `crates/gpui/src/taffy.rs` (rel=5): Integrates the Taffy layout engine with GPUI, providing LayoutId wrappers, requesting leaf/children and measured layouts, and computing layouts with scale-factor transforms.
+- `crates/gpui/src/view.rs` (rel=5): Bridges views to elements by implementing Element for Entity<V> and providing AnyView with optional caching that reuses prepaint/paint ranges and accessed-entity tracking.
+- `crates/gpui/src/window.rs` (rel=5): Implements window-level infrastructure including dispatch phases, invalidation and draw-phase tracking, an element arena, and focus management (FocusId/FocusHandle and events).
+
+###### crates/gpui/src/app
+
+App/Context primitives: entity store, async contexts, and test contexts for UI.
+
+**Files:**
+
+- `crates/gpui/src/app/context.rs` (rel=5): Entity-scoped Context wraps App to offer high-level APIs for observing, subscribing, notifying, spawning tasks tied to a WeakEntity, and building listener/processor closures that access view state.
+- `crates/gpui/src/app/entity_map.rs` (rel=5): Maintains an intrusive entity store with type-erased boxes keyed by EntityId, reference counting via SlotMap, and a leasing mechanism to temporarily move entities to the stack.
+
+###### crates/gpui/src/platform/blade
+
+Blade renderer integration (atlas/context/pipelines/WGSL) with macOS compatibility shims.
+
+**Files:**
+
+- `crates/gpui/src/platform/blade/blade_atlas.rs` (rel=5): Implements a GPU-backed sprite/text atlas for Blade, allocating tiles with etagere and managing monochrome/polychrome textures, uploads, and initialization flushes.
+- `crates/gpui/src/platform/blade/blade_renderer.rs` (rel=5): Defines the Blade-based renderer, shader data layouts, and render pipelines for quads, shadows, paths, underlines, sprites, and YUV surfaces, choosing blend modes based on surface alpha.
+- `crates/gpui/src/platform/blade/shaders.wgsl` (rel=5): WGSL shader utilities and data structures for the GPU UI renderer, providing device transforms, clipping distances, atlas sampling, color space conversions (sRGB/linear, Oklab), compositing, and anti-aliasing/blur math.
+
+###### crates/gpui/src/platform/linux
+
+Linux platform glue (text system, dispatcher, XDG portal) for GPUI.
+
+**Files:**
+
+- `crates/gpui/src/platform/linux/platform.rs` (rel=5): Defines the LinuxClient trait and the Platform implementation, wiring executors, text system, menus, clipboard, window management, URL handling, prompts, and restart logic.
+- `crates/gpui/src/platform/linux/text_system.rs` (rel=5): Implements a PlatformTextSystem for Linux using cosmic_text and swash, managing font loading, feature application, glyph metrics, rasterization, and line layout.
+
+###### crates/gpui/src/platform/linux/wayland
+
+Wayland client, window, clipboard, cursor, and scaling integration via calloop.
+
+**Files:**
+
+- `crates/gpui/src/platform/linux/wayland/client.rs` (rel=5): WaylandClientState sets up Wayland globals, inputs (pointer, keyboard, text input), clipboard/drag-and-drop, fractional scaling, and window/surface mappings, integrating with calloop.
+- `crates/gpui/src/platform/linux/wayland/window.rs` (rel=5): Implements WaylandWindow and WaylandWindowState to manage Wayland surfaces, decorations, scaling, outputs, and a BladeRenderer, including lifecycle teardown in Drop and async client cleanup.
+
+###### crates/gpui/src/platform/linux/x11
+
+X11 client/window, clipboard, input, display, and IME handling with GPU rendering.
+
+**Files:**
+
+- `crates/gpui/src/platform/linux/x11/client.rs` (rel=5): X11ClientState manages the event loop, XInput devices, XKB keyboard state, IME via XIM, cursor styles and cache, clipboard/Xdnd, and window focus/registry with GPU BladeContext.
+
+###### crates/gpui/src/platform/mac
+
+macOS platform: Metal renderer/shaders, display link, text system, events, dispatcher, screen capture.
+
+**Files:**
+
+- `crates/gpui/src/platform/mac/dispatcher.rs` (rel=5): Implements PlatformDispatcher for macOS using Grand Central Dispatch, scheduling runnables on global and main queues and supporting delayed dispatch via dispatch_after.
+- `crates/gpui/src/platform/mac/metal_atlas.rs` (rel=5): Implements a Metal-backed atlas, allocating tiles with etagere and uploading bytes to regions on Metal textures for monochrome and polychrome data.
+- `crates/gpui/src/platform/mac/metal_renderer.rs` (rel=5): Builds the Metal renderer: device selection, CAMetalLayer configuration, pipeline states for paths, quads, shadows, underlines, sprites, and surfaces, an instance buffer pool, and a core-video texture cache.
+- `crates/gpui/src/platform/mac/shaders.metal` (rel=5): Metal shaders implementing quad rendering on macOS, including vertex setup, clip distances, border/rounded corner SDF, dashed border logic, and gradient/solid background fills with HSLA/Oklab conversions.
+- `crates/gpui/src/platform/mac/text_system.rs` (rel=5): Provides a MacTextSystem implementing PlatformTextSystem backed by CoreText/CoreGraphics and FontKit, with font family loading, feature/fallback application, memoized font selection, glyph metrics, rasterization, and line layout.
+
+###### crates/gpui/src/platform/windows
+
+Windows platform: DirectX renderer/atlas/devices/shaders, DirectWrite text, vsync, clipboard, display, dispatcher, events.
+
+**Files:**
+
+- `crates/gpui/src/platform/windows/direct_write.rs` (rel=5): Implements DirectWriteTextSystem that manages font collections, font selection, glyph metrics, and rasterization using DirectWrite and D3D11.
+- `crates/gpui/src/platform/windows/directx_atlas.rs` (rel=5): Provides a DirectX-backed PlatformAtlas that allocates atlas tiles with etagere, creates D3D11 textures/SRVs for monochrome and polychrome data, uploads subresources, and tracks references for freeing textures.
+- `crates/gpui/src/platform/windows/directx_devices.rs` (rel=5): Creates DXGI factory/adapter and D3D11 device/context with optional debug layer, checking required hardware features and feature levels.
+- `crates/gpui/src/platform/windows/dispatcher.rs` (rel=5): Implements PlatformDispatcher on Windows using ThreadPool for background tasks and a main-thread flume channel with PostMessage for UI thread execution, plus delayed timers.
+- `crates/gpui/src/platform/windows/events.rs` (rel=5): WindowsWindowInner dispatches Win32 messages to handle activation, resizing, DPI changes, painting, input (mouse/keyboard/IME), timers, and device-lost events.
+- `crates/gpui/src/platform/windows/platform.rs` (rel=5): Bootstraps the WindowsPlatform: initializes OLE, DirectX devices, dispatchers, DirectWrite text system, hidden message-only platform window, drop target helper, and app icon/version.
+- `crates/gpui/src/platform/windows/shaders.hlsl` (rel=5): Windows HLSL shaders and helpers for GPU UI rendering, handling device transforms, clipping, corner radius selection, SDF for quads, gradient preparation, and color space conversions including Oklab.
+- `crates/gpui/src/platform/windows/window.rs` (rel=5): Defines WindowsWindow and state, handling bounds, scale factor, appearance, DirectX renderer, input/callbacks, and fullscreen toggling by adjusting window styles and placement.
+
+###### crates/gpui/src/text_system
+
+Text shaping/wrapping/painting primitives and font feature modeling used by GPUI.
+
+**Files:**
+
+- `crates/gpui/src/text_system/line.rs` (rel=5): Represents shaped lines (wrapped and unwrapped) with decoration runs and paints glyphs, backgrounds, underlines, and strikethroughs with alignment and wrap-aware splitting.
+- `crates/gpui/src/text_system/line_layout.rs` (rel=5): Defines text line layout primitives (LineLayout, ShapedRun, ShapedGlyph, WrappedLineLayout, WrapBoundary) used to shape, wrap, and hit-test text.
+- `crates/gpui/src/text_system/line_wrapper.rs` (rel=5): Wraps and truncates text based on font metrics, caching character widths and computing wrap boundaries that prefer breaking at word or element boundaries with optional indent calculation.
+
+##### crates/gpui_macros/src
+
+Proc‑macros for actions, components, contexts, rendering, inspector reflection, tests, and style helpers.
+
+**Files:**
+
+- `crates/gpui_macros/src/derive_action.rs` (rel=5): Derives gpui::Action by parsing #[action] attributes (name, namespace, no_json, no_register, deprecated_aliases, deprecated) and generating impl methods for identification, cloning, JSON building/schema, and documentation, optionally registering via inventory.
+- `crates/gpui_macros/src/gpui_macros.rs` (rel=5): Macro crate entrypoint exporting derive and helper macros for Action, IntoElement, Render, AppContext, VisualContext, style methods, test attribute, and inspector reflection, plus a utility to locate annotated fields.
+
+#### crates/html_to_markdown
+
+Crate converting HTML content to readable Markdown used by fetch tools.
+
+##### crates/http_client/src
+
+HTTP client trait/impls, GitHub release fetch/download/extractors, streaming bodies, and proxy support utilities.
+
+**Files:**
+
+- `crates/http_client/src/http_client.rs` (rel=5): Defines the HttpClient trait and request helpers (get, post_json) with redirect policies, plus wrappers adding proxy support (from env) and base URL helpers for building Zed API/Cloud/LLM URLs.
+
+#### crates/keymap_editor
+
+Crate for editing and inspecting keymap bindings within the UI.
+
+##### crates/language/src
+
+Language registry, buffer model, syntax/highlight maps, toolchains, LSP adapters, outlines, and protocol conversions.
+
+**Files:**
+
+- `crates/language/src/buffer.rs` (rel=5): Implements the core Buffer model capturing text, syntax layers, diagnostics, remote selections, and collaboration/replication operations for a file.
+- `crates/language/src/language.rs` (rel=5): Defines the language crate’s public API and initialization, providing parser/query cursor pools, Plain Text language, and re-exports for syntax, highlighting, toolchains, and LSP integration.
+- `crates/language/src/language_registry.rs` (rel=5): Central registry for languages, grammars, and LSP adapters, tracking available languages, loading state, server status updates, and adapter ordering.
+- `crates/language/src/proto.rs` (rel=5): Serializes and deserializes language operations, selections, diagnostics, and editor state to/from the RPC protocol, including chunking operations for transport.
+- `crates/language/src/syntax_map.rs` (rel=5): Defines SyntaxMap and SyntaxSnapshot for layered tree-sitter syntax trees over a buffer, with efficient interpolation of edits using a SumTree and cursoring across layers.
+
+##### crates/language_extension/src
+
+Adapter bridging extensions to the language registry/LSP system.
+
+**Files:**
+
+- `crates/language_extension/src/extension_lsp_adapter.rs` (rel=5): Implements an adapter that bridges Zed extensions to the LSP system by registering/removing language servers, translating extension-provided commands into LanguageServerBinary objects, and forwarding initialization/workspace options.
+
+##### crates/language_model/src
+
+Language model registry/settings, request building (images/tools), error taxonomy, rate limiter, and telemetry reporting.
+
+**Files:**
+
+- `crates/language_model/src/language_model.rs` (rel=5): Initializes language model settings/registry and models the core completion event stream plus a comprehensive error taxonomy, mapping upstream/cloud responses and HTTP statuses into structured errors.
+- `crates/language_model/src/registry.rs` (rel=5): Implements a global registry of language model providers and configured models, emitting events on provider state changes and model selection, and validating configuration/authentication.
+
+##### crates/language_models/src
+
+Registers providers into the global registry, settings aggregation, and minimal UI for configuration.
+
+**Files:**
+
+- `crates/language_models/src/settings.rs` (rel=5): Aggregates per-provider configuration in AllLanguageModelSettings and registers it globally, preserving specific keys.
+
+###### crates/language_models/src/provider
+
+Provider implementations: Cloud, Anthropic, OpenAI, Bedrock, Azure Foundry, Copilot Chat, DeepSeek, Google, LM Studio, Mistral, Ollama, OpenRouter, xAI.
+
+**Files:**
+
+- `crates/language_models/src/provider/cloud.rs` (rel=5): Implements the Zed Cloud language model provider that authenticates users, manages LLM API tokens, fetches and updates available/default/recommended models, and exposes thinking variants.
+
+##### crates/languages/src
+
+Built‑in language adapters (CSS, JSON, YAML, Tailwind, C/Go/Python/Rust/TS) and package.json parsing helpers.
+
+**Files:**
+
+- `crates/languages/src/lib.rs` (rel=5): Initializes and registers built-in languages, grammars, and associated LSP adapters, contexts, and toolchains, and exposes globally available language servers.
+
+###### crates/languages/src/python
+
+Python language config and queries (highlights, outline, indents, debugger, imports, runnables).
+
+**Files:**
+
+- `crates/languages/src/python/config.toml` (rel=5): Configures Python language integration with grammar, file extensions, shebang detection, comment style, bracket auto-close rules for string prefixes, indentation behaviors, and debugger selection.
+
+###### crates/languages/src/rust
+
+Rust language config and queries: highlights, outline, injections, runnables, debugger, embedding.
+
+**Files:**
+
+- `crates/languages/src/rust/config.toml` (rel=5): Sets up Rust language behavior with grammar, file suffixes, comment styles, bracket and raw string handling, debugger integrations (CodeLLDB/GDB), documentation comment formatting, and import path normalization.
+
+###### crates/languages/src/tsx
+
+TSX language: config, highlights, imports, outline, runnables.
+
+**Files:**
+
+- `crates/languages/src/tsx/config.toml` (rel=5): Configures TSX language integration, including JSX tag wrapping/auto-close, comments, bracket rules, word characters, language server opt-ins, Prettier parser, and context-specific overrides (JSX comments, Tailwind in strings).
+
+#### crates/line_ending_selector
+
+Crate implementing line ending selection UI/actions.
+
+#### crates/livekit_client
+
+Client‑side LiveKit integration crate for audio/video tracks and UI views.
+
+##### crates/livekit_client/src
+
+Real vs mock LiveKit client wrappers, remote video track UI, and a test server simulating room events.
+
+**Files:**
+
+- `crates/livekit_client/src/lib.rs` (rel=5): Public facade for the livekit_client crate that conditionally exposes real or mock implementations, re-exports the RemoteVideoTrackView UI, and defines core domain types (Participant, TrackPublication, RemoteTrack, RoomEvent).
+- `crates/livekit_client/src/livekit_client.rs` (rel=5): Real LiveKit client wrapper that connects to a room via tokio-tungstenite and maps SDK events into crate-level RoomEvent, driven by a background task.
+
+###### crates/livekit_client/src/livekit_client
+
+Audio I/O pipeline (APM/mixer), output loop, microphone capture; frame mixing/resampling to device.
+
+**Files:**
+
+- `crates/livekit_client/src/livekit_client/playback.rs` (rel=5): Implements the audio I/O pipeline: AudioStack manages an APM and mixer, starts an output loop that mixes sources, resamples, and streams to the default audio device, and captures microphone audio into LiveKit sources with optional rodio-based path.
+
+##### crates/lsp/src
+
+LSP client over stdio: JSON‑RPC modeling, process manager, and stdout input parsing.
+
+**Files:**
+
+- `crates/lsp/src/input_handler.rs` (rel=5): Implements LspStdoutHandler that reads and parses Language Server Protocol messages from an async stdout stream by scanning headers until CRLFCRLF, extracting Content-Length, and reading the JSON body.
+- `crates/lsp/src/lsp.rs` (rel=5): Defines the core LSP client infrastructure including JSON-RPC request/response/notification models, a LanguageServer process manager over stdio with IO and notification handlers, and futures for tracking request IDs and timeouts.
+
+#### crates/markdown
+
+Markdown rendering/parsing crate used by previews and rich text.
+
+##### crates/markdown/src
+
+Markdown parser producing ranged events, path range parser, and view component rendering.
+
+**Files:**
+
+- `crates/markdown/src/parser.rs` (rel=5): Parses markdown with pulldown-cmark (extended options) into ranged events, tracking metadata and link context while collecting fenced code languages or file paths.
+
+##### crates/markdown_preview/src
+
+Markdown preview: parser, renderer, preview view, navigation/open actions, and minifier.
+
+**Files:**
+
+- `crates/markdown_preview/src/markdown_elements.rs` (rel=5): Defines the parsed Markdown AST (headings, lists, tables, block quotes, code blocks, paragraphs, images) and styling helpers including link/image identification and highlight-to-style conversion.
+- `crates/markdown_preview/src/markdown_renderer.rs` (rel=5): Renders ParsedMarkdown into GPUI elements via a theme-aware RenderContext, handling headings, lists (including interactive task checkboxes), tables, block quotes, code blocks, rules, and images.
+
+#### crates/menu
+
+Crate that declares common menu actions used across UI.
+
+###### crates/migrator/src/migrations
+
+Index of dated migration modules for settings and keymaps.
+
+###### crates/migrator/src/migrations/m_2025_10_01
+
+Transform formatter and format_on_save code_actions maps into arrays of entries with code_action fields.
+
+**Files:**
+
+- `crates/migrator/src/migrations/m_2025_10_01/settings.rs` (rel=5): Transforms formatter and format_on_save code_actions objects into arrays of entries { "code_action": "..." }, filtering out disabled actions and handling both array and object forms. It computes indentation, builds the new representation, and adjusts the replacement range to remove trailing commas when the result is empty.
+
+##### crates/multi_buffer/src
+
+MultiBuffer model: anchors, diffs, snapshots, and typed position wrappers for multi‑file editing.
+
+**Files:**
+
+- `crates/multi_buffer/src/anchor.rs` (rel=5): Defines Anchor tying positions to excerpts/buffers with optional diff-base anchors and bias, including comparison logic that resolves latest excerpt IDs, compares text anchors, and falls back to base-text anchors with bias-aware ordering.
+- `crates/multi_buffer/src/multi_buffer.rs` (rel=5): Defines the MultiBuffer core editing model that aggregates multiple Buffers and Excerpts, emits rich Events, tracks diffs, and provides consistent coordinate conversions via snapshot traits (ToOffset/ToPoint).
+
+#### crates/net
+
+Crate exposing Unix socket APIs compatible with Windows/Unix via smol.
+
+#### crates/notifications
+
+Crate providing notification infrastructure and UI.
+
+#### crates/outline
+
+Crate providing quick outline search and navigation UI.
+
+#### crates/outline_panel
+
+UI crate for the document/outlines panel and configuration.
+
+#### crates/panel
+
+Crate providing shared panel UI building blocks.
+
+#### crates/paths
+
+Crate centralizing application directories and path helpers.
+
+##### crates/picker/src
+
+Generic Picker UI with delegates, highlighted match rendering (with paths), and popover menu wrapper.
+
+**Files:**
+
+- `crates/picker/src/picker.rs` (rel=5): Implements a generic Picker UI with list or uniform_list containers and an extensible PickerDelegate for search, selection, rendering, and confirmation behavior.
+
+##### crates/project/src
+
+Project orchestration: buffers/worktrees, LSP, git, debugger, environments, terminals, search, tasks, toolchains, and remote/collab modes.
+
+**Files:**
+
+- `crates/project/src/buffer_store.rs` (rel=5): Manages open buffers in local and remote modes, handling RPC-driven creation, chunked operation application, saving, and lookups while emitting BufferStoreEvent.
+- `crates/project/src/connection_manager.rs` (rel=5): Global manager that maintains RPC client connectivity for projects, running a reconnection loop with a timeout and capped retries and rejoining remote projects/worktrees upon reconnect.
+- `crates/project/src/environment.rs` (rel=5): Aggregates project environments from the CLI or per-directory shells, caching local/remote environments and optionally integrating direnv while tracking errors.
+- `crates/project/src/git_store.rs` (rel=5): Coordinates repositories, diffs, conflicts, and status scanning with local/remote modes, emitting GitStore events and maintaining Repository snapshots.
+- `crates/project/src/lsp_store.rs` (rel=5): Central LSP store unifies local server lifecycle and remote pass-through, registering buffers, managing diagnostics, formatting, watched paths, and manifest/toolchain resolution.
+- `crates/project/src/manifest_tree.rs` (rel=5): Maintains per-worktree tries of manifest roots and lazily resolves subproject roots via providers, updating as worktree entries change.
+- `crates/project/src/project.rs` (rel=5): Top-level Project orchestrates worktrees, buffers, LSP, Git, debugging, terminals, search, and settings, mediating RPC/collaboration modes and emitting cohesive project events.
+- `crates/project/src/project_search.rs` (rel=5): Coordinates project-wide search locally, remotely, or for open buffers by pipelining candidate discovery, buffer loading, and match computation via async channels and bounded concurrency.
+- `crates/project/src/task_store.rs` (rel=5): Manages project tasks in local or remote modes, serving RPC for task context by capturing variables and computing environment/cwd from buffers and worktrees.
+- `crates/project/src/toolchain_store.rs` (rel=5): Provides local and remote toolchain resolution, listing, activation, and active queries, integrating with manifest tree and project environment.
+- `crates/project/src/worktree_store.rs` (rel=5): Core store managing local and remote worktrees, their lifecycle, visibility, entry operations, and path/style resolution, with RPC handlers for create/copy/delete/expand actions.
+
+###### crates/project/src/debugger
+
+Debugger data layer: commands, sessions, breakpoint store, DAP lifecycle across local/remote/collab.
+
+**Files:**
+
+- `crates/project/src/debugger/dap_store.rs` (rel=5): Orchestrates debug adapter lifecycle across local, remote, and collab modes, including adapter discovery, binary resolution, environment setup, session tracking, and event emission.
+
+###### crates/project/src/manifest_tree
+
+Manifest provider registry and trees mapping worktree roots to language server/adapters.
+
+**Files:**
+
+- `crates/project/src/manifest_tree/path_trie.rs` (rel=5): Defines a RootPathTrie that tracks known-present and known-absent labels along worktree-relative paths to find the closest annotated ancestor and identify unexplored path segments.
+- `crates/project/src/manifest_tree/server_tree.rs` (rel=5): Implements the LanguageServerTree that maps manifest roots and language adapters to language server nodes per worktree, managing initialization and retrieval of server IDs with launch dispositions (settings and toolchains).
+
+#### crates/project_benchmarks
+
+Benchmark runner crate for project pipelines and search.
+
+##### crates/proto/proto
+
+Protobuf schemas defining envelopes for buffers, calls, channels, core identities, debugger, notifications, worktree, git, LSP, and zed glue.
+
+**Files:**
+
+- `crates/proto/proto/buffer.proto` (rel=5): Core collaborative buffer protocol defining CRDT-like operations, vector clocks, selections, diagnostics, transactions, anchors, and version synchronization for real-time editing.
+- `crates/proto/proto/call.proto` (rel=5): Collaboration session protocol for rooms, participants, followers, project sharing, and views, including join/rejoin flows and LiveKit connection info.
+- `crates/proto/proto/zed.proto` (rel=5): Central Envelope message enumerating all protocol payloads to multiplex client-server communication across collaboration, buffers, LSP, channels, AI, tasks, and more.
+
+##### crates/proto/src
+
+Typed envelope system, error handling, macros, and generated proto registration.
+
+**Files:**
+
+- `crates/proto/src/error.rs` (rel=5): Provides structured RPC error handling by mapping ErrorCode to anyhow errors with tags and messages, and converting to/from proto Error.
+- `crates/proto/src/macros.rs` (rel=5): Macro suite generating typed envelope bindings, request/response associations, entity message traits, and LSP-specific wiring.
+- `crates/proto/src/proto.rs` (rel=5): Includes generated proto messages and registers them via macros, exposing constants for the remote server peer/project IDs.
+- `crates/proto/src/typed_envelope.rs` (rel=5): Defines the typed envelope system with traits for messages, entities, and requests, including message priorities and type-erased AnyTypedEnvelope.
+
+#### crates/recent_projects
+
+Crate implementing recent project and remote connection workflows/UI.
+
+#### crates/refineable
+
+Trait and macro pair enabling CSS‑like refinement for structured configs.
+
+##### crates/refineable/derive_refineable
+
+Macro crate for refineable types used in style/settings composition.
+
+#### crates/release_channel
+
+Crate exposing release channel/version metadata used throughout.
+
+##### crates/remote/src
+
+Remote client: protocol framing, connection state machine, prompts/downloads, reconnection/heartbeat, and multiplexed RPC.
+
+**Files:**
+
+- `crates/remote/src/remote_client.rs` (rel=5): Remote client managing SSH/WSL connections via a robust state machine handling connection, heartbeat monitoring, reconnection attempts, and multiplexed RPC message channels.
+- `crates/remote/src/transport.rs` (rel=5): Streams RPC envelopes over a child process’s stdio, with separate async tasks handling stdin (writes), stdout (size-prefixed reads), and stderr (JSON log parsing).
+
+###### crates/remote/src/transport
+
+Remote transports: SSH master/control socket and WSL binary management/upload/run, plus stdio streaming.
+
+**Files:**
+
+- `crates/remote/src/transport/ssh.rs` (rel=5): Implements an SSH-based RemoteConnection, establishing a master connection (ControlMaster) and using the control socket for commands, uploads (scp), and proxy startup.
+- `crates/remote/src/transport/wsl.rs` (rel=5): Implements WSL-based RemoteConnection, detecting shell/exec capability/architecture, ensuring the remote server binary is present (download or build), uploading and extracting it in WSL, then running commands.
+
+##### crates/remote_server/src
+
+Headless server daemon: Unix runtime, structured logging, idle timeout, version/proxy commands, project wiring over RPC.
+
+**Files:**
+
+- `crates/remote_server/src/headless_project.rs` (rel=5): Bootstraps a headless project runtime, wiring stores (worktree, buffers, LSP, DAP, git, tasks, extensions, environment) and sharing them over RPC.
+- `crates/remote_server/src/unix.rs` (rel=5): Implements the Unix-side server runtime with structured logging, crash file retrieval, and three-socket (stdin/stdout/stderr) listeners.
+
+#### crates/repl
+
+Crate integrating Jupyter‑style REPL sessions into Zed.
+
+#### crates/reqwest_client
+
+Crate providing a concrete HTTP client implementation with reqwest.
+
+##### crates/rope/src
+
+Rope data structure: chunk storage, UTF metrics, slicing/splitting, and point coordinates.
+
+**Files:**
+
+- `crates/rope/src/rope.rs` (rel=5): High-performance Rope text structure backed by a SumTree of fixed-capacity chunks, offering efficient append/push/slice operations with careful UTF-8 char boundary handling.
+
+##### crates/rpc/src
+
+RPC core: auth (RSA), message stream (zstd), peer IO/pings, typed proto client, notifications, extension metadata.
+
+**Files:**
+
+- `crates/rpc/src/rpc.rs` (rel=5): Centralizes the RPC API, exposing connection, extension, peer, notifications, and proto types, with an explicit protocol version.
+
+##### crates/scheduler/src
+
+Foreground/background executors, scheduler trait, test scheduler, timers, and a clock abstraction.
+
+**Files:**
+
+- `crates/scheduler/src/executor.rs` (rel=5): Implements ForegroundExecutor and BackgroundExecutor that schedule tasks via a Scheduler, support blocking with optional timeouts and timers, and return Task futures.
+- `crates/scheduler/src/scheduler.rs` (rel=5): Defines the Scheduler trait with APIs for blocking, foreground/background scheduling, timers, and clock access, plus a TestScheduler accessor.
+- `crates/scheduler/src/test_scheduler.rs` (rel=5): Provides a deterministic/randomized test scheduler implementing Scheduler, managing runnable queues, timers, blocking/parking behavior, trace capture, and controllable time.
+
+##### crates/settings/src
+
+Settings system: merge semantics, file watchers, JSON updates, keymaps, store, VS Code import, base keymap mapping.
+
+**Files:**
+
+- `crates/settings/src/merge_from.rs` (rel=5): Implements the MergeFrom trait and default merge semantics across primitives, Option, Vec, Box, maps, sets, and serde_json::Value, enabling deep settings merges with overwrite or extend behavior as appropriate.
+- `crates/settings/src/settings.rs` (rel=5): Bootstraps the settings system by embedding default assets, initializing SettingsStore globally, and exposing helpers to load default settings/keymaps and initial content templates.
+- `crates/settings/src/settings_content.rs` (rel=5): Defines the hierarchical settings schema (SettingsContent and related structs) with serde/JSON schema support and MergeFrom derivations, including profiles, OS/release-specific overlays, and chat history configuration.
+- `crates/settings/src/settings_store.rs` (rel=5): Global settings store that registers setting types, merges default/user/server/local values, and exposes retrieval/override across locations with a background task for file updates.
+
+###### crates/settings/src/settings_content
+
+Typed settings content models: agent, editor, language, language model providers, project, terminal, theme, workspace, extension capabilities.
+
+**Files:**
+
+- `crates/settings/src/settings_content/language.rs` (rel=5): Aggregates global and per-language settings with a merge_from algorithm that overlays defaults, global user settings, and language-specific overrides.
+- `crates/settings/src/settings_content/project.rs` (rel=5): ProjectSettingsContent combines language/worktree defaults with per-project LSP/DAP configuration, terminal settings, context servers, direnv, slash commands, and Git settings.
+
+#### crates/settings_macros
+
+Macro crate powering settings merge derivations.
+
+#### crates/settings_profile_selector
+
+Crate for UI selection of settings profiles used across the app.
+
+#### crates/settings_ui
+
+Crate providing the Settings UI and components.
+
+##### crates/sqlez/src
+
+Async SQLite execution layer: connections (thread safe), statements/bind/columns, migrations, savepoints, typed closures.
+
+**Files:**
+
+- `crates/sqlez/src/connection.rs` (rel=5): Thin wrapper over sqlite3 providing open_file/memory, backup, error handling with extended codes, and a SQL syntax error locator that accounts for ALTER TABLE quirks via a temporary in-memory DB.
+- `crates/sqlez/src/migrations.rs` (rel=5): Implements Connection::migrate to eagerly execute formatted migration steps, record them in a migrations table, and verify immutability unless explicitly allowed.
+- `crates/sqlez/src/statement.rs` (rel=5): Owns preparation and execution of one or more SQLite statements per query, enforcing read-only constraints, providing typed bind/column methods, and stepping across multi-statement sequences.
+- `crates/sqlez/src/thread_safe_connection.rs` (rel=5): Provides a cloneable, thread-safe connection that creates a per-thread read-only Connection and serializes writes through per-URI background queues.
+
+#### crates/storybook
+
+Storybook crate for showcasing and iterating on UI components.
+
+##### crates/streaming_diff/src
+
+Streaming diff algorithms producing char/line operations incrementally for real‑time use.
+
+**Files:**
+
+- `crates/streaming_diff/src/streaming_diff.rs` (rel=5): Implements streaming diff algorithms that incrementally score insert/delete/equality operations in a matrix and backtrack to produce character operations, then aggregates to line operations tracking inserted/deleted rows.
+
+##### crates/sum_tree/src
+
+SumTree B+ tree and cursor APIs with map/set wrappers supporting ordered edits and navigation.
+
+**Files:**
+
+- `crates/sum_tree/src/cursor.rs` (rel=5): Provides a cursor for SumTree that supports seeking with dimensions and bias, forward/backward search with filtering, and traversal across internal and leaf nodes.
+- `crates/sum_tree/src/sum_tree.rs` (rel=5): Implements the SumTree B+ tree with Item/Summary/Dimension traits, construction from iterators (including parallel), and ordered navigation/editing with configurable node base.
+
+#### crates/supermaven
+
+Crate integrating Supermaven code suggestions into Zed’s edit prediction system.
+
+#### crates/svg_preview
+
+Crate providing SVG preview UI and actions.
+
+#### crates/system_specs
+
+Crate exposing system information for diagnostics and feedback.
+
+##### crates/task/src
+
+Tasks framework: templates, VS Code conversions, shell builder, debug schema, static sources, resolution and IDs.
+
+**Files:**
+
+- `crates/task/src/task.rs` (rel=5): Defines core task abstractions and types, including TaskId, SpawnInTerminal, ResolvedTask, VariableName, and re-exports of task modules and formats.
+- `crates/task/src/task_template.rs` (rel=5): Defines TaskTemplate and TaskTemplates schema plus enums for reveal/hide strategies and debug requests, and the resolve_task algorithm that substitutes variables, computes cwd/args/env, and generates stable TaskId hashes.
+
+#### crates/tasks_ui
+
+Crate wiring tasks orchestration into the UI with pickers and actions.
+
+#### crates/telemetry_events
+
+Crate defining telemetry events and serialization used by the pipeline.
+
+##### crates/terminal/src
+
+Terminal integration around alacritty_terminal: actions/events, PTY info, hyperlinks, settings translation.
+
+**Files:**
+
+- `crates/terminal/src/terminal.rs` (rel=5): Core terminal integration around alacritty_terminal, defining actions, events, and TerminalBounds with conversions to window sizing, plus internal event handling for scrolling, selection, vi mode, and clipboard.
+
+##### crates/text/src
+
+Core text buffer with lamport clocks, operations/patches, anchors, undo map, selections, and pub‑sub topics.
+
+**Files:**
+
+- `crates/text/src/anchor.rs` (rel=5): Anchor represents a timestamped buffer position with bias and buffer association, comparing by fragment order then offset.
+- `crates/text/src/patch.rs` (rel=5): Patch encapsulates sorted range edits and provides a compose algorithm to merge two edit streams into resulting spans while preserving order.
+- `crates/text/src/text.rs` (rel=5): Implements the core text Buffer model with lamport clocks, transaction history, undo/redo grouping, and SumTree-based fragment/insertion tracking for collaborative editing.
+
+#### crates/theme
+
+Theme system crate managing colors, fonts, icon themes, and registry.
+
+##### crates/theme/src
+
+Theme registry/settings: fallback themes, font cache, icon themes, schema, color scales.
+
+**Files:**
+
+- `crates/theme/src/registry.rs` (rel=5): Manages the global ThemeRegistry, loading bundled and user themes, tracking icon themes, and providing list/get operations with error types.
+- `crates/theme/src/settings.rs` (rel=5): Holds ThemeSettings and related enums for UI density, font sizes, theme/icon theme selection (static/dynamic), and system appearance, with global registration and conversion from settings content.
+- `crates/theme/src/theme.rs` (rel=5): Central theme system initializer and API that sets up ThemeRegistry, ThemeSettings, font cache, picks configured theme/icon theme, and observes settings to reload themes and font sizes.
+
+#### crates/theme_extension
+
+Crate exposing theme operations via the extension host.
+
+#### crates/theme_importer
+
+Theme importer crate to translate VS Code themes to Zed’s format.
+
+#### crates/theme_selector
+
+UI crate for choosing themes and icon themes.
+
+#### crates/time_format
+
+Crate providing time formatting helpers for UI and logs.
+
+#### crates/title_bar
+
+Crate for title bar UI and platform integration.
+
+##### crates/title_bar/src
+
+Title bar rendering: platform controls, app menus, collaboration controls, system tabs, onboarding banner, and settings.
+
+**Files:**
+
+- `crates/title_bar/src/platform_title_bar.rs` (rel=5): Renders a platform-aware title bar, handling height, background color, window decorations, and drag/double-click behaviors across macOS, Linux, and Windows.
+- `crates/title_bar/src/title_bar.rs` (rel=5): Defines the main TitleBar component, wiring workspace menus, project and branch info, collaborators, onboarding banner, call and connection controls, and sign-in/app menu.
+
+###### crates/ui/src/components
+
+Shared UI components: indent guides, modal layout, navigable wrapper, context/right‑click/popover menus, sticky items, tabs, icons, keybinding hints, toggles, tooltips.
+
+**Files:**
+
+- `crates/ui/src/components/context_menu.rs` (rel=5): Defines a flexible context menu system with headers, separators, entries (including custom renderers), documentation asides, and keybinding hints, with focus management and keyboard navigation.
+- `crates/ui/src/components/popover_menu.rs` (rel=5): Implements anchored popover menus with triggers that manage open/close/toggle via a handle, preserving and restoring focus on dismiss.
+- `crates/ui/src/components/sticky_items.rs` (rel=5): Computes and renders sticky items in uniform lists by finding an anchor entry and handling drifting offsets as the scroll passes, prepainting elements at calculated origins.
+
+###### crates/ui/src/components/button
+
+Button components (base, icon, toggle, split) and shared styles/interaction logic.
+
+**Files:**
+
+- `crates/ui/src/components/button/button.rs` (rel=5): A high-level button component combining label and optional icon, delegating interaction and styling to ButtonLike while exposing builder options for selection, styles, keybindings, size, and truncation.
+- `crates/ui/src/components/button/button_like.rs` (rel=5): Provides foundational button abstractions (traits, styles, sizes) and computes theme-aware ButtonStyle visuals for enabled/hovered states, including tinted variants and elevation-sensitive backgrounds.
+
+###### crates/ui/src/components/label
+
+Label components (base, highlighted, loading, spinner) with common styling primitives.
+
+**Files:**
+
+- `crates/ui/src/components/label/label_like.rs` (rel=5): LabelLike is the flexible base for label-like elements, tracking size, weight, line height, color/alpha, and decorations, plus single_line and truncation, while accepting child elements.
+
+###### crates/ui/src/components/list
+
+List components: items, headers/sub‑headers, containers with interactive slots and states.
+
+**Files:**
+
+- `crates/ui/src/components/list/list_item.rs` (rel=5): Core list item abstraction handling spacing, indent, selectable/disabled/selected states, start/end/hover slots, events (click, hover, secondary mouse, toggle), tooltips, and focus/outlined/rounded styling.
+
+###### crates/ui/src/styles
+
+Styling system: colors, elevation, platform style, spacing, typography, severity, appearance, animations.
+
+**Files:**
+
+- `crates/ui/src/styles/color.rs` (rel=5): Introduces a semantic Color enum mapping to theme-defined HSLA values for consistent UI coloring, with a Custom variant for explicit colors.
+- `crates/ui/src/styles/elevation.rs` (rel=5): Defines ElevationIndex layers and computes appropriate box shadows and background colors based on theme appearance, including helper methods for filled backgrounds and darker variants.
+
+#### crates/ui_prompt
+
+Crate providing customizable prompt rendering within GPUI.
+
+#### crates/util
+
+Shared utility crate used broadly across the workspace.
+
+##### crates/util/src
+
+Common utilities: shell detection/env capture, archives, markdown formatting, rel paths, process helpers, truncation/merge algorithms, test utilities.
+
+**Files:**
+
+- `crates/util/src/shell_env.rs` (rel=5): Captures a login shell's environment variables by spawning the shell in a given directory and piping JSON output from the app’s --printenv helper, with specialized FD redirection per shell on Unix and tailored commands for PowerShell, Nushell, and Cmd on Windows.
+
+#### crates/util_macros
+
+Macro crate supporting test normalization and perf metadata.
+
+##### crates/vim/src
+
+Vim mode integration: motions/objects/states/surrounds/visual/insert/commands with GPUI actions and status UI.
+
+**Files:**
+
+- `crates/vim/src/motion.rs` (rel=5): Defines motion primitives via MotionKind and a comprehensive Motion enum with gpui actions for cursor movement, word/subword navigation, line/sentence/section traversal, character finds (including sneak), matching delimiters, and window-relative positions.
+- `crates/vim/src/state.rs` (rel=5): Manages Vim mode, operators, registers, counts, and recording/replay in VimGlobals, and defines Operator variants that parameterize subsequent motions/edits.
+- `crates/vim/src/vim.rs` (rel=5): Entry point integrating Vim with the app: initializes settings/globals and registers workspace/Vim actions for modes, counts, operators, motions, objects, surrounds, and Helix features.
+
+#### crates/vim_mode_setting
+
+Crate mapping settings to editor mode toggles (Vim/Helix).
+
+#### crates/watch
+
+Crate providing a simple watch mechanism for state changes.
+
+##### crates/workspace/src
+
+Workspace orchestration: docks/panes/items, modal/toast layers, notifications, toolbar, searchable interfaces, settings mapping, history manager, shared screen pane.
+
+**Files:**
+
+- `crates/workspace/src/dock.rs` (rel=5): Defines the Panel trait and Dock container system for left/bottom/right positions, handling panel registration, focus, size, activation, zoom state, and icon/menu interactions.
+- `crates/workspace/src/item.rs` (rel=5): Defines the core Item trait and tab UI behavior, item events, save semantics, and settings models for tabs and previews, including VS Code settings import.
+- `crates/workspace/src/pane.rs` (rel=5): Manages pane and tab lifecycle with rich actions for activation, splitting, moving, closing, pinning, and preview toggling, plus navigation history and selection drag interactions.
+- `crates/workspace/src/pane_group.rs` (rel=5): Represents hierarchical pane groups and axes, supporting splitting, removal, resizing, swapping, rendering, and finding neighboring panes relative to the active pane.
+- `crates/workspace/src/workspace.rs` (rel=5): Central workspace orchestrator that manages panes, docks, items, serialization, and global actions for opening, saving, and toggling UI, integrating with projects, worktrees, remote clients, terminals, and debuggers.
+- `crates/workspace/src/workspace_settings.rs` (rel=5): Maps persisted settings into a WorkspaceSettings struct and imports select VS Code settings into the app’s SettingsContent, covering panes, docks, autosave, startup behavior, and UI toggles.
+
+###### crates/workspace/src/persistence
+
+Serialized workspace state (panes/docks/items, remote metadata) with DB bind/column implementations.
+
+**Files:**
+
+- `crates/workspace/src/persistence/model.rs` (rel=5): Defines serialized workspace state, pane hierarchies, docks, and remote connection metadata, with DB bind/column implementations for dock structures and async deserialization to live panes/items.
+
+##### crates/worktree/src
+
+Worktree abstraction: scanning/watching, gitignore layering, settings (includes/excludes/private), RPC updates, snapshots.
+
+**Files:**
+
+- `crates/worktree/src/worktree.rs` (rel=5): Implements the worktree abstraction for local and remote projects, with background scanning, filesystem watching, RPC updates, and indexed snapshots using SumTree.
+
+#### crates/x_ai
+
+xAI provider model crate used by language_models.
+
+##### crates/zed/src
+
+Main application entrypoints: boot sequence, reliability hooks, legacy thread import into chat history.
+
+**Files:**
+
+- `crates/zed/src/main.rs` (rel=5): Application entrypoint that boots clients, settings, assets, and UI, handles startup failures with prompts/desktop notifications, and controls process exit on error.
+- `crates/zed/src/zed-main.rs` (rel=5): Application entry point that delegates to zed::main and suppresses the Windows console in release builds.
+
+###### crates/zed/src/zed
+
+Top‑level app actions/menus: open flows, IPC listeners, Windows/macOS single‑instance guards, migration banner.
+
+**Files:**
+
+- `crates/zed/src/zed/edit_prediction_registry.rs` (rel=5): Initializes and assigns edit prediction providers (Copilot, Supermaven, Codestral, Zed/Zeta) to editors, reacting to settings and user-store changes.
+
+#### crates/zed_env_vars
+
+Crate declaring environment variable utilities and flags used app‑wide.
+
+##### crates/zeta/src
+
+First‑gen edit prediction: excerpt selection, onboarding/rating modals, license detection, core request/response processing.
+
+**Files:**
+
+- `crates/zeta/src/input_excerpt.rs` (rel=5): Generates an InputExcerpt and prompt around a cursor by selecting the largest syntax ancestor that fits an editable token budget, then expanding line-wise for additional context using a token heuristic.
+
+##### crates/zeta2/src
+
+Second‑gen prediction: edit interpolation and provider wiring, tracking per‑project/buffer changes.
+
+**Files:**
+
+- `crates/zeta2/src/prediction.rs` (rel=5): Defines the EditPrediction model and core algorithms to derive fine-grained edits from cloud responses and to interpolate those edits across subsequent user changes, aligning ranges and computing minimal diffs.
+
+#### crates/zeta2_tools
+
+Tooling crate for inspecting and tuning zeta2 predictions.
+
+#### crates/zeta_cli
+
+CLI tooling for zeta/zeta2 workflows and retrieval analysis.
+
+##### crates/zeta_cli/src
+
+Headless zeta CLI building project/context, opening buffers, waiting for LSP, and producing requests/stats.
+
+**Files:**
+
+- `crates/zeta_cli/src/main.rs` (rel=5): Defines the zeta CLI’s commands and argument parsing, orchestrating project/worktree setup and buffer opening (optionally through LSP), validating cursor positions, and producing either legacy zeta context or zeta2 request/prompt outputs.
+
+#### crates/zlog_settings
+
+Crate connecting settings to zlog filter scopes for dynamic log control.
+
+#### docs/src
+
+General product documentation (environment, toolchains, channels, tasks, debugger, Git, key bindings, remote dev, Vim, persistence).
+
+**Files:**
+
+- `docs/src/configuring-languages.md` (rel=5): Comprehensive guide to language support architecture built on tree-sitter and LSP, covering per-language settings, file associations, server management, prioritization, toolchains, and server configuration.
+
+##### docs/src/ai
+
+User docs for AI features: agent panel, inline assistant, MCP integration, tools, models/providers, rules and settings.
+
+**Files:**
+
+- `docs/src/ai/agent-panel.md` (rel=5): Documents the Agent Panel’s capabilities, including async job visualization, thread management, checkpoints, history navigation, following agent actions, reviews, model selection, profiles, tools, and approval settings.
+- `docs/src/ai/mcp.md` (rel=5): Guides integrating Model Context Protocol servers with the Agent Panel, including custom server setup, profiles to isolate tools, and a recommended pipeline using async terminal tools for parallel execution.
+- `docs/src/ai/tools.md` (rel=5): Catalogs Agent tools for reading, searching, editing, and executing shell commands, enabling the LLM to interact with the project.
+
+##### docs/src/development
+
+Developer docs for building/debugging Zed on macOS/Linux/Windows, crash analysis, and collaboration backend.
+
+**Files:**
+
+- `docs/src/development/glossary.md` (rel=5): Defines core architectural concepts across GPUI and Zed (App, Context, Entity, View, Panel, Docks, Tasks), plus editor and debugger terminology.
+
+##### docs/src/extensions
+
+Guides for authoring language/MCP/debugger extensions, slash commands, and themes within Zed’s extension system.
+
+**Files:**
+
+- `docs/src/extensions/developing-extensions.md` (rel=5): Defines the extension architecture, local dev workflow, Rust/WebAssembly code model, repository structure, licensing requirements, and the publish/update pipeline.
+- `docs/src/extensions/languages.md` (rel=5): Describes language extensions architecture: metadata config, Tree-sitter grammar registration, and queries powering highlighting, brackets, outlines, indentation, injections, and more.
+
+##### extensions/glsl/languages
+
+Container for GLSL language assets bundled by the extension.
+
+##### extensions/html/languages
+
+Container for HTML language resources used by the extension.
+
+##### extensions/proto/languages
+
+Container for Protocol Buffers language assets.
+
+#### extensions/test-extension
+
+Skeleton for a test extension used to exercise extension APIs and host behavior.
+
+### feature_docs
+
+Architecture/design docs for AI memory, RAG retrieval, embedding backends, terminal tools, and core agent/thread behaviors.
+
+**Files:**
+
+- `feature_docs/chat_history_core.md` (rel=5): Design of the chat history core including storage model, embeddings, hybrid retrieval, RAG interface, and summarization triggers with configuration layering.
+- `feature_docs/embedding_backends.md` (rel=5): Conceptual overview of pluggable embedding backends (FastEmbed, OpenAI, Azure) with a common trait, batching, configuration layering, and re-embedding workflows.
+- `feature_docs/global_memory_backend.md` (rel=5): Defines a pluggable Global Memory Backend providing cross-thread semantic memory with a unified trait for upsert/get/delete/search/reembed/maintenance and data types for entries and search results.
+- `feature_docs/memory_segments.md` (rel=5): Specifies the Agent2 thread archival mechanism that collapses contiguous message ranges into a single summary placeholder with metadata to reduce token load while preserving older conversation semantics.
+- `feature_docs/rag_hybrid_retrieval.md` (rel=5): Specification for a RAG and hybrid retrieval pipeline combining BM25 and embedding similarity with weighted fusion, context packing, and prompt assembly.
+- `feature_docs/session_registration.md` (rel=5): Explains and fixes an Agent2 defect where new threads were not registered in the session map, detailing the corrected creation/registration flow, observers, and tests.
+
+### tooling
+
+Developer tooling crates (xtask, perf) to streamline maintenance, publishing, and performance measurement.
+
+#### tooling/perf
+
+Performance tooling crate housing the perf runner and data structures.
+
+## Statistics
+
+- Total textual files scanned: 2946
+- Files included after budget/filter: 1913
+- Batches executed: 1
+- Avg estimated tokens per batch: 22_205
+- Model (generation): gpt-5
+- Token budget (input): 270_000
