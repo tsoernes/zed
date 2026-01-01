@@ -6,6 +6,7 @@ members = [
     "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
+    "crates/agent_remote_server",
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
@@ -249,6 +250,7 @@ agent_ui = { path = "crates/agent_ui" }
 agent_ui_v2 = { path = "crates/agent_ui_v2" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
+agent_remote_server = { path = "crates/agent_remote_server" }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -446,6 +448,7 @@ aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
+axum = "0.7"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
@@ -600,6 +603,7 @@ prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
+qrcode = "0.14"
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
@@ -666,6 +670,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
+tower = "0.4"
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io", "tokio"] }
 toml = "0.8"
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
