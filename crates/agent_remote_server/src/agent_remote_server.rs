@@ -1,4 +1,5 @@
 mod auth;
+mod agent_bridge;
 mod qr;
 mod server;
 mod websocket;
