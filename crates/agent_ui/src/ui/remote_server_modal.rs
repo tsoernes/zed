@@ -196,15 +196,17 @@ impl Render for RemoteServerModal {
                     .gap_2()
                     .items_center()
                     .child(
-                        Label::new("QR Code (Coming Soon)")
+                        Label::new("Mobile Connection")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
                     .child(
                         div()
-                            .w_48()
-                            .h_48()
+                            .w_full()
+                            .p_3()
                             .flex()
+                            .flex_col()
+                            .gap_2()
                             .items_center()
                             .justify_center()
                             .bg(colors.editor_background)
@@ -212,7 +214,17 @@ impl Render for RemoteServerModal {
                             .border_color(colors.border)
                             .rounded_md()
                             .child(
-                                Label::new("QR Code Display")
+                                Icon::new(IconName::Sparkle)
+                                    .size(IconSize::XLarge)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Copy the pairing URL above")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("and open it on your mobile device")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
