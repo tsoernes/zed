@@ -5,7 +5,7 @@
 //! spawns tasks with proper GPUI context, avoiding lifetime issues.
 
 use crate::agent_bridge::{AgentToClientMessage, ClientToAgentMessage};
-use acp_thread::{AcpThread, AcpThreadEvent, AgentThreadEntry};
+use acp_thread::{AcpThread, AgentThreadEntry};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::StreamExt;
@@ -47,9 +47,9 @@ impl AgentCoordinator {
         from_agent_tx: mpsc::UnboundedSender<AgentToClientMessage>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // TODO: Subscribe to agent thread events
-        // For now, skip subscription to get compilation working
-        // Will add event handling in next iteration
+        // TODO: Add event subscription for real-time updates
+        // For now, focus on basic message flow
+        // Will add proper subscription pattern in next iteration
 
         let mut coordinator = Self {
             acp_thread,
@@ -225,46 +225,14 @@ impl AgentCoordinator {
 
         Ok(())
     }
-
-    /// Handle thread events and broadcast to clients
-    fn handle_thread_event(
-        event: &AcpThreadEvent,
-        from_agent_tx: &mpsc::UnboundedSender<AgentToClientMessage>,
-    ) {
-        match event {
-            AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
-                // Entry updated - could send the actual content here
-                // For now, clients can request history to get updates
-            }
-            AcpThreadEvent::Stopped => {
-                let _ = from_agent_tx.unbounded_send(AgentToClientMessage::ResponseComplete);
-            }
-            AcpThreadEvent::Error => {
-                let _ = from_agent_tx.unbounded_send(AgentToClientMessage::Error {
-                    message: "Agent encountered an error".to_string(),
-                });
-            }
-            AcpThreadEvent::Refusal => {
-                let _ = from_agent_tx.unbounded_send(AgentToClientMessage::Error {
-                    message: "Agent refused to respond to this request".to_string(),
-                });
-            }
-            _ => {
-                // Other events don't need special handling
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use gpui::TestAppContext;
-
-    #[gpui::test]
-    async fn test_coordinator_creation(_cx: &mut TestAppContext) {
+    #[test]
+    fn test_coordinator_module_compiles() {
         // Basic test to ensure module compiles
-        // Full integration tests require a real AcpThread
+        // Full integration tests require a real AcpThread with GPUI context
         assert!(true);
     }
 }

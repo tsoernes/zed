@@ -52,8 +52,8 @@ pub struct RemoteAgentServer {
     config: ServerConfig,
     state: Option<Arc<ServerState>>,
     token_manager: Arc<RwLock<TokenManager>>,
-    agent_bridge: Option<AgentBridge>,
-    coordinator: Option<Entity<AgentCoordinator>>,
+    _agent_bridge: Option<AgentBridge>,
+    _coordinator: Option<Entity<AgentCoordinator>>,
     abort_handle: Option<AbortHandle>,
 }
 
@@ -63,8 +63,8 @@ impl RemoteAgentServer {
             config,
             state: None,
             token_manager: Arc::new(RwLock::new(TokenManager::new())),
-            agent_bridge: None,
-            coordinator: None,
+            _agent_bridge: None,
+            _coordinator: None,
             abort_handle: None,
         }
     }
@@ -134,7 +134,7 @@ impl RemoteAgentServer {
 
         let server_state = ServerState {
             local_addr,
-            auth_token: auth_token.clone(),
+            auth_token,
             pairing_url,
         };
 

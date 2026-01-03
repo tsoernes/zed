@@ -65,7 +65,7 @@ pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
     {
         let mut sender_guard = sender.lock().await;
         if let Err(e) = send_message(
-            &mut *sender_guard,
+            &mut sender_guard,
             ServerMessage::Connected {
                 session_id: connection_id.to_string(),
             },
@@ -107,7 +107,7 @@ pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
             };
 
             let mut sender_guard = sender_clone.lock().await;
-            if let Err(e) = send_message(&mut *sender_guard, server_msg).await {
+            if let Err(e) = send_message(&mut sender_guard, server_msg).await {
                 error!("Failed to send agent message to client: {:?}", e);
                 break;
             }
@@ -128,7 +128,7 @@ pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
                             error!("Error handling message: {:?}", e);
                             let mut sender_guard = sender.lock().await;
                             let _ = send_message(
-                                &mut *sender_guard,
+                                &mut sender_guard,
                                 ServerMessage::Error {
                                     message: e.to_string(),
                                 },
@@ -140,7 +140,7 @@ pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
                         warn!("Failed to parse client message: {:?}", e);
                         let mut sender_guard = sender.lock().await;
                         let _ = send_message(
-                            &mut *sender_guard,
+                            &mut sender_guard,
                             ServerMessage::Error {
                                 message: format!("Invalid message format: {}", e),
                             },
@@ -205,7 +205,7 @@ async fn handle_client_message(
         }
         ClientMessage::Ping => {
             let mut sender_guard = sender.lock().await;
-            send_message(&mut *sender_guard, ServerMessage::Pong).await?;
+            send_message(&mut sender_guard, ServerMessage::Pong).await?;
         }
     }
     Ok(())
