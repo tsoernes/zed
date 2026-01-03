@@ -1,3 +1,4 @@
+use crate::agent_bridge::AgentBridge;
 use crate::auth::{AuthToken, TokenManager};
 use crate::websocket::handle_websocket;
 use acp_thread::AcpThread;
@@ -42,7 +43,7 @@ pub struct ServerState {
 #[derive(Clone)]
 struct InternalServerState {
     token_manager: Arc<RwLock<TokenManager>>,
-    acp_thread: WeakEntity<AcpThread>,
+    agent_bridge: AgentBridge,
 }
 
 /// Remote agent server that handles HTTP and WebSocket connections
@@ -50,15 +51,22 @@ pub struct RemoteAgentServer {
     config: ServerConfig,
     state: Option<Arc<ServerState>>,
     token_manager: Arc<RwLock<TokenManager>>,
+    agent_bridge: Option<AgentBridge>,
     abort_handle: Option<AbortHandle>,
 }
 
 impl RemoteAgentServer {
-    pub fn new(config: ServerConfig, _cx: &mut Context<Self>) -> Self {
+    pub fn new(config: ServerConfig, cx: &mut Context<Self>) -> Self {
+        // Create the agent bridge once during server creation
+        let agent_bridge = AgentBridge::new(config.acp_thread.clone(), cx)
+            .inspect_err(|e| error!("Failed to create agent bridge: {:?}", e))
+            .ok();
+
         Self {
             config,
             state: None,
             token_manager: Arc::new(RwLock::new(TokenManager::new())),
+            agent_bridge,
             abort_handle: None,
         }
     }
@@ -67,9 +75,15 @@ impl RemoteAgentServer {
     pub fn start(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let config = self.config.clone();
         let token_manager = Arc::clone(&self.token_manager);
+        let agent_bridge = self.agent_bridge.clone();
+
+        if agent_bridge.is_none() {
+            error!("Cannot start server: agent bridge not initialized");
+            return Task::ready(());
+        }
 
         cx.spawn(async move |_this, _cx| {
-            match Self::run_server(config, token_manager.clone()).await {
+            match Self::run_server(config, token_manager.clone(), agent_bridge.unwrap()).await {
                 Ok((server_state, _abort_handle)) => {
                     info!("Server started on {}", server_state.local_addr);
                     info!("Pairing URL: {}", server_state.pairing_url);
@@ -100,6 +114,7 @@ impl RemoteAgentServer {
     async fn run_server(
         config: ServerConfig,
         token_manager: Arc<RwLock<TokenManager>>,
+        agent_bridge: AgentBridge,
     ) -> Result<(ServerState, AbortHandle)> {
         let ip = if config.bind_all_interfaces {
             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
@@ -125,7 +140,7 @@ impl RemoteAgentServer {
 
         let internal_state = InternalServerState {
             token_manager,
-            acp_thread: config.acp_thread,
+            agent_bridge,
         };
 
         // Build the router
@@ -204,8 +219,8 @@ async fn websocket_handler(
             .into_response();
     }
 
-    // Upgrade to WebSocket with agent thread
-    ws.on_upgrade(move |socket| handle_websocket(socket, state.acp_thread))
+    // Upgrade to WebSocket with agent bridge
+    ws.on_upgrade(move |socket| handle_websocket(socket, state.agent_bridge))
 }
 
 /// Health check endpoint

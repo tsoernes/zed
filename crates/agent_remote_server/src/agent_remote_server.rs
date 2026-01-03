@@ -1,9 +1,10 @@
-mod auth;
 mod agent_bridge;
+mod auth;
 mod qr;
 mod server;
 mod websocket;
 
+pub use agent_bridge::{AgentBridge, ConnectionHandle};
 pub use auth::{AuthToken, TokenManager};
 pub use qr::generate_qr_code;
 pub use server::{RemoteAgentServer, ServerConfig, ServerState};

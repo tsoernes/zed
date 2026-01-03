@@ -1,11 +1,11 @@
 use crate::agent_bridge::{AgentBridge, AgentToClientMessage, ClientToAgentMessage};
-use acp_thread::AcpThread;
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
-use gpui::{App, WeakEntity};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Message from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,33 +51,70 @@ pub enum ServerMessage {
 }
 
 /// Handle a WebSocket connection with agent integration
-pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThread>) {
-    let (mut sender, mut receiver) = socket.split();
+pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
+    let (sender, mut receiver) = socket.split();
+    let sender = Arc::new(Mutex::new(sender));
 
-    // Generate session ID
-    let session_id = uuid::Uuid::new_v4().to_string();
-    info!("WebSocket connection established: {}", session_id);
+    // Create a connection handle for this WebSocket
+    let mut connection = agent_bridge.create_connection();
+    let connection_id = connection.id();
+
+    info!("WebSocket connection established: {}", connection_id);
 
     // Send connected message
-    if let Err(e) = send_message(
-        &mut sender,
-        ServerMessage::Connected {
-            session_id: session_id.clone(),
-        },
-    )
-    .await
     {
-        error!("Failed to send connected message: {:?}", e);
-        return;
+        let mut sender_guard = sender.lock().await;
+        if let Err(e) = send_message(
+            &mut *sender_guard,
+            ServerMessage::Connected {
+                session_id: connection_id.to_string(),
+            },
+        )
+        .await
+        {
+            error!("Failed to send connected message: {:?}", e);
+            return;
+        }
     }
 
-    // Create agent bridge
-    // Note: We need to create the bridge on the GPUI thread
-    // For now, we'll handle messages directly and integrate bridge later
-    // when we have proper GPUI context available
-    info!("WebSocket handler started (agent bridge integration pending)");
+    // Spawn a task to forward agent messages to the WebSocket
+    let sender_clone = sender.clone();
+    let response_task = tokio::spawn(async move {
+        while let Some(agent_msg) = connection.recv().await {
+            let server_msg = match agent_msg {
+                AgentToClientMessage::TextChunk { content } => ServerMessage::TextChunk { content },
+                AgentToClientMessage::ToolStart {
+                    tool_name,
+                    tool_input,
+                } => ServerMessage::ToolStart {
+                    tool_name,
+                    tool_input,
+                },
+                AgentToClientMessage::ToolResult {
+                    tool_name,
+                    result,
+                    error,
+                } => ServerMessage::ToolResult {
+                    tool_name,
+                    result,
+                    error,
+                },
+                AgentToClientMessage::ResponseComplete => ServerMessage::ResponseComplete,
+                AgentToClientMessage::Error { message } => ServerMessage::Error { message },
+                AgentToClientMessage::HistoryEntry { role, content } => {
+                    ServerMessage::HistoryEntry { role, content }
+                }
+            };
 
-    // Process incoming messages
+            let mut sender_guard = sender_clone.lock().await;
+            if let Err(e) = send_message(&mut *sender_guard, server_msg).await {
+                error!("Failed to send agent message to client: {:?}", e);
+                break;
+            }
+        }
+    });
+
+    // Process incoming messages from the client
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
@@ -86,11 +123,12 @@ pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThrea
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(client_msg) => {
                         if let Err(e) =
-                            handle_client_message(client_msg, &mut sender, &acp_thread).await
+                            handle_client_message(client_msg, &sender, &agent_bridge).await
                         {
                             error!("Error handling message: {:?}", e);
+                            let mut sender_guard = sender.lock().await;
                             let _ = send_message(
-                                &mut sender,
+                                &mut *sender_guard,
                                 ServerMessage::Error {
                                     message: e.to_string(),
                                 },
@@ -100,8 +138,9 @@ pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThrea
                     }
                     Err(e) => {
                         warn!("Failed to parse client message: {:?}", e);
+                        let mut sender_guard = sender.lock().await;
                         let _ = send_message(
-                            &mut sender,
+                            &mut *sender_guard,
                             ServerMessage::Error {
                                 message: format!("Invalid message format: {}", e),
                             },
@@ -120,7 +159,7 @@ pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThrea
                 debug!("Received pong");
             }
             Ok(Message::Close(_)) => {
-                info!("Client closed connection: {}", session_id);
+                info!("Client closed connection: {}", connection_id);
                 break;
             }
             Err(e) => {
@@ -130,73 +169,45 @@ pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThrea
         }
     }
 
-    info!("WebSocket connection closed: {}", session_id);
+    // Clean up
+    response_task.abort();
+    info!("WebSocket connection closed: {}", connection_id);
 }
 
 /// Handle a client message
 async fn handle_client_message(
     message: ClientMessage,
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    _acp_thread: &WeakEntity<AcpThread>,
+    sender: &Arc<Mutex<futures::stream::SplitSink<WebSocket, Message>>>,
+    agent_bridge: &AgentBridge,
 ) -> Result<()> {
     match message {
         ClientMessage::Chat { content } => {
-            handle_chat_message(content, sender).await?;
+            info!("Processing chat message: {}", content);
+
+            // Send to agent via bridge
+            agent_bridge.send(ClientToAgentMessage::Chat { content })?;
+
+            // The response will be streamed back via the response task
         }
         ClientMessage::GetHistory => {
-            handle_get_history(sender).await?;
+            info!("Fetching conversation history");
+
+            // Request history from agent
+            agent_bridge.send(ClientToAgentMessage::GetHistory)?;
+
+            // History entries will be streamed back via the response task
         }
         ClientMessage::Cancel => {
-            // TODO: Implement cancellation via agent bridge
-            send_message(
-                sender,
-                ServerMessage::Error {
-                    message: "Cancellation not yet implemented".to_string(),
-                },
-            )
-            .await?;
+            info!("Cancelling agent operation");
+
+            // Send cancellation to agent
+            agent_bridge.send(ClientToAgentMessage::Cancel)?;
         }
         ClientMessage::Ping => {
-            send_message(sender, ServerMessage::Pong).await?;
+            let mut sender_guard = sender.lock().await;
+            send_message(&mut *sender_guard, ServerMessage::Pong).await?;
         }
     }
-    Ok(())
-}
-
-/// Handle a chat message from the client
-async fn handle_chat_message(
-    content: String,
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-) -> Result<()> {
-    info!("Processing chat message: {}", content);
-
-    // TODO: Create AgentBridge and send message through it
-    // For now, send a simple echo response
-    send_message(
-        sender,
-        ServerMessage::TextChunk {
-            content: format!("Echo: {} (Agent integration pending)", content),
-        },
-    )
-    .await?;
-
-    send_message(sender, ServerMessage::ResponseComplete).await?;
-
-    Ok(())
-}
-
-/// Handle getting thread history
-async fn handle_get_history(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-) -> Result<()> {
-    // TODO: Implement history retrieval via agent bridge
-    send_message(
-        sender,
-        ServerMessage::Error {
-            message: "History retrieval not yet implemented".to_string(),
-        },
-    )
-    .await?;
     Ok(())
 }
 
@@ -227,6 +238,16 @@ mod tests {
     }
 
     #[test]
+    fn test_client_message_deserialization() {
+        let json = r#"{"type":"chat","content":"Hello"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Chat { content } => assert_eq!(content, "Hello"),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[test]
     fn test_server_message_serialization() {
         let msg = ServerMessage::TextChunk {
             content: "Response".to_string(),
@@ -234,5 +255,37 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"textChunk\""));
         assert!(json.contains("\"content\":\"Response\""));
+    }
+
+    #[test]
+    fn test_server_message_connected() {
+        let msg = ServerMessage::Connected {
+            session_id: "test-123".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"connected\""));
+        assert!(json.contains("\"sessionId\":\"test-123\""));
+    }
+
+    #[test]
+    fn test_server_message_error() {
+        let msg = ServerMessage::Error {
+            message: "Test error".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"error\""));
+        assert!(json.contains("\"message\":\"Test error\""));
+    }
+
+    #[test]
+    fn test_history_entry_serialization() {
+        let msg = ServerMessage::HistoryEntry {
+            role: "user".to_string(),
+            content: "Test message".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"historyEntry\""));
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"content\":\"Test message\""));
     }
 }
