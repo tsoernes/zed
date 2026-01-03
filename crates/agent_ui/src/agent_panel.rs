@@ -1203,8 +1203,9 @@ impl AgentPanel {
         // Start the server
         match self.remote_server.start(config, cx) {
             Ok(()) => {
-                // TODO: Show QR code modal with pairing information
                 log::info!("Remote agent server started successfully");
+                // TODO: Show QR code modal with pairing information
+                // The server state is set asynchronously, so we'll need to poll or use callbacks
                 cx.notify();
             }
             Err(e) => {

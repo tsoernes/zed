@@ -7,6 +7,7 @@ mod hold_for_default;
 mod mention_crease;
 mod model_selector_components;
 mod onboarding_modal;
+mod remote_server_modal;
 mod usage_callout;
 
 pub use acp_onboarding_modal::*;

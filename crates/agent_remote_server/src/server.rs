@@ -80,12 +80,18 @@ impl RemoteAgentServer {
         let _coordinator =
             cx.new(|cx| AgentCoordinator::new(acp_thread, to_agent_rx, from_agent_tx, cx));
 
-        cx.spawn(async move |_this, mut cx| {
+        cx.spawn(async move |this, mut cx| {
             match Self::run_server(config, token_manager.clone(), agent_bridge, &mut cx).await {
-                Ok((server_state, _abort_handle)) => {
+                Ok((server_state, abort_handle)) => {
                     info!("Server started on {}", server_state.local_addr);
                     info!("Pairing URL: {}", server_state.pairing_url);
-                    // TODO: Store state and abort_handle in _this
+
+                    // Store state and abort_handle
+                    let server_state_arc = Arc::new(server_state);
+                    let _ = this.update(cx, |server, _cx| {
+                        server.state = Some(server_state_arc);
+                        server.abort_handle = Some(abort_handle);
+                    });
                 }
                 Err(e) => {
                     error!("Failed to start server: {:?}", e);
