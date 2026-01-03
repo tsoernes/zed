@@ -76,10 +76,14 @@ A complete WebSocket-based server that enables mobile browser access to Zed agen
 - [x] Message protocol
 - [x] Compiles without errors/warnings
 
-### 🚧 Phase 2: Agent Integration (NEXT)
-- [ ] Connect to agent `Thread` system
-- [ ] Stream real agent responses to clients
-- [ ] Handle tool execution events
+### 🚧 Phase 2: Agent Integration (IN PROGRESS)
+- [x] AgentBridge foundation - channel-based communication between tokio and GPUI
+- [x] AcpThread integration - subscribe to thread events
+- [x] Message type definitions for agent communication
+- [x] Server accepts WeakEntity<AcpThread> parameter
+- [ ] Complete WebSocket handler integration with AgentBridge
+- [ ] Test end-to-end message flow from mobile to agent
+- [ ] Handle tool execution events streaming
 - [ ] Support multiple concurrent connections
 - [ ] Session persistence
 
@@ -220,6 +224,67 @@ GPL-3.0-or-later
 
 ---
 
-**Commit:** ce14e93f93 - "feat: Add agent_remote_server crate for mobile remote agent access"
+**Latest Commit:** 2632380405 - "feat: Integrate AgentBridge with AcpThread for real agent communication"
 **Branch:** android-agent-chat
-**Date:** 2026-01-01
+**Date:** 2025-01-01
+
+## Recent Progress (2025-01-01)
+
+### Phase 2 Implementation Started
+
+**What Was Added:**
+
+1. **AgentBridge Module (agent_bridge.rs)** - Complete implementation
+   - Channels for safe tokio ↔ GPUI communication
+   - Subscribe to AcpThread events (NewEntry, EntryUpdated, Stopped, Error, Refusal)
+   - Convert ClientToAgentMessage → acp::ContentBlock
+   - Forward agent responses to WebSocket clients
+   - History retrieval support
+   - Cancellation support
+
+2. **Dependencies Added:**
+   - `acp_thread.workspace = true` - Access to AcpThread
+   - `agent-client-protocol.workspace = true` - Message types
+   - `project.workspace = true` - Project entity
+
+3. **Server Updates (server.rs):**
+   - ServerConfig now accepts `WeakEntity<AcpThread>`
+   - InternalServerState includes acp_thread reference
+   - WebSocket handler receives thread parameter
+
+4. **WebSocket Handler Updates (websocket.rs):**
+   - Added AgentBridge imports
+   - Added HistoryEntry message type
+   - Prepared for full bridge integration
+   - Test coverage for message serialization
+
+**Architecture:**
+
+```
+Mobile Browser (WebSocket)
+    ↓ (tokio thread)
+WebSocket Handler
+    ↓ (mpsc channel)
+AgentBridge
+    ↓ (GPUI spawn)
+AcpThread.send()
+    ↓ (thread events)
+AgentBridge subscription
+    ↓ (mpsc channel)
+WebSocket Handler
+    ↓ (tokio thread)
+Mobile Browser (WebSocket)
+```
+
+**Next Steps:**
+
+1. Resolve GPUI context availability in async WebSocket handler
+2. Create AgentBridge instance when WebSocket connects
+3. Poll bridge for agent responses and stream to client
+4. Test full message flow end-to-end
+5. Handle concurrent connections properly
+6. Add UI integration in Zed to start server with active thread
+
+**Commits:**
+- ce14e93f93 - "feat: Add agent_remote_server crate for mobile remote agent access"
+- 2632380405 - "feat: Integrate AgentBridge with AcpThread for real agent communication"

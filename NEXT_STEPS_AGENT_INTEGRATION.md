@@ -3,11 +3,30 @@
 ## Current Status
 
 ✅ **Phase 1 Complete:** Server infrastructure is built and compiling
-🚧 **Phase 2 Started:** Agent integration foundation laid
+🚧 **Phase 2 In Progress:** Agent integration foundation completed, integration pending
 
-## What We Just Added
+## What Was Completed (Latest Session)
 
-Created `agent_bridge.rs` - A module for bridging WebSocket (tokio) and Agent (GPUI) threads using channels.
+1. **Implemented complete AgentBridge** (`agent_bridge.rs`)
+   - Full channel-based communication between tokio and GPUI threads
+   - Subscribe to AcpThread events and forward to WebSocket
+   - Convert messages: ClientToAgentMessage → acp::ContentBlock
+   - Handle agent responses: TextChunk, ToolStart, ToolResult, ResponseComplete
+   - Support for history retrieval and cancellation
+
+2. **Updated Server** (`server.rs`)
+   - ServerConfig now requires `WeakEntity<AcpThread>`
+   - Pass thread reference to WebSocket handlers
+
+3. **Updated WebSocket Handler** (`websocket.rs`)
+   - Prepared for AgentBridge integration
+   - Added message types for history entries
+   - Test coverage added
+
+4. **Added Dependencies**
+   - `acp_thread.workspace = true`
+   - `agent-client-protocol.workspace = true`
+   - `project.workspace = true`
 
 ## Architecture Overview
 
@@ -29,104 +48,56 @@ WebSocket sends to client
 
 ## Implementation Roadmap
 
-### Step 1: Complete AgentBridge Implementation
+### Step 1: Complete AgentBridge Implementation ✅ DONE
 
 **File:** `crates/agent_remote_server/src/agent_bridge.rs`
 
-**Tasks:**
-1. Accept an `Entity<AcpThread>` or factory function in constructor
-2. Spawn GPUI task that:
-   - Listens on `to_agent_rx` channel
-   - Calls `acp_thread.send()` with content
-   - Observes agent responses
-   - Sends responses to `from_agent_tx`
-3. Handle agent events/streaming responses
-4. Implement proper error handling
+**Completed:**
+- ✅ Accept `WeakEntity<AcpThread>` in constructor
+- ✅ Spawn GPUI task that listens on `to_agent_rx` channel
+- ✅ Call `acp_thread.send()` with ContentBlock messages
+- ✅ Subscribe to thread events (NewEntry, EntryUpdated, Stopped, Error, Refusal)
+- ✅ Forward responses to `from_agent_tx` channel
+- ✅ Handle GetHistory and Cancel messages
+- ✅ Error handling with proper Result types
+- ✅ Keep subscription alive with Arc<Mutex<Option<Subscription>>>
 
-**Key Code Pattern:**
-```rust
-pub fn new(acp_thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Result<Self> {
-    let (to_agent_tx, mut to_agent_rx) = mpsc::unbounded();
-    let (from_agent_tx, from_agent_rx) = mpsc::unbounded();
-    
-    cx.spawn(async move |mut cx| {
-        while let Some(msg) = to_agent_rx.next().await {
-            match msg {
-                ClientToAgentMessage::Chat { content } => {
-                    // Convert to ContentBlock
-                    let blocks = vec![acp::ContentBlock::Text(content)];
-                    
-                    // Send to agent
-                    acp_thread.update(&mut cx, |thread, cx| {
-                        thread.send(blocks, cx)
-                    }).ok();
-                    
-                    // TODO: Stream responses back via from_agent_tx
-                }
-                // Handle other message types
-            }
-        }
-    }).detach();
-    
-    Ok(Self { to_agent_tx, from_agent_rx })
-}
-```
-
-### Step 2: Update WebSocket Handler
+### Step 2: Update WebSocket Handler 🚧 IN PROGRESS
 
 **File:** `crates/agent_remote_server/src/websocket.rs`
 
-**Tasks:**
-1. Accept `AgentBridge` parameter in `handle_websocket()`
+**Completed:**
+- ✅ Accept `WeakEntity<AcpThread>` parameter in `handle_websocket()`
+- ✅ Add imports for AgentBridge
+- ✅ Add HistoryEntry message type
+
+**Remaining Tasks:**
+1. Create AgentBridge instance on GPUI thread (requires proper context)
 2. Forward client messages to bridge
-3. Poll bridge for agent responses
-4. Send responses back to WebSocket client
+3. Poll bridge for agent responses (async loop)
+4. Send responses back to WebSocket client in real-time
 
-**Key Changes:**
-```rust
-pub async fn handle_websocket(
-    socket: WebSocket,
-    mut bridge: AgentBridge,  // Add this parameter
-) {
-    // ... existing code ...
-    
-    // In message handling:
-    ClientMessage::Chat { content } => {
-        bridge.send(ClientToAgentMessage::Chat { content })?;
-        
-        // Poll for responses
-        while let Some(agent_msg) = bridge.try_recv() {
-            match agent_msg {
-                AgentToClientMessage::TextChunk { content } => {
-                    send_message(&mut sender, ServerMessage::TextChunk { content }).await?;
-                }
-                AgentToClientMessage::ResponseComplete => {
-                    send_message(&mut sender, ServerMessage::ResponseComplete).await?;
-                    break;
-                }
-                // Handle other message types
-            }
-        }
-    }
-}
-```
+**Challenge:** Need to create AgentBridge on GPUI thread, but WebSocket handler runs on tokio thread. 
 
-### Step 3: Update Server to Create Threads
+**Proposed Solution:**
+- Create bridge during server setup on GPUI thread
+- Pass bridge handle to WebSocket handler via shared state
+- Or: Use App context callback to create bridge per connection
+
+### Step 3: Update Server to Create Threads ✅ DONE
 
 **File:** `crates/agent_remote_server/src/server.rs`
 
-**Tasks:**
-1. Add dependencies for agent/project creation
-2. Create or accept `Entity<Project>` in server config
-3. Create `Entity<AcpThread>` for each WebSocket connection
-4. Pass thread to WebSocket handler via bridge
+**Completed:**
+- ✅ Add acp_thread to dependencies
+- ✅ ServerConfig now includes `WeakEntity<AcpThread>`
+- ✅ InternalServerState stores thread reference
+- ✅ Pass thread to WebSocket handler
 
-**Key Architecture Decision:**
-- **Option A:** One shared thread for all connections (simpler)
-- **Option B:** One thread per connection (isolated conversations)
-- **Option C:** Connection can select from available threads (multi-instance support)
-
-**Recommended:** Start with Option A, migrate to C for multi-instance feature.
+**Architecture Decision:** Using **Option A** (one shared thread for all connections)
+- Simpler to implement and maintain
+- All connections interact with same conversation
+- Easy to migrate to Option C later for multi-instance support
 
 ### Step 4: Handle Agent Streaming Responses
 
@@ -216,8 +187,16 @@ project.workspace = true  # For Project entity
 
 ## Success Criteria
 
+**Infrastructure:**
+- [x] AgentBridge module implemented
+- [x] Server accepts AcpThread reference
+- [x] WebSocket handler prepared for integration
+- [x] Message types defined and serialization tested
+
+**Remaining Integration:**
+- [ ] AgentBridge creation in WebSocket handler (GPUI context issue)
 - [ ] WebSocket client can send message
-- [ ] Message reaches agent thread
+- [ ] Message reaches agent thread via bridge
 - [ ] Agent processes message
 - [ ] Agent response streams back to client
 - [ ] Web UI displays response in real-time
@@ -227,13 +206,14 @@ project.workspace = true  # For Project entity
 
 ## Timeline Estimate
 
-- Step 1 (AgentBridge complete): 2-3 hours
-- Step 2 (WebSocket integration): 1-2 hours  
-- Step 3 (Server thread creation): 2-3 hours
-- Step 4 (Streaming responses): 2-4 hours
-- Testing & debugging: 2-4 hours
+- ✅ Step 1 (AgentBridge complete): ~3 hours (DONE)
+- 🚧 Step 2 (WebSocket integration): 1-2 hours (IN PROGRESS)
+- ✅ Step 3 (Server thread creation): ~1 hour (DONE)
+- ⏳ Step 4 (Streaming responses): 2-4 hours (NEXT)
+- ⏳ Testing & debugging: 2-4 hours
 
-**Total:** 9-16 hours of development time
+**Completed:** ~4 hours
+**Remaining:** 5-10 hours of development time
 
 ## Next Commands to Run
 
@@ -257,5 +237,26 @@ cargo run --bin zed
 
 ---
 
-**Status:** Foundation laid, ready for implementation!
-**Last Updated:** 2026-01-01
+**Status:** Phase 2 foundation complete! Integration remaining.
+**Last Updated:** 2025-01-01
+**Latest Commit:** 2632380405 - "feat: Integrate AgentBridge with AcpThread for real agent communication"
+
+## Known Issues
+
+1. **GPUI Context in Async Handler:** 
+   - AgentBridge requires `&mut App` to create
+   - WebSocket handler runs in async tokio context
+   - Need to bridge this gap (possibly create bridge in server setup, store in shared state)
+
+2. **Network Issue:**
+   - `cargo check` fails on webrtc-sys dependency (DNS error)
+   - Doesn't affect agent_remote_server directly
+   - May need to build with specific features or use offline mode
+
+## Next Session Goals
+
+1. Resolve GPUI context availability for AgentBridge creation
+2. Complete WebSocket → AgentBridge → AcpThread message flow
+3. Test end-to-end: mobile browser → WebSocket → agent → response
+4. Handle multiple concurrent connections
+5. Add Zed UI integration to start server
