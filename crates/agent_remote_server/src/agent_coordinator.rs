@@ -10,7 +10,7 @@ use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gpui::{Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui::{Context, EventEmitter, Subscription, Task, WeakEntity};
 use log::{error, info, warn};
 use parking_lot::Mutex;
 

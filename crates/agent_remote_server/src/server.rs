@@ -77,7 +77,7 @@ impl RemoteAgentServer {
         // Create the agent bridge and coordinator before going async
         let (agent_bridge, to_agent_rx, from_agent_tx) = AgentBridge::new();
         let acp_thread = config.acp_thread.clone();
-        let coordinator =
+        let _coordinator =
             cx.new(|cx| AgentCoordinator::new(acp_thread, to_agent_rx, from_agent_tx, cx));
 
         cx.spawn(async move |_this, mut cx| {

@@ -264,7 +264,7 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"connected\""));
-        assert!(json.contains("\"sessionId\":\"test-123\""));
+        assert!(json.contains("\"session_id\":\"test-123\""));
     }
 
     #[test]
