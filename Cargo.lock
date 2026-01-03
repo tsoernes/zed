@@ -259,7 +259,9 @@ dependencies = [
 name = "agent_remote_server"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
  "agent",
+ "agent-client-protocol",
  "anyhow",
  "axum 0.7.9",
  "collections",
@@ -267,6 +269,7 @@ dependencies = [
  "gpui",
  "log",
  "parking_lot",
+ "project",
  "qrcode",
  "rand 0.9.2",
  "serde",

@@ -1,6 +1,9 @@
+use crate::agent_bridge::{AgentBridge, AgentToClientMessage, ClientToAgentMessage};
+use acp_thread::AcpThread;
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
+use gpui::{App, WeakEntity};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 
@@ -43,10 +46,12 @@ pub enum ServerMessage {
     Error { message: String },
     /// Pong response
     Pong,
+    /// History entry
+    HistoryEntry { role: String, content: String },
 }
 
-/// Handle a WebSocket connection
-pub async fn handle_websocket(socket: WebSocket) {
+/// Handle a WebSocket connection with agent integration
+pub async fn handle_websocket(socket: WebSocket, acp_thread: WeakEntity<AcpThread>) {
     let (mut sender, mut receiver) = socket.split();
 
     // Generate session ID
@@ -66,6 +71,12 @@ pub async fn handle_websocket(socket: WebSocket) {
         return;
     }
 
+    // Create agent bridge
+    // Note: We need to create the bridge on the GPUI thread
+    // For now, we'll handle messages directly and integrate bridge later
+    // when we have proper GPUI context available
+    info!("WebSocket handler started (agent bridge integration pending)");
+
     // Process incoming messages
     while let Some(msg) = receiver.next().await {
         match msg {
@@ -74,7 +85,9 @@ pub async fn handle_websocket(socket: WebSocket) {
 
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(client_msg) => {
-                        if let Err(e) = handle_client_message(client_msg, &mut sender).await {
+                        if let Err(e) =
+                            handle_client_message(client_msg, &mut sender, &acp_thread).await
+                        {
                             error!("Error handling message: {:?}", e);
                             let _ = send_message(
                                 &mut sender,
@@ -124,6 +137,7 @@ pub async fn handle_websocket(socket: WebSocket) {
 async fn handle_client_message(
     message: ClientMessage,
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    _acp_thread: &WeakEntity<AcpThread>,
 ) -> Result<()> {
     match message {
         ClientMessage::Chat { content } => {
@@ -133,7 +147,7 @@ async fn handle_client_message(
             handle_get_history(sender).await?;
         }
         ClientMessage::Cancel => {
-            // TODO: Implement cancellation
+            // TODO: Implement cancellation via agent bridge
             send_message(
                 sender,
                 ServerMessage::Error {
@@ -156,12 +170,12 @@ async fn handle_chat_message(
 ) -> Result<()> {
     info!("Processing chat message: {}", content);
 
+    // TODO: Create AgentBridge and send message through it
     // For now, send a simple echo response
-    // TODO: Integrate with actual agent system
     send_message(
         sender,
         ServerMessage::TextChunk {
-            content: format!("Echo: {}", content),
+            content: format!("Echo: {} (Agent integration pending)", content),
         },
     )
     .await?;
@@ -175,7 +189,7 @@ async fn handle_chat_message(
 async fn handle_get_history(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
 ) -> Result<()> {
-    // TODO: Implement history retrieval
+    // TODO: Implement history retrieval via agent bridge
     send_message(
         sender,
         ServerMessage::Error {
@@ -196,4 +210,29 @@ async fn send_message(
         .send(Message::Text(json))
         .await
         .map_err(|e| anyhow!("Failed to send message: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_message_serialization() {
+        let msg = ClientMessage::Chat {
+            content: "Hello".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"chat\""));
+        assert!(json.contains("\"content\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_server_message_serialization() {
+        let msg = ServerMessage::TextChunk {
+            content: "Response".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"textChunk\""));
+        assert!(json.contains("\"content\":\"Response\""));
+    }
 }

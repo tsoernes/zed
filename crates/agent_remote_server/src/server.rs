@@ -1,5 +1,6 @@
 use crate::auth::{AuthToken, TokenManager};
 use crate::websocket::handle_websocket;
+use acp_thread::AcpThread;
 use anyhow::Result;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Query, State as AxumState};
@@ -8,7 +9,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use collections::HashMap;
 use futures::future::AbortHandle;
-use gpui::{Context, Task};
+use gpui::{Context, Task, WeakEntity};
 use log::{error, info};
 use parking_lot::RwLock;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -16,21 +17,14 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 /// Configuration for the remote agent server
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// Port to bind to (0 = auto-select)
     pub port: u16,
     /// Whether to bind to all interfaces (0.0.0.0) or just localhost
     pub bind_all_interfaces: bool,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            port: 0, // Auto-select
-            bind_all_interfaces: true,
-        }
-    }
+    /// Reference to the agent thread to connect to
+    pub acp_thread: WeakEntity<AcpThread>,
 }
 
 /// Current state of the running server
@@ -48,6 +42,7 @@ pub struct ServerState {
 #[derive(Clone)]
 struct InternalServerState {
     token_manager: Arc<RwLock<TokenManager>>,
+    acp_thread: WeakEntity<AcpThread>,
 }
 
 /// Remote agent server that handles HTTP and WebSocket connections
@@ -78,7 +73,7 @@ impl RemoteAgentServer {
                 Ok((server_state, _abort_handle)) => {
                     info!("Server started on {}", server_state.local_addr);
                     info!("Pairing URL: {}", server_state.pairing_url);
-                    // TODO: Store state and abort_handle
+                    // TODO: Store state and abort_handle in _this
                 }
                 Err(e) => {
                     error!("Failed to start server: {:?}", e);
@@ -128,7 +123,10 @@ impl RemoteAgentServer {
             pairing_url,
         };
 
-        let internal_state = InternalServerState { token_manager };
+        let internal_state = InternalServerState {
+            token_manager,
+            acp_thread: config.acp_thread,
+        };
 
         // Build the router
         let app = Router::new()
@@ -206,8 +204,8 @@ async fn websocket_handler(
             .into_response();
     }
 
-    // Upgrade to WebSocket
-    ws.on_upgrade(move |socket| handle_websocket(socket))
+    // Upgrade to WebSocket with agent thread
+    ws.on_upgrade(move |socket| handle_websocket(socket, state.acp_thread))
 }
 
 /// Health check endpoint
@@ -221,13 +219,6 @@ async fn health_handler() -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_server_config_default() {
-        let config = ServerConfig::default();
-        assert_eq!(config.port, 0);
-        assert!(config.bind_all_interfaces);
-    }
 
     #[test]
     fn test_build_pairing_url() {
