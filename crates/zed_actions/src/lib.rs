@@ -356,6 +356,10 @@ pub mod agent {
             ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
+            /// Starts the remote agent server for mobile access.
+            StartRemoteServer,
+            /// Stops the remote agent server.
+            StopRemoteServer,
         ]
     );
 }
