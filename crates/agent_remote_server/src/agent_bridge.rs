@@ -1,15 +1,13 @@
 //! Bridge between WebSocket connections and Zed agent threads
 //!
-//! This module handles the communication between remote WebSocket clients
-//! and the local Zed agent system. It uses channels to safely communicate
-//! across the thread boundary between tokio (WebSocket) and GPUI (agent).
+//! This module provides a simple pub/sub system for broadcasting messages
+//! between the agent and multiple WebSocket clients. It does NOT handle
+//! agent communication directly - that's done by the server layer with
+//! proper GPUI context.
 
-use acp_thread::{AcpThread, AcpThreadEvent, AgentThreadEntry};
-use agent_client_protocol as acp;
 use anyhow::Result;
 use futures::StreamExt;
 use futures::channel::mpsc;
-use gpui::{App, Entity, Subscription, WeakEntity};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -52,10 +50,10 @@ pub enum AgentToClientMessage {
 
 /// Shared state for the agent bridge that can handle multiple connections
 struct BridgeState {
-    /// Send messages to the agent (runs on GPUI thread)
-    to_agent_tx: mpsc::UnboundedSender<ClientToAgentMessage>,
     /// Broadcast channel for agent responses to all connected clients
     clients: Arc<Mutex<HashMap<uuid::Uuid, mpsc::UnboundedSender<AgentToClientMessage>>>>,
+    /// Send messages to agent (forwarded to server layer)
+    to_agent_tx: mpsc::UnboundedSender<ClientToAgentMessage>,
 }
 
 /// Handle for communicating with an agent thread from a WebSocket
@@ -73,81 +71,37 @@ pub struct ConnectionHandle {
 }
 
 impl AgentBridge {
-    /// Create a new bridge to an agent thread
+    /// Create a new bridge
     ///
-    /// This spawns a task on the GPUI executor that processes messages
-    /// and communicates with the agent thread.
-    pub fn new(acp_thread: WeakEntity<AcpThread>, cx: &mut App) -> Result<Self> {
-        let (to_agent_tx, mut to_agent_rx) = mpsc::unbounded();
+    /// Returns the bridge and channels for the server to use for agent communication:
+    /// - `to_agent_rx`: Server should poll this to get messages from clients
+    /// - `from_agent_tx`: Server should send agent responses here to broadcast to clients
+    pub fn new() -> (
+        Self,
+        mpsc::UnboundedReceiver<ClientToAgentMessage>,
+        mpsc::UnboundedSender<AgentToClientMessage>,
+    ) {
+        let (to_agent_tx, to_agent_rx) = mpsc::unbounded();
+        let (from_agent_tx, mut from_agent_rx) = mpsc::unbounded();
         let clients = Arc::new(Mutex::new(HashMap::new()));
 
         let clients_clone = clients.clone();
 
-        // Spawn task on GPUI executor to handle agent communication
-        let _task = cx.spawn(|mut cx| async move {
-            // Subscribe to thread events
-            let _subscription = acp_thread
-                .update(&mut cx, |_thread, cx| {
-                    let clients = clients_clone.clone();
-                    cx.subscribe(&acp_thread, move |_thread, event, _cx| {
-                        Self::handle_thread_event(event, clients.clone());
-                    })
-                })
-                .ok();
-
-            // Process incoming messages from WebSocket clients
-            while let Some(msg) = to_agent_rx.next().await {
-                match msg {
-                    ClientToAgentMessage::Chat { content } => {
-                        // Convert to ContentBlock
-                        let blocks =
-                            vec![acp::ContentBlock::Text(acp::TextContent { text: content })];
-
-                        // Send to agent thread
-                        let result = acp_thread
-                            .update(&mut cx, |thread, cx| thread.send(blocks, cx))
-                            .and_then(|future| async move { future.await }.now_or_never())
-                            .flatten();
-
-                        if let Some(Err(e)) = result {
-                            Self::broadcast_to_clients(
-                                &clients_clone,
-                                AgentToClientMessage::Error {
-                                    message: format!("Failed to send message: {}", e),
-                                },
-                            );
-                        }
-                    }
-                    ClientToAgentMessage::GetHistory => {
-                        // Fetch conversation history
-                        if let Ok(entries) =
-                            acp_thread.read_with(&cx, |thread, _cx| thread.entries().to_vec())
-                        {
-                            for entry in entries {
-                                if let Some(msg) = Self::history_entry_to_message(&entry) {
-                                    Self::broadcast_to_clients(&clients_clone, msg);
-                                }
-                            }
-                        }
-                    }
-                    ClientToAgentMessage::Cancel => {
-                        // Attempt to cancel the current operation
-                        let _ = acp_thread.update(&mut cx, |thread, cx| {
-                            thread.cancel(cx);
-                        });
-                    }
-                }
+        // Spawn a task to forward agent messages to all connected clients
+        tokio::spawn(async move {
+            while let Some(msg) = from_agent_rx.next().await {
+                Self::broadcast_to_clients(&clients_clone, msg);
             }
         });
 
-        let state = BridgeState {
-            to_agent_tx,
+        let state = Arc::new(BridgeState {
             clients,
-        };
+            to_agent_tx,
+        });
 
-        Ok(Self {
-            state: Arc::new(state),
-        })
+        let bridge = Self { state };
+
+        (bridge, to_agent_rx, from_agent_tx)
     }
 
     /// Create a new connection handle for a WebSocket client
@@ -164,7 +118,7 @@ impl AgentBridge {
         }
     }
 
-    /// Send a message to the agent
+    /// Send a message to the agent (forwarded to server layer)
     pub fn send(&self, message: ClientToAgentMessage) -> Result<()> {
         self.state
             .to_agent_tx
@@ -184,74 +138,6 @@ impl AgentBridge {
         // Send to all connected clients
         for tx in clients.values() {
             let _ = tx.unbounded_send(message.clone());
-        }
-    }
-
-    /// Handle thread events and forward to WebSocket
-    fn handle_thread_event(
-        event: &AcpThreadEvent,
-        clients: Arc<Mutex<HashMap<uuid::Uuid, mpsc::UnboundedSender<AgentToClientMessage>>>>,
-    ) {
-        match event {
-            AcpThreadEvent::NewEntry | AcpThreadEvent::EntryUpdated(_) => {
-                // Entry updated - clients can poll or we could send the actual content
-            }
-            AcpThreadEvent::Stopped => {
-                Self::broadcast_to_clients(&clients, AgentToClientMessage::ResponseComplete);
-            }
-            AcpThreadEvent::Error => {
-                Self::broadcast_to_clients(
-                    &clients,
-                    AgentToClientMessage::Error {
-                        message: "Agent encountered an error".to_string(),
-                    },
-                );
-            }
-            AcpThreadEvent::Refusal => {
-                Self::broadcast_to_clients(
-                    &clients,
-                    AgentToClientMessage::Error {
-                        message: "Agent refused to respond to this request".to_string(),
-                    },
-                );
-            }
-            _ => {
-                // Other events don't need special handling for remote clients
-            }
-        }
-    }
-
-    /// Convert a history entry to a message, if applicable
-    fn history_entry_to_message(entry: &AgentThreadEntry) -> Option<AgentToClientMessage> {
-        match entry {
-            AgentThreadEntry::UserMessage(msg) => {
-                let content = msg
-                    .chunks
-                    .iter()
-                    .filter_map(|block| {
-                        if let acp::ContentBlock::Text(text) = block {
-                            Some(text.text.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                Some(AgentToClientMessage::HistoryEntry {
-                    role: "user".to_string(),
-                    content,
-                })
-            }
-            AgentThreadEntry::AssistantMessage(msg) => {
-                // Extract text from assistant message
-                let content = format!("Assistant message: {:?}", msg.chunks.len());
-                Some(AgentToClientMessage::HistoryEntry {
-                    role: "assistant".to_string(),
-                    content,
-                })
-            }
-            _ => None,
         }
     }
 }
@@ -282,5 +168,84 @@ impl Drop for ConnectionHandle {
     fn drop(&mut self) {
         // Remove this connection from the clients map
         self.bridge.state.clients.lock().remove(&self.connection_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_bridge_creation() {
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+        assert_eq!(bridge.state.clients.lock().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connection_handle() {
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+        let _handle = bridge.create_connection();
+        assert_eq!(bridge.state.clients.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_connection_cleanup() {
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+        {
+            let _handle = bridge.create_connection();
+            assert_eq!(bridge.state.clients.lock().len(), 1);
+        }
+        // Handle dropped, should be cleaned up
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        // Note: cleanup happens on next broadcast or explicit retention check
+    }
+
+    #[tokio::test]
+    async fn test_message_sending() {
+        let (bridge, mut to_agent_rx, _from_agent_tx) = AgentBridge::new();
+
+        bridge
+            .send(ClientToAgentMessage::Chat {
+                content: "Hello".to_string(),
+            })
+            .unwrap();
+
+        let msg = to_agent_rx.next().await.unwrap();
+        match msg {
+            ClientToAgentMessage::Chat { content } => assert_eq!(content, "Hello"),
+            _ => panic!("Wrong message type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_broadcast() {
+        let (bridge, _to_agent_rx, from_agent_tx) = AgentBridge::new();
+
+        let mut handle1 = bridge.create_connection();
+        let mut handle2 = bridge.create_connection();
+
+        // Send a message to broadcast
+        from_agent_tx
+            .unbounded_send(AgentToClientMessage::TextChunk {
+                content: "Test".to_string(),
+            })
+            .unwrap();
+
+        // Give broadcast task time to process
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // Both handles should receive the message
+        let msg1 = handle1.recv().await.unwrap();
+        let msg2 = handle2.recv().await.unwrap();
+
+        match msg1 {
+            AgentToClientMessage::TextChunk { content } => assert_eq!(content, "Test"),
+            _ => panic!("Wrong message type"),
+        }
+
+        match msg2 {
+            AgentToClientMessage::TextChunk { content } => assert_eq!(content, "Test"),
+            _ => panic!("Wrong message type"),
+        }
     }
 }

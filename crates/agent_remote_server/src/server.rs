@@ -1,7 +1,8 @@
-use crate::agent_bridge::AgentBridge;
+use crate::agent_bridge::{AgentBridge, AgentToClientMessage, ClientToAgentMessage};
 use crate::auth::{AuthToken, TokenManager};
 use crate::websocket::handle_websocket;
 use acp_thread::AcpThread;
+use agent_client_protocol as acp;
 use anyhow::Result;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Query, State as AxumState};
@@ -9,9 +10,10 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use collections::HashMap;
+use futures::StreamExt;
 use futures::future::AbortHandle;
-use gpui::{Context, Task, WeakEntity};
-use log::{error, info};
+use gpui::{App, Context, Task, WeakEntity};
+use log::{error, info, warn};
 use parking_lot::RwLock;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -56,17 +58,13 @@ pub struct RemoteAgentServer {
 }
 
 impl RemoteAgentServer {
-    pub fn new(config: ServerConfig, cx: &mut Context<Self>) -> Self {
-        // Create the agent bridge once during server creation
-        let agent_bridge = AgentBridge::new(config.acp_thread.clone(), cx)
-            .inspect_err(|e| error!("Failed to create agent bridge: {:?}", e))
-            .ok();
-
+    pub fn new(config: ServerConfig, _cx: &mut Context<Self>) -> Self {
+        // Bridge will be created when server starts (needs async context)
         Self {
             config,
             state: None,
             token_manager: Arc::new(RwLock::new(TokenManager::new())),
-            agent_bridge,
+            agent_bridge: None,
             abort_handle: None,
         }
     }
@@ -75,15 +73,9 @@ impl RemoteAgentServer {
     pub fn start(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let config = self.config.clone();
         let token_manager = Arc::clone(&self.token_manager);
-        let agent_bridge = self.agent_bridge.clone();
 
-        if agent_bridge.is_none() {
-            error!("Cannot start server: agent bridge not initialized");
-            return Task::ready(());
-        }
-
-        cx.spawn(async move |_this, _cx| {
-            match Self::run_server(config, token_manager.clone(), agent_bridge.unwrap()).await {
+        cx.spawn(async move |_this, mut cx| {
+            match Self::run_server(config, token_manager.clone(), &mut cx).await {
                 Ok((server_state, _abort_handle)) => {
                     info!("Server started on {}", server_state.local_addr);
                     info!("Pairing URL: {}", server_state.pairing_url);
@@ -114,8 +106,125 @@ impl RemoteAgentServer {
     async fn run_server(
         config: ServerConfig,
         token_manager: Arc<RwLock<TokenManager>>,
-        agent_bridge: AgentBridge,
+        cx: &mut gpui::AsyncApp,
     ) -> Result<(ServerState, AbortHandle)> {
+        // Create the agent bridge
+        let (agent_bridge, mut to_agent_rx, from_agent_tx) = AgentBridge::new();
+
+        // Spawn a task to handle agent communication on GPUI executor
+        let acp_thread = config.acp_thread.clone();
+        cx.spawn(|mut cx| async move {
+            info!("Agent communication handler started");
+
+            while let Some(msg) = to_agent_rx.next().await {
+                match msg {
+                    ClientToAgentMessage::Chat { content } => {
+                        info!("Forwarding chat message to agent: {}", content);
+
+                        let from_agent_tx_clone = from_agent_tx.clone();
+                        let result = acp_thread.update(cx, |thread, cx| {
+                            let blocks = vec![content.into()];
+                            let send_future = thread.send(blocks, cx);
+
+                            let from_agent_tx = from_agent_tx_clone.clone();
+                            cx.spawn(async move |_thread, _cx| match send_future.await {
+                                Ok(_) => {
+                                    info!("Message sent to agent successfully");
+                                }
+                                Err(e) => {
+                                    error!("Failed to send message to agent: {:?}", e);
+                                    let _ =
+                                        from_agent_tx.unbounded_send(AgentToClientMessage::Error {
+                                            message: format!("Failed to send message: {}", e),
+                                        });
+                                }
+                            })
+                            .detach();
+                        });
+
+                        if let Err(e) = result {
+                            warn!("Failed to update agent thread: {:?}", e);
+                            let _ = from_agent_tx.unbounded_send(AgentToClientMessage::Error {
+                                message: format!("Agent thread not available: {}", e),
+                            });
+                        }
+                    }
+                    ClientToAgentMessage::GetHistory => {
+                        info!("Fetching conversation history");
+
+                        let from_agent_tx_clone = from_agent_tx.clone();
+                        let result = acp_thread.read_with(cx, |thread, _cx| {
+                            let entries = thread.entries();
+
+                            for entry in entries {
+                                let msg = match entry {
+                                    acp_thread::AgentThreadEntry::UserMessage(msg) => {
+                                        let content = msg
+                                            .chunks
+                                            .iter()
+                                            .filter_map(|block| {
+                                                if let acp::ContentBlock::Text(text) = block {
+                                                    Some(text.text.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+
+                                        Some(AgentToClientMessage::HistoryEntry {
+                                            role: "user".to_string(),
+                                            content,
+                                        })
+                                    }
+                                    acp_thread::AgentThreadEntry::AssistantMessage(_msg) => {
+                                        Some(AgentToClientMessage::HistoryEntry {
+                                            role: "assistant".to_string(),
+                                            content: "Assistant response".to_string(),
+                                        })
+                                    }
+                                    _ => None,
+                                };
+
+                                if let Some(msg) = msg {
+                                    let _ = from_agent_tx_clone.unbounded_send(msg);
+                                }
+                            }
+                        });
+
+                        if let Err(e) = result {
+                            warn!("Failed to read agent history: {:?}", e);
+                            let _ = from_agent_tx.unbounded_send(AgentToClientMessage::Error {
+                                message: format!("Failed to get history: {}", e),
+                            });
+                        }
+                    }
+                    ClientToAgentMessage::Cancel => {
+                        info!("Cancelling agent operation");
+
+                        let result = acp_thread.update(cx, |thread, cx| {
+                            let cancel_task = thread.cancel(cx);
+
+                            cx.spawn(async move |_thread, _cx| {
+                                cancel_task.await;
+                                info!("Agent operation cancelled");
+                            })
+                            .detach();
+                        });
+
+                        if let Err(e) = result {
+                            warn!("Failed to cancel agent operation: {:?}", e);
+                            let _ = from_agent_tx.unbounded_send(AgentToClientMessage::Error {
+                                message: format!("Failed to cancel: {}", e),
+                            });
+                        }
+                    }
+                }
+            }
+
+            info!("Agent communication handler stopped");
+        })
+        .detach();
         let ip = if config.bind_all_interfaces {
             IpAddr::V4(Ipv4Addr::UNSPECIFIED)
         } else {
