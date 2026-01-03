@@ -360,6 +360,8 @@ pub mod agent {
             StartRemoteServer,
             /// Stops the remote agent server.
             StopRemoteServer,
+            /// Shows remote agent server connection information.
+            ShowRemoteServerInfo,
         ]
     );
 }

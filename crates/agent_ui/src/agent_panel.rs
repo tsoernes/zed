@@ -15,11 +15,12 @@ use settings::{
 };
 
 use zed_actions::agent::{
-    OpenClaudeCodeOnboardingModal, ReauthenticateAgent, StartRemoteServer, StopRemoteServer,
+    OpenClaudeCodeOnboardingModal, ReauthenticateAgent, ShowRemoteServerInfo, StartRemoteServer,
+    StopRemoteServer,
 };
 
 use crate::ManageProfiles;
-use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
+use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, RemoteServerModal};
 use crate::{
     AddContextServer, AgentDiffPane, Follow, InlineAssistant, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
@@ -218,6 +219,13 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.stop_remote_server(cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ShowRemoteServerInfo, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.show_remote_server_info(window, cx);
                         });
                     }
                 });
@@ -1205,12 +1213,30 @@ impl AgentPanel {
             Ok(()) => {
                 log::info!("Remote agent server started successfully");
 
-                // Log the server URL once available
-                // TODO: Show RemoteServerModal with QR code and pairing information
-                // The async context patterns for showing modals from spawned tasks need more work
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
-                    .detach();
+                // Schedule delayed info display
+                let panel_weak = cx.entity().downgrade();
+                cx.spawn(async move |_this: WeakEntity<Self>, cx| {
+                    // Wait for server to initialize
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    // Log server info
+                    let _ = panel_weak.update(cx, |panel, cx| {
+                        if let Some(state) = panel.remote_server.state(cx) {
+                            log::info!("═══════════════════════════════════════");
+                            log::info!("🚀 Remote Agent Server Ready!");
+                            log::info!("═══════════════════════════════════════");
+                            log::info!("Server Address: {}", state.local_addr);
+                            log::info!("Pairing URL: {}", state.pairing_url);
+                            log::info!("Auth Token: {}", state.auth_token);
+                            log::info!("═══════════════════════════════════════");
+                            log::info!("💡 Open this URL on your mobile device to connect");
+                            log::info!("═══════════════════════════════════════");
+                        }
+                    });
+                })
+                .detach();
 
                 cx.notify();
             }
@@ -1236,6 +1262,35 @@ impl AgentPanel {
         self.remote_server.stop(cx);
         log::info!("Remote agent server stopped");
         cx.notify();
+    }
+
+    pub fn show_remote_server_info(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.remote_server.is_running() {
+            let _ = window.prompt(
+                gpui::PromptLevel::Info,
+                "Remote server is not running. Start it first.",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
+        if let Some(state) = self.remote_server.state(cx) {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    RemoteServerModal::toggle(workspace, state, window, cx);
+                });
+            }
+        } else {
+            let _ = window.prompt(
+                gpui::PromptLevel::Warning,
+                "Server is starting... Please wait a moment and try again.",
+                None,
+                &["OK"],
+                cx,
+            );
+        }
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
