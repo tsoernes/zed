@@ -2,6 +2,7 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::AcpThread;
 use agent::{ContextServerRegistry, DbThreadMetadata, HistoryEntry, HistoryStore};
+use agent_remote_server::{AgentRemoteServer, ServerConfig};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -13,7 +14,9 @@ use settings::{
     DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
 };
 
-use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
+use zed_actions::agent::{
+    OpenClaudeCodeOnboardingModal, ReauthenticateAgent, StartRemoteServer, StopRemoteServer,
+};
 
 use crate::ManageProfiles;
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal};
@@ -201,6 +204,20 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.reset_agent_zoom(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &StartRemoteServer, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.start_remote_server(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &StopRemoteServer, _window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.stop_remote_server(cx);
                         });
                     }
                 });
@@ -444,6 +461,7 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
+    remote_server: AgentRemoteServer,
 }
 
 impl AgentPanel {
@@ -695,6 +713,7 @@ impl AgentPanel {
             selected_agent: AgentType::default(),
             loading: false,
             show_trust_workspace_message: false,
+            remote_server: AgentRemoteServer::new(),
         };
 
         // Initial sync of agent servers from extensions
@@ -1130,6 +1149,86 @@ impl AgentPanel {
     pub fn reset_agent_zoom(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         theme::reset_agent_ui_font_size(cx);
         theme::reset_agent_buffer_font_size(cx);
+    }
+
+    pub fn start_remote_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Check if server is already running
+        if self.remote_server.is_running() {
+            let _ = window.prompt(
+                gpui::PromptLevel::Info,
+                "Remote server is already running",
+                None,
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
+        // Get the active thread
+        let acp_thread = match &self.active_view {
+            ActiveView::ExternalAgentThread { thread_view } => {
+                match thread_view.read(cx).thread() {
+                    Some(thread) => thread.downgrade(),
+                    None => {
+                        let _ = window.prompt(
+                            gpui::PromptLevel::Warning,
+                            "No active agent thread. Please start a conversation first.",
+                            None,
+                            &["OK"],
+                            cx,
+                        );
+                        return;
+                    }
+                }
+            }
+            _ => {
+                let _ = window.prompt(
+                    gpui::PromptLevel::Warning,
+                    "Please switch to an agent thread view first.",
+                    None,
+                    &["OK"],
+                    cx,
+                );
+                return;
+            }
+        };
+
+        // Create server configuration
+        let config = ServerConfig {
+            port: 0, // Auto-select available port
+            bind_all_interfaces: true,
+            acp_thread,
+        };
+
+        // Start the server
+        match self.remote_server.start(config, cx) {
+            Ok(()) => {
+                // TODO: Show QR code modal with pairing information
+                log::info!("Remote agent server started successfully");
+                cx.notify();
+            }
+            Err(e) => {
+                log::error!("Failed to start remote server: {:?}", e);
+                let _ = window.prompt(
+                    gpui::PromptLevel::Critical,
+                    &format!("Failed to start remote server: {}", e),
+                    None,
+                    &["OK"],
+                    cx,
+                );
+            }
+        }
+    }
+
+    pub fn stop_remote_server(&mut self, cx: &mut Context<Self>) {
+        if !self.remote_server.is_running() {
+            log::info!("Remote server is not running");
+            return;
+        }
+
+        self.remote_server.stop(cx);
+        log::info!("Remote agent server stopped");
+        cx.notify();
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
