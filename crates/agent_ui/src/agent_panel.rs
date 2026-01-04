@@ -1258,17 +1258,19 @@ impl AgentPanel {
                                 .flatten();
 
                             if let Some(state) = state_ready {
+                                let public_url_with_token = format!(
+                                    "{}?token={}",
+                                    state.public_url.as_ref().unwrap(),
+                                    state.auth_token
+                                );
                                 log::info!("═══════════════════════════════════════");
                                 log::info!("Remote Agent Server Ready (Internet Mode)");
                                 log::info!("═══════════════════════════════════════");
                                 log::info!("Server Address: {}", state.local_addr);
-                                log::info!("Public URL: {}", state.public_url.as_ref().unwrap());
-                                log::info!("Auth Token: {}", state.auth_token);
+                                log::info!("Public URL: {}", public_url_with_token);
                                 log::info!("═══════════════════════════════════════");
-                                log::info!("Share the public URL to connect from anywhere");
-                                log::info!(
-                                    "Run 'agent: Show Remote Server Info' to see connection details"
-                                );
+                                log::info!("Share the URL above to connect from anywhere");
+                                log::info!("Run 'agent: Show Remote Server Info' to see QR code");
                                 log::info!("═══════════════════════════════════════");
                                 break;
                             }
@@ -1290,12 +1292,9 @@ impl AgentPanel {
                             log::info!("═══════════════════════════════════════");
                             log::info!("Server Address: {}", state.local_addr);
                             log::info!("Pairing URL: {}", state.pairing_url);
-                            log::info!("Auth Token: {}", state.auth_token);
                             log::info!("═══════════════════════════════════════");
-                            log::info!("Open this URL on your mobile device to connect");
-                            log::info!(
-                                "Run 'agent: Show Remote Server Info' to see connection details"
-                            );
+                            log::info!("Open the URL above on your mobile device");
+                            log::info!("Run 'agent: Show Remote Server Info' to see QR code");
                             log::info!("═══════════════════════════════════════");
                         }
                     }

@@ -182,7 +182,11 @@ impl Render for RemoteServerModal {
                                         .overflow_x_hidden()
                                         .child(
                                             Label::new(SharedString::from(
-                                                self.server_state.public_url.clone().unwrap_or_default(),
+                                                format!(
+                                                    "{}?token={}",
+                                                    self.server_state.public_url.clone().unwrap_or_default(),
+                                                    self.server_state.auth_token
+                                                ),
                                             ))
                                             .size(LabelSize::Small)
                                             .color(Color::Default),
@@ -194,7 +198,8 @@ impl Render for RemoteServerModal {
                                         .tooltip(Tooltip::text("Copy to clipboard"))
                                         .on_click(cx.listener(|this, _event, _window, cx| {
                                             if let Some(url) = &this.server_state.public_url {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                                                let url_with_token = format!("{}?token={}", url, this.server_state.auth_token);
+                                                cx.write_to_clipboard(ClipboardItem::new_string(url_with_token));
                                                 cx.notify();
                                             }
                                         })),
