@@ -1231,9 +1231,8 @@ impl AgentPanel {
             Ok(()) => {
                 log::info!("Remote agent server started successfully");
 
-                // Schedule delayed info display and auto-show modal
+                // Schedule delayed info display
                 let panel_weak = cx.entity().downgrade();
-                let workspace_weak = self.workspace.clone();
                 let is_internet = internet_mode;
 
                 cx.spawn(async move |_this: WeakEntity<Self>, cx| {
