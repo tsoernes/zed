@@ -1267,27 +1267,10 @@ impl AgentPanel {
                                 log::info!("Auth Token: {}", state.auth_token);
                                 log::info!("═══════════════════════════════════════");
                                 log::info!("Share the public URL to connect from anywhere");
+                                log::info!(
+                                    "Run 'agent: Show Remote Server Info' to see connection details"
+                                );
                                 log::info!("═══════════════════════════════════════");
-
-                                // Auto-show the modal
-                                if let Some(workspace) = workspace_weak.upgrade() {
-                                    let state_clone = state.clone();
-                                    let _ = workspace.update(cx, |workspace, cx| {
-                                        cx.spawn(|workspace, mut cx| async move {
-                                            let _ = workspace.update(&mut cx, |workspace, cx| {
-                                                cx.defer(|window, cx| {
-                                                    RemoteServerModal::toggle(
-                                                        workspace,
-                                                        state_clone,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            });
-                                        })
-                                        .detach();
-                                    });
-                                }
                                 break;
                             }
                         }
@@ -1311,27 +1294,10 @@ impl AgentPanel {
                             log::info!("Auth Token: {}", state.auth_token);
                             log::info!("═══════════════════════════════════════");
                             log::info!("Open this URL on your mobile device to connect");
+                            log::info!(
+                                "Run 'agent: Show Remote Server Info' to see connection details"
+                            );
                             log::info!("═══════════════════════════════════════");
-
-                            // Auto-show the modal
-                            if let Some(workspace) = workspace_weak.upgrade() {
-                                let state_clone = state.clone();
-                                let _ = workspace.update(cx, |workspace, cx| {
-                                    cx.spawn(|workspace, mut cx| async move {
-                                        let _ = workspace.update(&mut cx, |workspace, cx| {
-                                            cx.defer(|window, cx| {
-                                                RemoteServerModal::toggle(
-                                                    workspace,
-                                                    state_clone,
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        });
-                                    })
-                                    .detach();
-                                });
-                            }
                         }
                     }
                 })
