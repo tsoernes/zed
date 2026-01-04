@@ -480,6 +480,10 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
+    pub fn remote_server_state(&self, cx: &App) -> Option<Arc<agent_remote_server::ServerState>> {
+        self.remote_server.state(cx)
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
@@ -1343,13 +1347,14 @@ impl AgentPanel {
             // Avoid updating the workspace while it might already be being updated.
             // Defer the modal toggle to run after the current update finishes.
             let workspace_weak = self.workspace.clone();
+            let agent_panel_weak = cx.entity().downgrade();
             let state = state.clone();
             window.defer(cx, move |window, cx| {
                 if let Some(workspace) = workspace_weak.upgrade() {
                     // This update runs on the main thread and will not conflict with the
                     // caller's current update, because it's deferred to a later dispatch.
                     let _ = workspace.update(cx, |workspace, cx| {
-                        RemoteServerModal::toggle(workspace, state, window, cx);
+                        RemoteServerModal::toggle(workspace, agent_panel_weak, state, window, cx);
                     });
                 }
             });

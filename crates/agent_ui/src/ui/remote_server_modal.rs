@@ -1,6 +1,6 @@
 use gpui::{
     ClickEvent, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    RenderImage, SharedString, Window, img,
+    RenderImage, SharedString, Task, WeakEntity, Window, img,
 };
 use std::sync::Arc;
 use ui::{Tooltip, prelude::*};
@@ -13,14 +13,17 @@ use agent_remote_server::ServerState;
 pub struct RemoteServerModal {
     focus_handle: FocusHandle,
     workspace: Entity<Workspace>,
+    agent_panel: WeakEntity<crate::AgentPanel>,
     server_state: Arc<ServerState>,
     qr_image: Option<Arc<RenderImage>>,
+    _poll_task: Option<Task<()>>,
 }
 
 impl RemoteServerModal {
     #[allow(dead_code)]
     pub fn new(
         workspace: Entity<Workspace>,
+        agent_panel: WeakEntity<crate::AgentPanel>,
         server_state: Arc<ServerState>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -56,24 +59,92 @@ impl RemoteServerModal {
                     })
             });
 
+        let poll_task = {
+            let agent_panel = agent_panel.clone();
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(500))
+                        .await;
+
+                    let updated_state = agent_panel
+                        .update(cx, |panel, cx| panel.remote_server_state(cx))
+                        .ok()
+                        .flatten();
+
+                    let Some(updated_state) = updated_state else {
+                        continue;
+                    };
+
+                    let _ = this.update(cx, |this, cx| {
+                        let should_update = this.server_state.public_url
+                            != updated_state.public_url
+                            || this.server_state.pairing_url != updated_state.pairing_url
+                            || this.server_state.auth_token != updated_state.auth_token;
+
+                        if !should_update {
+                            return;
+                        }
+
+                        this.server_state = updated_state.clone();
+
+                        let qr_url = if this.server_state.mode
+                            == agent_remote_server::ServerMode::Internet
+                        {
+                            if let Some(public_url) = &this.server_state.public_url {
+                                format!("{}?token={}", public_url, this.server_state.auth_token)
+                            } else {
+                                this.server_state.pairing_url.clone()
+                            }
+                        } else {
+                            this.server_state.pairing_url.clone()
+                        };
+
+                        this.qr_image = agent_remote_server::generate_qr_code(&qr_url)
+                            .ok()
+                            .and_then(|png_bytes| {
+                                image::load_from_memory_with_format(
+                                    &png_bytes,
+                                    image::ImageFormat::Png,
+                                )
+                                .ok()
+                                .map(|img| {
+                                    let mut rgba = img.into_rgba8();
+                                    for pixel in rgba.chunks_exact_mut(4) {
+                                        pixel.swap(0, 2);
+                                    }
+                                    let frame = image::Frame::new(rgba);
+                                    Arc::new(RenderImage::new(smallvec::smallvec![frame]))
+                                })
+                            });
+
+                        cx.notify();
+                    });
+                }
+            })
+        };
+
         Self {
             focus_handle: cx.focus_handle(),
             workspace,
+            agent_panel,
             server_state,
             qr_image,
+            _poll_task: Some(poll_task),
         }
     }
 
     #[allow(dead_code)]
     pub fn toggle(
         workspace: &mut Workspace,
+        agent_panel: WeakEntity<crate::AgentPanel>,
         server_state: Arc<ServerState>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         let workspace_entity = cx.entity();
         workspace.toggle_modal(window, cx, |_window, cx| {
-            Self::new(workspace_entity, server_state, cx)
+            Self::new(workspace_entity, agent_panel, server_state, cx)
         });
     }
 
