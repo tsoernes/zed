@@ -1,10 +1,14 @@
 # Agent Remote Server
 
-WebSocket-based server enabling remote access to Zed's LLM agent from mobile devices over local network.
+WebSocket-based server enabling remote access to Zed's LLM agent from mobile devices over local network or internet (via cloudflared).
 
 ## Overview
 
 This crate provides infrastructure for accessing Zed's agent from mobile browsers via WebSocket. Users can scan a QR code to connect their phone/tablet and interact with the agent while away from their computer.
+
+The server supports two modes of operation:
+1. **Local Network Mode** - Server binds to LAN IP, accessible only on the same network
+2. **Internet Mode** - Server binds to localhost and uses a cloudflared tunnel for internet access
 
 ## Status
 
@@ -17,18 +21,26 @@ This crate provides infrastructure for accessing Zed's agent from mobile browser
 - Health check endpoint
 - Multi-client support
 
-**Phase 2 - Agent Integration**: ✅ **COMPLETE** (95%)
+**Phase 2 - Agent Integration**: ✅ **COMPLETE**
 - ✅ AgentBridge pub/sub system
 - ✅ AgentCoordinator GPUI entity
 - ✅ Message routing (client → agent → client)
 - ✅ Chat, GetHistory, Cancel message handlers
 - ✅ All tests passing (18/18)
 - ✅ Clippy passing
+- ✅ Zed UI integration
+- ✅ Auto-show modal when server ready
 - ⏳ Event subscription for real-time streaming
-- ⏳ Zed UI integration
 - ⏳ End-to-end testing
 
-**Phase 3 - Advanced Features**: 📋 **PLANNED**
+**Phase 3 - Internet Access**: ✅ **COMPLETE**
+- ✅ Cloudflared tunnel integration
+- ✅ Auto-installation support (Linux/macOS/Windows)
+- ✅ Two server modes (Local/Internet)
+- ✅ Public URL generation and polling
+- ✅ Mode-specific UI indicators
+
+**Phase 4 - Advanced Features**: 📋 **PLANNED**
 - Multi-instance support (select between open Zed instances)
 - Enhanced web UI (markdown, syntax highlighting)
 - File upload from mobile
@@ -75,11 +87,21 @@ GPUI entity that owns message channels and coordinates agent communication.
 - Emits coordinator events
 
 ### Server (`server.rs`)
-Axum-based HTTP and WebSocket server.
+Axum-based HTTP and WebSocket server with dual-mode support.
 - Auto-selects available port or uses configured port
-- Binds to `0.0.0.0` for LAN access
+- **Local Mode**: Binds to `0.0.0.0` for LAN access
+- **Internet Mode**: Binds to `127.0.0.1` and uses cloudflared tunnel
 - Creates coordinator and bridge on startup
 - Serves web UI and handles upgrades
+- Polls for public URL in internet mode
+
+### Cloudflared (`cloudflared.rs`)
+Manages cloudflared tunnel lifecycle for internet access.
+- Auto-detects cloudflared installation
+- Auto-installs cloudflared if not present (Linux/macOS/Windows)
+- Starts and manages tunnel process
+- Extracts public URL from tunnel output
+- Provides non-blocking URL polling
 
 ### WebSocket Handler (`websocket.rs`)
 Manages individual WebSocket connections.
@@ -113,7 +135,7 @@ let acp_thread: WeakEntity<AcpThread> = /* ... */;
 
 let config = ServerConfig {
     port: 0, // Auto-select available port
-    bind_all_interfaces: true, // Allow LAN access
+    mode: ServerMode::Local, // Local network access
     acp_thread,
 };
 
@@ -135,28 +157,67 @@ if let Some(state) = server.state(cx) {
 server.stop(cx);
 ```
 
+### Internet Mode Example
+
+```rust
+use agent_remote_server::{AgentRemoteServer, ServerConfig, ServerMode};
+
+// Start server with cloudflared tunnel
+let config = ServerConfig {
+    port: 0, // Auto-select available port
+    mode: ServerMode::Internet, // Internet access via cloudflared
+    acp_thread,
+};
+
+let mut server = AgentRemoteServer::new();
+server.start(config, cx)?;
+
+// Wait for tunnel to establish and get public URL
+// The URL will be available after ~5-10 seconds
+if let Some(state) = server.state(cx) {
+    if let Some(public_url) = &state.public_url {
+        println!("Public URL: {}", public_url);
+        println!("Share this URL to connect from anywhere!");
+    }
+}
+```
+
 ### Integration with Zed UI
 
 ```rust
 // In agent panel or workspace
 use zed_actions::agent::{StartRemoteServer, StopRemoteServer};
 
-// Action handler
-fn start_remote_server(&mut self, _: &StartRemoteServer, cx: &mut Context<Self>) {
+// Action handlers for local and internet modes
+fn start_remote_server(&mut self, internet_mode: bool, cx: &mut Context<Self>) {
+    let mode = if internet_mode {
+        ServerMode::Internet
+    } else {
+        ServerMode::Local
+    };
+    
     let config = ServerConfig {
-        port: 8080,
-        bind_all_interfaces: true,
+        port: 0,
+        mode,
         acp_thread: self.thread.downgrade(),
     };
     
     self.remote_server.start(config, cx).ok();
     
-    // Show QR code modal with pairing URL
-    if let Some(state) = self.remote_server.state(cx) {
-        self.show_qr_modal(&state.pairing_url, cx);
-    }
+    // Modal will auto-show when server is ready
+    // For internet mode, waits for public URL
+    // For local mode, shows after 500ms
 }
 ```
+
+### Available Actions
+
+Two separate commands for starting the server:
+
+- `agent::StartRemoteServer` - Starts server in local network mode
+- `agent::StartRemoteServerInternet` - Starts server in internet mode via cloudflared
+- `agent::StopRemoteServer` - Stops the server
+- `agent::ShowRemoteServerInfo` - Shows connection information modal
 
 ## Message Protocol
 
@@ -186,9 +247,18 @@ fn start_remote_server(&mut self, _: &StartRemoteServer, cx: &mut Context<Self>)
 
 - **Token Authentication**: All connections require valid token
 - **Constant-Time Validation**: Prevents timing attacks
-- **Local Network Only**: No internet exposure by default
+- **Local Network Only** (Local Mode): No internet exposure
+- **Internet Mode**: Temporary cloudflared tunnels with random URLs
 - **Session Isolation**: Each connection gets unique ID
-- **No Port Forwarding**: Works entirely on LAN
+- **Automatic Cleanup**: Tunnels close when server stops
+
+### Internet Mode Considerations
+
+- Cloudflared tunnels are temporary and use random subdomains
+- Each session gets a unique `trycloudflare.com` URL
+- Authentication token still required for all connections
+- Tunnel automatically closes when server stops
+- No persistent exposure after server shutdown
 
 ## Testing
 
@@ -216,8 +286,9 @@ agent_remote_server/
     ├── agent_bridge.rs         # Pub/sub broadcaster (185 lines)
     ├── agent_coordinator.rs    # GPUI entity (228 lines)
     ├── auth.rs                 # Token auth (129 lines)
+    ├── cloudflared.rs          # Cloudflared tunnel manager (489 lines)
     ├── qr.rs                   # QR generation (43 lines)
-    ├── server.rs               # HTTP/WS server (230 lines)
+    ├── server.rs               # HTTP/WS server (dual-mode, 280 lines)
     ├── websocket.rs            # WS handler (290 lines)
     └── web_ui/
         └── index.html          # Mobile UI
@@ -229,18 +300,26 @@ agent_remote_server/
 - `tokio-tungstenite` - WebSocket support
 - `tower` - Middleware
 - `qrcode` - QR code generation
+- `regex` - URL parsing from cloudflared output
 - `acp_thread` - Agent thread integration
 - `agent-client-protocol` - Message types
 - `gpui` - UI framework and async patterns
+- `gpui_tokio` - Bridge between GPUI and Tokio runtimes
+
+### External Dependencies
+
+- `cloudflared` binary (optional, auto-installed for internet mode)
 
 ## How It Works
 
 1. **Server Start**
-   - Zed creates `AgentRemoteServer` with `ServerConfig`
+   - Zed creates `AgentRemoteServer` with `ServerConfig` (mode: Local or Internet)
    - Server creates `AgentBridge` and `AgentCoordinator`
    - Coordinator spawns GPUI task to process messages
-   - Server binds to local port (e.g., `192.168.1.100:8080`)
+   - **Local Mode**: Binds to `0.0.0.0` (e.g., `192.168.1.100:8080`)
+   - **Internet Mode**: Binds to `127.0.0.1`, starts cloudflared tunnel
    - Generates authentication token and QR code
+   - UI modal auto-shows when ready (waits for public URL in internet mode)
 
 2. **Pairing**
    - User scans QR code with phone camera
@@ -264,6 +343,35 @@ agent_remote_server/
    - Bridge maintains map of active connections
    - Agent responses broadcast to all clients
    - Disconnected clients automatically removed
+
+5. **Internet Mode Tunnel**
+   - Server starts cloudflared: `cloudflared tunnel --url http://localhost:<port>`
+   - Cloudflared outputs public URL: `https://random-subdomain.trycloudflare.com`
+   - Server parses output and extracts URL
+   - UI polls server state for public URL
+   - Modal displays public URL when available (~5-10 seconds)
+   - Users share public URL to access from anywhere
+   - Tunnel closes when server stops
+
+## Cloudflared Installation
+
+When internet mode is started without cloudflared installed, the system attempts automatic installation:
+
+### Linux
+- **Fedora/RHEL**: `sudo dnf install cloudflared`
+- **Debian/Ubuntu**: Downloads and installs `.deb` package
+- **Fallback**: Direct binary download to `/usr/local/bin/cloudflared`
+
+### macOS
+- **Homebrew**: `brew install cloudflared`
+- **Fallback**: Direct binary download and installation
+
+### Windows
+- **Chocolatey**: `choco install cloudflared -y`
+- **Scoop**: `scoop install cloudflared`
+- **Fallback**: Binary download to Program Files
+
+Manual installation is also supported - just ensure `cloudflared` is in PATH.
 
 ## Future Enhancements
 
@@ -301,10 +409,23 @@ When multiple Zed instances are running, allow users to:
 **Problem**: Can't connect from mobile device
 
 **Solutions**:
-1. Verify devices are on same network
-2. Check firewall allows port (default: auto-selected)
-3. Ensure `bind_all_interfaces: true` in config
-4. Try different port if auto-select fails
+1. **Local Mode**: Verify devices are on same network
+2. **Internet Mode**: Check internet connectivity
+3. Check firewall allows port (default: auto-selected)
+4. Verify server mode matches intended use case
+5. Try different port if auto-select fails
+
+### Cloudflared Issues
+
+**Problem**: Tunnel fails to start or public URL not appearing
+
+**Solutions**:
+1. Check if cloudflared is installed: `which cloudflared`
+2. Manually install: `brew install cloudflared` (macOS) or equivalent
+3. Wait 10-15 seconds for tunnel establishment
+4. Check cloudflared logs in Zed console
+5. Verify localhost is accessible: `curl http://localhost:<port>/api/health`
+6. Check if port is blocked by firewall
 
 ### Token Issues
 

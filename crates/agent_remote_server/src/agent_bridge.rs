@@ -12,6 +12,7 @@ use futures::channel::mpsc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 /// Message sent from WebSocket client to agent
@@ -23,30 +24,43 @@ pub enum ClientToAgentMessage {
     GetHistory,
     /// Cancel the current agent operation
     Cancel,
+    /// Request initial state (model info, token usage)
+    GetInitialState,
 }
 
 /// Message sent from agent back to WebSocket client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentToClientMessage {
     /// Text chunk from agent response (streaming)
-    TextChunk { content: String },
+    TextChunk { entry_index: usize, content: String },
     /// Agent started using a tool
     ToolStart {
+        entry_index: usize,
+        tool_call_id: String,
         tool_name: String,
         tool_input: serde_json::Value,
     },
     /// Tool execution completed
     ToolResult {
+        entry_index: usize,
+        tool_call_id: String,
         tool_name: String,
         result: String,
         error: Option<String>,
     },
     /// Agent finished its response
-    ResponseComplete,
+    ResponseComplete { entry_index: usize },
     /// An error occurred
     Error { message: String },
     /// History entry
     HistoryEntry { role: String, content: String },
+    /// Token usage update
+    TokenUsageUpdate { used_tokens: u64, max_tokens: u64 },
+    /// Model information update
+    ModelInfoUpdate {
+        model_id: String,
+        model_name: String,
+    },
 }
 
 /// Shared state for the agent bridge that can handle multiple connections
@@ -92,12 +106,18 @@ impl AgentBridge {
 
         // Spawn a task to forward agent messages to all connected clients
         // Use gpui_tokio to access the Tokio runtime managed by GPUI
-        let _broadcast_task = gpui_tokio::Tokio::spawn(cx, async move {
+        // CRITICAL: We must prevent this task from being dropped (which would cancel it)
+        // Since we can't call .detach() on the generic Result type, we use mem::forget
+        let broadcast_task = gpui_tokio::Tokio::spawn(cx, async move {
             while let Some(msg) = from_agent_rx.next().await {
                 Self::broadcast_to_clients(&clients_clone, msg);
             }
             Ok::<(), anyhow::Error>(())
         });
+
+        // Prevent the task from being dropped and cancelled
+        // This is intentional - we want the task to run for the lifetime of the program
+        mem::forget(broadcast_task);
 
         let state = Arc::new(BridgeState {
             clients,

@@ -26,6 +26,7 @@ parking_lot.workspace = true
 project.workspace = true
 qrcode = { workspace = true, features = ["svg"] }
 rand.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
@@ -34,6 +35,7 @@ tower.workspace = true
 tower-http = { workspace = true, features = ["cors", "fs"] }
 util.workspace = true
 uuid.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

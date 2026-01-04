@@ -28,26 +28,37 @@ pub enum ServerMessage {
     /// Connection established
     Connected { session_id: String },
     /// Agent response text chunk
-    TextChunk { content: String },
+    TextChunk { entry_index: usize, content: String },
     /// Agent started using a tool
     ToolStart {
+        entry_index: usize,
+        tool_call_id: String,
         tool_name: String,
         tool_input: serde_json::Value,
     },
     /// Tool execution result
     ToolResult {
+        entry_index: usize,
+        tool_call_id: String,
         tool_name: String,
         result: String,
         error: Option<String>,
     },
     /// Agent finished responding
-    ResponseComplete,
+    ResponseComplete { entry_index: usize },
     /// Error occurred
     Error { message: String },
     /// Pong response
     Pong,
     /// History entry
     HistoryEntry { role: String, content: String },
+    /// Token usage update
+    TokenUsageUpdate { used_tokens: u64, max_tokens: u64 },
+    /// Model information update
+    ModelInfoUpdate {
+        model_id: String,
+        model_name: String,
+    },
 }
 
 /// Handle a WebSocket connection with agent integration
@@ -77,33 +88,68 @@ pub async fn handle_websocket(socket: WebSocket, agent_bridge: AgentBridge) {
         }
     }
 
+    // Request initial state (model info, token usage) for this new client
+    if let Err(e) = agent_bridge.send(ClientToAgentMessage::GetInitialState) {
+        error!("Failed to request initial state: {:?}", e);
+    }
+
     // Spawn a task to forward agent messages to the WebSocket
     let sender_clone = sender.clone();
     let response_task = tokio::spawn(async move {
         while let Some(agent_msg) = connection.recv().await {
             let server_msg = match agent_msg {
-                AgentToClientMessage::TextChunk { content } => ServerMessage::TextChunk { content },
+                AgentToClientMessage::TextChunk {
+                    entry_index,
+                    content,
+                } => ServerMessage::TextChunk {
+                    entry_index,
+                    content,
+                },
                 AgentToClientMessage::ToolStart {
+                    entry_index,
+                    tool_call_id,
                     tool_name,
                     tool_input,
                 } => ServerMessage::ToolStart {
+                    entry_index,
+                    tool_call_id,
                     tool_name,
                     tool_input,
                 },
                 AgentToClientMessage::ToolResult {
+                    entry_index,
+                    tool_call_id,
                     tool_name,
                     result,
                     error,
                 } => ServerMessage::ToolResult {
+                    entry_index,
+                    tool_call_id,
                     tool_name,
                     result,
                     error,
                 },
-                AgentToClientMessage::ResponseComplete => ServerMessage::ResponseComplete,
+                AgentToClientMessage::ResponseComplete { entry_index } => {
+                    ServerMessage::ResponseComplete { entry_index }
+                }
                 AgentToClientMessage::Error { message } => ServerMessage::Error { message },
                 AgentToClientMessage::HistoryEntry { role, content } => {
                     ServerMessage::HistoryEntry { role, content }
                 }
+                AgentToClientMessage::TokenUsageUpdate {
+                    used_tokens,
+                    max_tokens,
+                } => ServerMessage::TokenUsageUpdate {
+                    used_tokens,
+                    max_tokens,
+                },
+                AgentToClientMessage::ModelInfoUpdate {
+                    model_id,
+                    model_name,
+                } => ServerMessage::ModelInfoUpdate {
+                    model_id,
+                    model_name,
+                },
             };
 
             let mut sender_guard = sender_clone.lock().await;

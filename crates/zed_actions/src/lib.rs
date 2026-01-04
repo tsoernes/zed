@@ -356,8 +356,10 @@ pub mod agent {
             ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
-            /// Starts the remote agent server for mobile access.
+            /// Starts the remote agent server for local network access.
             StartRemoteServer,
+            /// Starts the remote agent server for internet access via cloudflared.
+            StartRemoteServerInternet,
             /// Stops the remote agent server.
             StopRemoteServer,
             /// Shows remote agent server connection information.

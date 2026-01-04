@@ -16,7 +16,7 @@ use settings::{
 
 use zed_actions::agent::{
     OpenClaudeCodeOnboardingModal, ReauthenticateAgent, ShowRemoteServerInfo, StartRemoteServer,
-    StopRemoteServer,
+    StartRemoteServerInternet, StopRemoteServer,
 };
 
 use crate::ManageProfiles;
@@ -211,7 +211,14 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &StartRemoteServer, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.start_remote_server(window, cx);
+                            panel.start_remote_server(false, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &StartRemoteServerInternet, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.start_remote_server(true, window, cx);
                         });
                     }
                 })
@@ -1159,7 +1166,12 @@ impl AgentPanel {
         theme::reset_agent_buffer_font_size(cx);
     }
 
-    pub fn start_remote_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn start_remote_server(
+        &mut self,
+        internet_mode: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Check if server is already running
         if self.remote_server.is_running() {
             let _ = window.prompt(
@@ -1202,9 +1214,15 @@ impl AgentPanel {
         };
 
         // Create server configuration
+        let mode = if internet_mode {
+            agent_remote_server::ServerMode::Internet
+        } else {
+            agent_remote_server::ServerMode::Local
+        };
+
         let config = ServerConfig {
             port: 0, // Auto-select available port
-            bind_all_interfaces: true,
+            mode,
             acp_thread,
         };
 
@@ -1213,28 +1231,109 @@ impl AgentPanel {
             Ok(()) => {
                 log::info!("Remote agent server started successfully");
 
-                // Schedule delayed info display
+                // Schedule delayed info display and auto-show modal
                 let panel_weak = cx.entity().downgrade();
-                cx.spawn(async move |_this: WeakEntity<Self>, cx| {
-                    // Wait for server to initialize
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(500))
-                        .await;
+                let workspace_weak = self.workspace.clone();
+                let is_internet = internet_mode;
 
-                    // Log server info
-                    let _ = panel_weak.update(cx, |panel, cx| {
-                        if let Some(state) = panel.remote_server.state(cx) {
+                cx.spawn(async move |_this: WeakEntity<Self>, cx| {
+                    if is_internet {
+                        // For internet mode, poll until public URL is available
+                        for _ in 0..60 {
+                            // Poll for up to 30 seconds (60 * 500ms)
+                            cx.background_executor()
+                                .timer(std::time::Duration::from_millis(500))
+                                .await;
+
+                            let state_ready = panel_weak
+                                .update(cx, |panel, cx| {
+                                    panel.remote_server.state(cx).and_then(|state| {
+                                        if state.public_url.is_some() {
+                                            Some(state)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .ok()
+                                .flatten();
+
+                            if let Some(state) = state_ready {
+                                log::info!("═══════════════════════════════════════");
+                                log::info!("Remote Agent Server Ready (Internet Mode)");
+                                log::info!("═══════════════════════════════════════");
+                                log::info!("Server Address: {}", state.local_addr);
+                                log::info!("Public URL: {}", state.public_url.as_ref().unwrap());
+                                log::info!("Auth Token: {}", state.auth_token);
+                                log::info!("═══════════════════════════════════════");
+                                log::info!("Share the public URL to connect from anywhere");
+                                log::info!("═══════════════════════════════════════");
+
+                                // Auto-show the modal
+                                if let Some(workspace) = workspace_weak.upgrade() {
+                                    let state_clone = state.clone();
+                                    let _ = workspace.update(cx, |workspace, cx| {
+                                        cx.spawn(|workspace, mut cx| async move {
+                                            let _ = workspace.update(&mut cx, |workspace, cx| {
+                                                cx.defer(|window, cx| {
+                                                    RemoteServerModal::toggle(
+                                                        workspace,
+                                                        state_clone,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            });
+                                        })
+                                        .detach();
+                                    });
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        // For local mode, wait 500ms and show
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(500))
+                            .await;
+
+                        let state_opt = panel_weak
+                            .update(cx, |panel, cx| panel.remote_server.state(cx))
+                            .ok()
+                            .flatten();
+
+                        if let Some(state) = state_opt {
                             log::info!("═══════════════════════════════════════");
-                            log::info!("🚀 Remote Agent Server Ready!");
+                            log::info!("Remote Agent Server Ready (Local Network)");
                             log::info!("═══════════════════════════════════════");
                             log::info!("Server Address: {}", state.local_addr);
                             log::info!("Pairing URL: {}", state.pairing_url);
                             log::info!("Auth Token: {}", state.auth_token);
                             log::info!("═══════════════════════════════════════");
-                            log::info!("💡 Open this URL on your mobile device to connect");
+                            log::info!("Open this URL on your mobile device to connect");
                             log::info!("═══════════════════════════════════════");
+
+                            // Auto-show the modal
+                            if let Some(workspace) = workspace_weak.upgrade() {
+                                let state_clone = state.clone();
+                                let _ = workspace.update(cx, |workspace, cx| {
+                                    cx.spawn(|workspace, mut cx| async move {
+                                        let _ = workspace.update(&mut cx, |workspace, cx| {
+                                            cx.defer(|window, cx| {
+                                                RemoteServerModal::toggle(
+                                                    workspace,
+                                                    state_clone,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        });
+                                    })
+                                    .detach();
+                                });
+                            }
                         }
-                    });
+                    }
                 })
                 .detach();
 
@@ -1277,11 +1376,19 @@ impl AgentPanel {
         }
 
         if let Some(state) = self.remote_server.state(cx) {
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    RemoteServerModal::toggle(workspace, state, window, cx);
-                });
-            }
+            // Avoid updating the workspace while it might already be being updated.
+            // Defer the modal toggle to run after the current update finishes.
+            let workspace_weak = self.workspace.clone();
+            let state = state.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(workspace) = workspace_weak.upgrade() {
+                    // This update runs on the main thread and will not conflict with the
+                    // caller's current update, because it's deferred to a later dispatch.
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        RemoteServerModal::toggle(workspace, state, window, cx);
+                    });
+                }
+            });
         } else {
             let _ = window.prompt(
                 gpui::PromptLevel::Warning,
