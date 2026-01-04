@@ -1,17 +1,18 @@
 use gpui::{
     ClickEvent, ClipboardItem, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    RenderImage, SharedString, img,
+    RenderImage, SharedString, Window, img,
 };
 use std::sync::Arc;
 use ui::{Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
+use zed_actions::agent::{StartRemoteServer, StartRemoteServerInternet, StopRemoteServer};
 
 use agent_remote_server::ServerState;
 
 #[allow(dead_code)]
 pub struct RemoteServerModal {
     focus_handle: FocusHandle,
-    _workspace: Entity<Workspace>,
+    workspace: Entity<Workspace>,
     server_state: Arc<ServerState>,
     qr_image: Option<Arc<RenderImage>>,
 }
@@ -23,8 +24,22 @@ impl RemoteServerModal {
         server_state: Arc<ServerState>,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Generate QR code for the appropriate URL based on mode
+        let qr_url = if server_state.mode == agent_remote_server::ServerMode::Internet {
+            // For internet mode, use public URL with token if available
+            if let Some(public_url) = &server_state.public_url {
+                format!("{}?token={}", public_url, server_state.auth_token)
+            } else {
+                // Fallback to local URL if public URL not ready yet
+                server_state.pairing_url.clone()
+            }
+        } else {
+            // For local mode, use pairing URL
+            server_state.pairing_url.clone()
+        };
+
         // Load QR code PNG directly into memory as an image
-        let qr_image = agent_remote_server::generate_qr_code(&server_state.pairing_url)
+        let qr_image = agent_remote_server::generate_qr_code(&qr_url)
             .ok()
             .and_then(|png_bytes| {
                 // Decode PNG bytes into an image
@@ -43,7 +58,7 @@ impl RemoteServerModal {
 
         Self {
             focus_handle: cx.focus_handle(),
-            _workspace: workspace,
+            workspace,
             server_state,
             qr_image,
         }
@@ -71,6 +86,35 @@ impl RemoteServerModal {
 
     #[allow(dead_code)]
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn start_local_server(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let _ = workspace.update(cx, |_workspace, cx| {
+            cx.dispatch_action(&StartRemoteServer);
+        });
+        cx.emit(DismissEvent);
+    }
+
+    fn start_internet_server(
+        &mut self,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let _ = workspace.update(cx, |_workspace, cx| {
+            cx.dispatch_action(&StartRemoteServerInternet);
+        });
+        cx.emit(DismissEvent);
+    }
+
+    fn stop_server(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let _ = workspace.update(cx, |_workspace, cx| {
+            cx.dispatch_action(&StopRemoteServer);
+        });
         cx.emit(DismissEvent);
     }
 }
@@ -318,11 +362,33 @@ impl Render for RemoteServerModal {
             .child(
                 h_flex()
                     .gap_2()
-                    .justify_end()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("start-local", "Start Local")
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(Tooltip::text("Start server for local network access"))
+                                    .on_click(cx.listener(Self::start_local_server)),
+                            )
+                            .child(
+                                Button::new("start-internet", "Start Internet")
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(Tooltip::text("Start server for internet access via cloudflared"))
+                                    .on_click(cx.listener(Self::start_internet_server)),
+                            )
+                            .child(
+                                Button::new("stop-server", "Stop")
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(Tooltip::text("Stop the remote server"))
+                                    .on_click(cx.listener(Self::stop_server)),
+                            ),
+                    )
                     .child(
                         Button::new("close-modal", "Close")
                             .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|_this, _event, __window, cx| {
+                            .on_click(cx.listener(|_this, _event, _window, cx| {
                                 cx.emit(DismissEvent);
                             })),
                     ),
