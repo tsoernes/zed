@@ -480,11 +480,14 @@ zenity --password --title="Sudo Password Required"
 
                 // Look for the URL in the output
                 if line.contains("trycloudflare.com") {
+                    info!("Found potential URL in stdout: {}", line);
                     if let Some(url) = extract_url_from_line(&line) {
                         info!("=================================================");
                         info!("Cloudflared tunnel established: {}", url);
                         info!("=================================================");
                         *public_url_lock.write().await = Some(url.clone());
+                    } else {
+                        warn!("Line contained trycloudflare.com but URL extraction failed");
                     }
                 }
             }
@@ -498,11 +501,14 @@ zenity --password --title="Sudo Password Required"
 
                 // Look for the URL in the output
                 if line.contains("trycloudflare.com") {
+                    info!("Found potential URL in stderr: {}", line);
                     if let Some(url) = extract_url_from_line(&line) {
                         info!("=================================================");
                         info!("Cloudflared tunnel established: {}", url);
                         info!("=================================================");
                         *public_url_lock_stderr.write().await = Some(url.clone());
+                    } else {
+                        warn!("Line contained trycloudflare.com but URL extraction failed");
                     }
                 }
             }
@@ -578,37 +584,61 @@ impl Drop for CloudflaredTunnel {
 
 /// Extract URL from cloudflared output line
 fn extract_url_from_line(line: &str) -> Option<String> {
-    // Cloudflared outputs the URL in various formats, try them all
+    // Cloudflared outputs the tunnel URL with a subdomain pattern
+    // Valid format: https://<random-subdomain>.trycloudflare.com
+    // Invalid: https://api.trycloudflare.com (this is their API, not a tunnel)
 
-    // Try regex patterns first
-    let patterns = [
-        r"https://[a-zA-Z0-9-]+\.trycloudflare\.com",
-        r"https://[a-zA-Z0-9._-]+\.trycloudflare\.com",
-    ];
+    // Strict regex: must have subdomain before .trycloudflare.com
+    // Pattern matches: subdomain with letters, numbers, hyphens
+    // Must NOT match: api.trycloudflare.com or just trycloudflare.com
+    let patterns = [r"https://[a-zA-Z0-9][a-zA-Z0-9-]+\.trycloudflare\.com"];
 
     for pattern in &patterns {
         if let Ok(re) = regex::Regex::new(pattern) {
             if let Some(captures) = re.find(line) {
-                return Some(captures.as_str().to_string());
+                let url = captures.as_str();
+                // Explicitly reject api.trycloudflare.com
+                if url.contains("api.trycloudflare.com") {
+                    warn!("Rejected api.trycloudflare.com (not a tunnel URL): {}", url);
+                    continue;
+                }
+                info!("Extracted URL via regex: {}", url);
+                return Some(url.to_string());
             }
         }
     }
 
-    // Fallback: simple string search for any https:// URL
+    // Fallback: manual parsing with strict validation
     if let Some(start) = line.find("https://") {
         let url_part = &line[start..];
 
-        // Find the end of the URL (whitespace, quote, or other delimiter)
-        let end_chars = [' ', '\t', '\n', '"', '\'', '|', ']', ')'];
+        // Find the end of the URL
+        let end_chars = [' ', '\t', '\n', '"', '\'', '|', ']', ')', '\x1b'];
         let end = url_part
             .find(|c: char| end_chars.contains(&c))
             .unwrap_or(url_part.len());
 
         let url = &url_part[..end];
 
-        // Verify it looks like a valid trycloudflare.com URL
-        if url.contains("trycloudflare.com") {
-            return Some(url.to_string());
+        // Strict validation:
+        // 1. Must contain trycloudflare.com
+        // 2. Must NOT be api.trycloudflare.com
+        // 3. Must have a subdomain (contains at least 3 parts when split by .)
+        if url.contains("trycloudflare.com") && !url.contains("api.trycloudflare.com") {
+            // Check that it has a subdomain (e.g., "random-name.trycloudflare.com")
+            let host_part = url
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            let parts: Vec<&str> = host_part.split('.').collect();
+            if parts.len() >= 3 && parts[0] != "api" && !parts[0].is_empty() {
+                info!("Extracted URL via fallback: {}", url);
+                return Some(url.to_string());
+            } else {
+                warn!(
+                    "URL validation failed - not enough parts or invalid subdomain: {}",
+                    url
+                );
+            }
         }
     }
 
