@@ -20,6 +20,7 @@ axum = { workspace = true, features = ["ws"] }
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 project.workspace = true

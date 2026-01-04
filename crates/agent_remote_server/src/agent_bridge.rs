@@ -8,6 +8,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use futures::channel::mpsc;
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -76,7 +77,9 @@ impl AgentBridge {
     /// Returns the bridge and channels for the server to use for agent communication:
     /// - `to_agent_rx`: Server should poll this to get messages from clients
     /// - `from_agent_tx`: Server should send agent responses here to broadcast to clients
-    pub fn new() -> (
+    pub fn new<C: gpui::AppContext>(
+        cx: &C,
+    ) -> (
         Self,
         mpsc::UnboundedReceiver<ClientToAgentMessage>,
         mpsc::UnboundedSender<AgentToClientMessage>,
@@ -88,10 +91,12 @@ impl AgentBridge {
         let clients_clone = clients.clone();
 
         // Spawn a task to forward agent messages to all connected clients
-        tokio::spawn(async move {
+        // Use gpui_tokio to access the Tokio runtime managed by GPUI
+        let _broadcast_task = gpui_tokio::Tokio::spawn(cx, async move {
             while let Some(msg) = from_agent_rx.next().await {
                 Self::broadcast_to_clients(&clients_clone, msg);
             }
+            Ok::<(), anyhow::Error>(())
         });
 
         let state = Arc::new(BridgeState {
@@ -174,35 +179,42 @@ impl Drop for ConnectionHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
 
-    #[tokio::test]
-    async fn test_bridge_creation() {
-        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+    #[gpui::test]
+    async fn test_bridge_creation(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_tokio::init(cx));
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new(cx);
         assert_eq!(bridge.state.clients.lock().len(), 0);
     }
 
-    #[tokio::test]
-    async fn test_connection_handle() {
-        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+    #[gpui::test]
+    async fn test_connection_handle(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_tokio::init(cx));
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new(cx);
         let _handle = bridge.create_connection();
         assert_eq!(bridge.state.clients.lock().len(), 1);
     }
 
-    #[tokio::test]
-    async fn test_connection_cleanup() {
-        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new();
+    #[gpui::test]
+    async fn test_connection_cleanup(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_tokio::init(cx));
+        let (bridge, _to_agent_rx, _from_agent_tx) = AgentBridge::new(cx);
         {
             let _handle = bridge.create_connection();
             assert_eq!(bridge.state.clients.lock().len(), 1);
         }
         // Handle dropped, should be cleaned up
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
         // Note: cleanup happens on next broadcast or explicit retention check
     }
 
-    #[tokio::test]
-    async fn test_message_sending() {
-        let (bridge, mut to_agent_rx, _from_agent_tx) = AgentBridge::new();
+    #[gpui::test]
+    async fn test_message_sending(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_tokio::init(cx));
+        let (bridge, mut to_agent_rx, _from_agent_tx) = AgentBridge::new(cx);
 
         bridge
             .send(ClientToAgentMessage::Chat {
@@ -217,9 +229,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_broadcast() {
-        let (bridge, _to_agent_rx, from_agent_tx) = AgentBridge::new();
+    #[gpui::test]
+    async fn test_broadcast(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_tokio::init(cx));
+        let (bridge, _to_agent_rx, from_agent_tx) = AgentBridge::new(cx);
 
         let mut handle1 = bridge.create_connection();
         let mut handle2 = bridge.create_connection();
@@ -232,7 +245,10 @@ mod tests {
             .unwrap();
 
         // Give broadcast task time to process
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        cx.executor().run_until_parked();
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
 
         // Both handles should receive the message
         let msg1 = handle1.recv().await.unwrap();

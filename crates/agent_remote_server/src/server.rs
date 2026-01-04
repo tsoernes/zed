@@ -75,7 +75,7 @@ impl RemoteAgentServer {
         let token_manager = Arc::clone(&self.token_manager);
 
         // Create the agent bridge and coordinator before going async
-        let (agent_bridge, to_agent_rx, from_agent_tx) = AgentBridge::new();
+        let (agent_bridge, to_agent_rx, from_agent_tx) = AgentBridge::new(cx);
         let acp_thread = config.acp_thread.clone();
         let _coordinator =
             cx.new(|cx| AgentCoordinator::new(acp_thread, to_agent_rx, from_agent_tx, cx));

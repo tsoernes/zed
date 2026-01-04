@@ -267,6 +267,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "log",
  "parking_lot",
  "project",
