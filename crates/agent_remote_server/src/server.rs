@@ -322,67 +322,13 @@ fn build_pairing_url(addr: SocketAddr, token: &AuthToken, mode: ServerMode) -> R
 }
 
 /// Get the local IP address for LAN access
-/// Prioritizes local network interfaces (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
-/// over VPN interfaces (Tailscale, WireGuard, etc.)
+/// Get the local IP address for LAN access
 fn get_local_ip() -> Result<IpAddr> {
-    use std::net::Ipv4Addr;
-
-    // Get all network interfaces
-    let interfaces = if_addrs::get_if_addrs()?;
-
-    // Helper to check if an IP is in a private LAN range
-    let is_lan_ip = |ip: &Ipv4Addr| -> bool {
-        let octets = ip.octets();
-        // 192.168.x.x
-        if octets[0] == 192 && octets[1] == 168 {
-            return true;
-        }
-        // 10.x.x.x
-        if octets[0] == 10 {
-            return true;
-        }
-        // 172.16.x.x - 172.31.x.x
-        if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-            return true;
-        }
-        false
-    };
-
-    // Helper to check if an IP is a VPN/Tailscale IP
-    let is_vpn_ip = |ip: &Ipv4Addr| -> bool {
-        let octets = ip.octets();
-        // Tailscale uses 100.64.0.0/10
-        if octets[0] == 100 && (64..=127).contains(&octets[1]) {
-            return true;
-        }
-        false
-    };
-
-    // First pass: look for LAN IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
-    for iface in &interfaces {
-        if let IpAddr::V4(ipv4) = iface.addr {
-            if !iface.is_loopback() && is_lan_ip(&ipv4) {
-                info!("Selected LAN interface: {} ({})", iface.name, ipv4);
-                return Ok(IpAddr::V4(ipv4));
-            }
-        }
-    }
-
-    // Second pass: look for any non-loopback, non-VPN IPv4
-    for iface in &interfaces {
-        if let IpAddr::V4(ipv4) = iface.addr {
-            if !iface.is_loopback() && !is_vpn_ip(&ipv4) {
-                info!("Selected interface: {} ({})", iface.name, ipv4);
-                return Ok(IpAddr::V4(ipv4));
-            }
-        }
-    }
-
-    // Fallback: use the old method (connect to a remote address)
+    // Try to get the local IP by connecting to a remote address
+    // This doesn't actually send data, just determines which interface would be used
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     let local_addr = socket.local_addr()?;
-    info!("Using fallback IP detection: {}", local_addr.ip());
     Ok(local_addr.ip())
 }
 
