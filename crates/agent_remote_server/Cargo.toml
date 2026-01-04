@@ -36,6 +36,7 @@ tower-http = { workspace = true, features = ["cors", "fs"] }
 util.workspace = true
 uuid.workspace = true
 image.workspace = true
+if-addrs = "0.13"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

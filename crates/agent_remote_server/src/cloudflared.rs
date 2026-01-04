@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -439,9 +439,11 @@ zenity --password --title="Sudo Password Required"
             if !Self::is_installed() {
                 return Err(anyhow!("Failed to install cloudflared"));
             }
+            info!("Cloudflared installation completed successfully");
         }
 
         info!("Starting cloudflared tunnel to localhost:{}", local_port);
+        info!("This may take 5-15 seconds to establish the tunnel...");
 
         let mut child = TokioCommand::new("cloudflared")
             .args([
@@ -453,43 +455,82 @@ zenity --password --title="Sudo Password Required"
             .stderr(Stdio::piped())
             .spawn()?;
 
-        // Capture stdout to find the public URL
+        // Capture both stdout and stderr to find the public URL
         let stdout = child
             .stdout
             .take()
             .ok_or_else(|| anyhow!("Failed to capture stdout"))?;
-        let mut reader = BufReader::new(stdout).lines();
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("Failed to capture stderr"))?;
 
         // Store the process
         *self.process.write().await = Some(child);
 
-        // Read output until we find the public URL
+        // Read both stdout and stderr until we find the public URL
         let public_url_lock = Arc::clone(&self.public_url);
+        let public_url_lock_stderr = Arc::clone(&self.public_url);
+
+        // Read stdout
         tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
-                debug!("cloudflared: {}", line);
+                info!("cloudflared stdout: {}", line);
 
                 // Look for the URL in the output
-                // Cloudflared outputs something like: "https://random-subdomain.trycloudflare.com"
-                if line.contains("trycloudflare.com") || line.contains("https://") {
+                if line.contains("trycloudflare.com") {
                     if let Some(url) = extract_url_from_line(&line) {
+                        info!("=================================================");
                         info!("Cloudflared tunnel established: {}", url);
+                        info!("=================================================");
                         *public_url_lock.write().await = Some(url.clone());
                     }
                 }
             }
         });
 
-        // Wait a bit for the tunnel to establish and URL to be captured
-        for _ in 0..30 {
+        // Read stderr (cloudflared often outputs the URL here)
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                info!("cloudflared stderr: {}", line);
+
+                // Look for the URL in the output
+                if line.contains("trycloudflare.com") {
+                    if let Some(url) = extract_url_from_line(&line) {
+                        info!("=================================================");
+                        info!("Cloudflared tunnel established: {}", url);
+                        info!("=================================================");
+                        *public_url_lock_stderr.write().await = Some(url.clone());
+                    }
+                }
+            }
+        });
+
+        // Wait longer for the tunnel to establish and URL to be captured
+        // Cloudflared can take 5-15 seconds to establish a tunnel
+        info!("Waiting for tunnel URL (checking every 100ms for up to 30 seconds)...");
+        for i in 0..300 {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             if let Some(url) = self.public_url.read().await.clone() {
+                info!("Tunnel ready after {} ms", i * 100);
                 return Ok(url);
+            }
+
+            // Log progress every 5 seconds
+            if i > 0 && i % 50 == 0 {
+                info!(
+                    "Still waiting for tunnel URL... ({} seconds elapsed)",
+                    i / 10
+                );
             }
         }
 
         Err(anyhow!(
-            "Failed to get public URL from cloudflared within timeout"
+            "Failed to get public URL from cloudflared within timeout (30 seconds). \
+             Check if cloudflared is working correctly by running: cloudflared tunnel --url http://localhost:{}",
+            local_port
         ))
     }
 
@@ -537,10 +578,12 @@ impl Drop for CloudflaredTunnel {
 
 /// Extract URL from cloudflared output line
 fn extract_url_from_line(line: &str) -> Option<String> {
-    // Try to find URLs in various formats
+    // Cloudflared outputs the URL in various formats, try them all
+
+    // Try regex patterns first
     let patterns = [
         r"https://[a-zA-Z0-9-]+\.trycloudflare\.com",
-        r"https://[a-zA-Z0-9.-]+\.trycloudflare\.com",
+        r"https://[a-zA-Z0-9._-]+\.trycloudflare\.com",
     ];
 
     for pattern in &patterns {
@@ -551,13 +594,21 @@ fn extract_url_from_line(line: &str) -> Option<String> {
         }
     }
 
-    // Fallback: simple string search
+    // Fallback: simple string search for any https:// URL
     if let Some(start) = line.find("https://") {
         let url_part = &line[start..];
-        if let Some(end) = url_part.find(char::is_whitespace) {
-            return Some(url_part[..end].to_string());
-        } else {
-            return Some(url_part.to_string());
+
+        // Find the end of the URL (whitespace, quote, or other delimiter)
+        let end_chars = [' ', '\t', '\n', '"', '\'', '|', ']', ')'];
+        let end = url_part
+            .find(|c: char| end_chars.contains(&c))
+            .unwrap_or(url_part.len());
+
+        let url = &url_part[..end];
+
+        // Verify it looks like a valid trycloudflare.com URL
+        if url.contains("trycloudflare.com") {
+            return Some(url.to_string());
         }
     }
 

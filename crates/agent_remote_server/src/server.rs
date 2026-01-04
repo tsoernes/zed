@@ -322,7 +322,6 @@ fn build_pairing_url(addr: SocketAddr, token: &AuthToken, mode: ServerMode) -> R
 }
 
 /// Get the local IP address for LAN access
-/// Get the local IP address for LAN access
 fn get_local_ip() -> Result<IpAddr> {
     // Try to get the local IP by connecting to a remote address
     // This doesn't actually send data, just determines which interface would be used
