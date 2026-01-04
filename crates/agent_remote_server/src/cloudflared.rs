@@ -200,39 +200,55 @@ impl CloudflaredTunnel {
     }
 
     /// Find a GUI askpass helper for sudo password prompts
+    ///
+    /// Linux requires explicit askpass helper configuration for GUI password prompts.
+    /// macOS and Windows handle password prompts automatically:
+    /// - macOS: Uses osascript for GUI prompts, Homebrew handles elevation automatically
+    /// - Windows: Chocolatey uses UAC, Scoop doesn't need elevation (user-level install)
+    /// - Windows binary install: Goes to user directory, no elevation needed
     #[cfg(target_os = "linux")]
     fn find_askpass_helper() -> Option<String> {
         // Try common GUI askpass helpers in order of preference
         let helpers = [
-            "/usr/bin/ksshaskpass",             // KDE
-            "/usr/bin/ssh-askpass",             // Generic
-            "/usr/lib/ssh/ssh-askpass",         // Some distros
-            "/usr/bin/gnome-ssh-askpass",       // GNOME
-            "/usr/libexec/openssh/ssh-askpass", // OpenSSH
+            "ksshaskpass",          // KDE
+            "ssh-askpass",          // Generic
+            "gnome-ssh-askpass",    // GNOME
+            "lxqt-openssh-askpass", // LXQt
+            "x11-ssh-askpass",      // X11
         ];
 
         for helper in &helpers {
-            if PathBuf::from(helper).exists() {
-                info!("Found askpass helper: {}", helper);
-                return Some(helper.to_string());
+            if let Ok(output) = Command::new("which").arg(helper).output() {
+                if output.status.success() {
+                    if let Ok(path) = String::from_utf8(output.stdout) {
+                        let path = path.trim();
+                        if !path.is_empty() {
+                            info!("Found askpass helper: {}", path);
+                            return Some(path.to_string());
+                        }
+                    }
+                }
             }
         }
 
         // Try to find zenity as fallback
-        if Command::new("which").arg("zenity").status().is_ok() {
-            // Create a wrapper script for zenity
-            let script = r#"#!/bin/sh
+        if let Ok(output) = Command::new("which").arg("zenity").output() {
+            if output.status.success() {
+                // Create a wrapper script for zenity
+                let script = r#"#!/bin/sh
 zenity --password --title="Sudo Password Required"
 "#;
-            let temp_dir = std::env::temp_dir();
-            let script_path = temp_dir.join("zed-askpass.sh");
+                let temp_dir = std::env::temp_dir();
+                let script_path = temp_dir.join("zed-askpass.sh");
 
-            if let Ok(()) = std::fs::write(&script_path, script) {
-                if let Ok(()) =
-                    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
-                {
-                    info!("Created zenity askpass wrapper: {}", script_path.display());
-                    return Some(script_path.to_string_lossy().to_string());
+                if let Ok(()) = std::fs::write(&script_path, script) {
+                    if let Ok(()) = std::fs::set_permissions(
+                        &script_path,
+                        std::fs::Permissions::from_mode(0o755),
+                    ) {
+                        info!("Created zenity askpass wrapper: {}", script_path.display());
+                        return Some(script_path.to_string_lossy().to_string());
+                    }
                 }
             }
         }
@@ -251,6 +267,9 @@ zenity --password --title="Sudo Password Required"
         // Try Homebrew first
         if Command::new("which").arg("brew").status().is_ok() {
             info!("Installing cloudflared via Homebrew");
+
+            // macOS uses osascript for GUI prompts - no special setup needed
+            // The system will automatically prompt for password if needed
             let status = TokioCommand::new("brew")
                 .args(["install", "cloudflared"])
                 .status()
@@ -262,7 +281,7 @@ zenity --password --title="Sudo Password Required"
             }
         }
 
-        // Fallback: direct binary download
+        // Fallback: direct binary download (no sudo needed, installs to user dir)
         info!("Installing cloudflared via direct binary download");
         Self::install_binary_macos().await
     }
@@ -282,7 +301,12 @@ zenity --password --title="Sudo Password Required"
 
         let temp_dir = std::env::temp_dir();
         let archive_path = temp_dir.join("cloudflared.tgz");
-        let install_path = PathBuf::from("/usr/local/bin/cloudflared");
+
+        // Install to user's local bin instead of system-wide (no sudo needed)
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let local_bin = PathBuf::from(home).join(".local/bin");
+        std::fs::create_dir_all(&local_bin)?;
+        let install_path = local_bin.join("cloudflared");
 
         // Download the archive
         let status = TokioCommand::new("curl")
@@ -309,40 +333,31 @@ zenity --password --title="Sudo Password Required"
             return Err(anyhow!("Failed to extract cloudflared archive"));
         }
 
-        // Move to install location
+        // Move to install location (no sudo needed)
         let binary_path = temp_dir.join("cloudflared");
-        let status = TokioCommand::new("sudo")
-            .args([
-                "mv",
-                binary_path.to_str().unwrap(),
-                install_path.to_str().unwrap(),
-            ])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(anyhow!("Failed to move cloudflared to install location"));
-        }
+        std::fs::rename(&binary_path, &install_path)?;
 
         // Make it executable
-        let status = TokioCommand::new("sudo")
-            .args(["chmod", "+x", install_path.to_str().unwrap()])
-            .status()
-            .await?;
-
-        if status.success() {
-            info!("Successfully installed cloudflared binary");
-            Ok(())
-        } else {
-            Err(anyhow!("Failed to make cloudflared executable"))
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&install_path, std::fs::Permissions::from_mode(0o755))?;
         }
+
+        info!(
+            "Successfully installed cloudflared to {}",
+            install_path.display()
+        );
+        info!("Note: ~/.local/bin should be in your PATH");
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
     async fn install_windows() -> Result<()> {
-        // Try Chocolatey first
+        // Try Chocolatey first (handles elevation automatically)
         if Command::new("where").arg("choco").status().is_ok() {
             info!("Installing cloudflared via Chocolatey");
+            // Chocolatey will prompt for elevation if needed via UAC
             let status = TokioCommand::new("choco")
                 .args(["install", "cloudflared", "-y"])
                 .status()
@@ -354,7 +369,7 @@ zenity --password --title="Sudo Password Required"
             }
         }
 
-        // Try Scoop
+        // Try Scoop (user-level install, no elevation needed)
         if Command::new("where").arg("scoop").status().is_ok() {
             info!("Installing cloudflared via Scoop");
             let status = TokioCommand::new("scoop")
@@ -368,7 +383,7 @@ zenity --password --title="Sudo Password Required"
             }
         }
 
-        // Fallback: direct binary download
+        // Fallback: direct binary download to user directory (no elevation needed)
         info!("Installing cloudflared via direct binary download");
         Self::install_binary_windows().await
     }
@@ -383,10 +398,16 @@ zenity --password --title="Sudo Password Required"
             _ => return Err(anyhow!("Unsupported architecture: {}", arch)),
         };
 
-        let install_dir = PathBuf::from(
-            std::env::var("PROGRAMFILES").unwrap_or_else(|_| "C:\\Program Files".to_string()),
-        )
-        .join("cloudflared");
+        // Install to user's local directory (no elevation needed)
+        let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            let userprofile =
+                std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".to_string());
+            format!("{}\\AppData\\Local", userprofile)
+        });
+
+        let install_dir = PathBuf::from(local_appdata)
+            .join("Programs")
+            .join("cloudflared");
         let install_path = install_dir.join("cloudflared.exe");
 
         // Create install directory
@@ -402,11 +423,8 @@ zenity --password --title="Sudo Password Required"
             return Err(anyhow!("Failed to download cloudflared binary"));
         }
 
-        // Add to PATH (requires admin privileges)
-        info!(
-            "Cloudflared installed to {}. You may need to add it to PATH manually or restart your terminal.",
-            install_path.display()
-        );
+        info!("Cloudflared installed to {}", install_path.display());
+        info!("Note: {} should be in your PATH", install_dir.display());
 
         Ok(())
     }
