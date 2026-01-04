@@ -7,6 +7,9 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command as TokioCommand};
 use tokio::sync::RwLock;
 
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
+
 /// Cloudflared tunnel manager
 pub struct CloudflaredTunnel {
     process: Arc<RwLock<Option<Child>>>,
@@ -61,10 +64,20 @@ impl CloudflaredTunnel {
 
     #[cfg(target_os = "linux")]
     async fn install_linux() -> Result<()> {
+        // Try to find a GUI sudo helper for password prompts
+        let askpass = Self::find_askpass_helper();
+
         // Try to detect the package manager and install accordingly
         if Command::new("which").arg("dnf").status().is_ok() {
             info!("Detected dnf package manager");
-            let status = TokioCommand::new("sudo")
+
+            let mut cmd = TokioCommand::new("sudo");
+            if let Some(ref askpass_path) = askpass {
+                cmd.env("SUDO_ASKPASS", askpass_path);
+                cmd.arg("-A"); // Use askpass
+            }
+
+            let status = cmd
                 .args(["dnf", "install", "-y", "cloudflared"])
                 .status()
                 .await?;
@@ -78,6 +91,8 @@ impl CloudflaredTunnel {
 
         if Command::new("which").arg("apt-get").status().is_ok() {
             info!("Detected apt package manager");
+            let askpass = Self::find_askpass_helper();
+
             // Download and install .deb package
             let arch = std::env::consts::ARCH;
             let deb_url = match arch {
@@ -104,7 +119,13 @@ impl CloudflaredTunnel {
             }
 
             // Install the package
-            let status = TokioCommand::new("sudo")
+            let mut cmd = TokioCommand::new("sudo");
+            if let Some(ref askpass_path) = askpass {
+                cmd.env("SUDO_ASKPASS", askpass_path);
+                cmd.arg("-A"); // Use askpass
+            }
+
+            let status = cmd
                 .args(["dpkg", "-i", deb_path.to_str().unwrap()])
                 .status()
                 .await?;
@@ -122,6 +143,7 @@ impl CloudflaredTunnel {
 
     #[cfg(target_os = "linux")]
     async fn install_binary_linux() -> Result<()> {
+        let askpass = Self::find_askpass_helper();
         let arch = std::env::consts::ARCH;
         let binary_url = match arch {
             "x86_64" => {
@@ -136,7 +158,13 @@ impl CloudflaredTunnel {
         let install_path = PathBuf::from("/usr/local/bin/cloudflared");
 
         // Download the binary
-        let status = TokioCommand::new("sudo")
+        let mut cmd = TokioCommand::new("sudo");
+        if let Some(ref askpass_path) = askpass {
+            cmd.env("SUDO_ASKPASS", askpass_path);
+            cmd.arg("-A"); // Use askpass
+        }
+
+        let status = cmd
             .args([
                 "curl",
                 "-L",
@@ -152,7 +180,13 @@ impl CloudflaredTunnel {
         }
 
         // Make it executable
-        let status = TokioCommand::new("sudo")
+        let mut cmd = TokioCommand::new("sudo");
+        if let Some(ref askpass_path) = askpass {
+            cmd.env("SUDO_ASKPASS", askpass_path);
+            cmd.arg("-A"); // Use askpass
+        }
+
+        let status = cmd
             .args(["chmod", "+x", install_path.to_str().unwrap()])
             .status()
             .await?;
@@ -163,6 +197,53 @@ impl CloudflaredTunnel {
         } else {
             Err(anyhow!("Failed to make cloudflared executable"))
         }
+    }
+
+    /// Find a GUI askpass helper for sudo password prompts
+    #[cfg(target_os = "linux")]
+    fn find_askpass_helper() -> Option<String> {
+        // Try common GUI askpass helpers in order of preference
+        let helpers = [
+            "/usr/bin/ksshaskpass",             // KDE
+            "/usr/bin/ssh-askpass",             // Generic
+            "/usr/lib/ssh/ssh-askpass",         // Some distros
+            "/usr/bin/gnome-ssh-askpass",       // GNOME
+            "/usr/libexec/openssh/ssh-askpass", // OpenSSH
+        ];
+
+        for helper in &helpers {
+            if PathBuf::from(helper).exists() {
+                info!("Found askpass helper: {}", helper);
+                return Some(helper.to_string());
+            }
+        }
+
+        // Try to find zenity as fallback
+        if Command::new("which").arg("zenity").status().is_ok() {
+            // Create a wrapper script for zenity
+            let script = r#"#!/bin/sh
+zenity --password --title="Sudo Password Required"
+"#;
+            let temp_dir = std::env::temp_dir();
+            let script_path = temp_dir.join("zed-askpass.sh");
+
+            if let Ok(()) = std::fs::write(&script_path, script) {
+                if let Ok(()) =
+                    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                {
+                    info!("Created zenity askpass wrapper: {}", script_path.display());
+                    return Some(script_path.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        warn!("No GUI askpass helper found - sudo may fail without interactive terminal");
+        None
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn find_askpass_helper() -> Option<String> {
+        None
     }
 
     #[cfg(target_os = "macos")]
@@ -216,7 +297,7 @@ impl CloudflaredTunnel {
         // Extract the archive
         let status = TokioCommand::new("tar")
             .args([
-                "-xzf",
+                "xzf",
                 archive_path.to_str().unwrap(),
                 "-C",
                 temp_dir.to_str().unwrap(),
