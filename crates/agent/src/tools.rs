@@ -1,3 +1,4 @@
+mod analyze_images_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -22,6 +23,7 @@ mod web_search_tool;
 use crate::AgentTool;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
 
+pub use analyze_images_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -111,6 +113,7 @@ macro_rules! tools {
 }
 
 tools! {
+    AnalyzeImagesTool,
     CopyPathTool,
     CreateDirectoryTool,
     DeletePathTool,

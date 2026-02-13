@@ -1277,6 +1277,11 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         let language_registry = self.project.read(cx).languages().clone();
+        let http_client = self.project.read(cx).client().http_client();
+        self.add_tool(
+            AnalyzeImagesTool::new(cx.weak_entity(), self.project.clone(), http_client),
+            allowed_tool_names.as_ref(),
+        );
         self.add_tool(
             CopyPathTool::new(self.project.clone()),
             allowed_tool_names.as_ref(),
