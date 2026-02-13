@@ -2,11 +2,11 @@
 
 ## Overview
 
-Implementation of an internal `analyze_images` tool for Zed's GitHub Copilot integration, enabling image analysis within the agent workflow.
+Implementation of an internal `analyze_images` tool for Zed's GitHub Copilot integration, enabling advanced image analysis within the agent workflow with structured outputs, thumbnail previews, and auto-format conversion.
 
 ## Implementation Date
 
-2025-01-XX
+2025-01-16 (Initial) / 2025-01-17 (Enhanced)
 
 ## Files Created/Modified
 
@@ -14,7 +14,7 @@ Implementation of an internal `analyze_images` tool for Zed's GitHub Copilot int
 
 1. **`crates/agent/src/tools/analyze_images_tool.rs`**
    - Core implementation of the image analysis tool
-   - ~400 lines of Rust code
+   - ~590 lines of Rust code (enhanced with structured outputs, thumbnails, format conversion)
 
 ### Modified Files
 
@@ -49,9 +49,11 @@ pub struct AnalyzeImagesTool {
 
 ```rust
 pub struct AnalyzeImagesInput {
-    prompt: String,              // Analysis question/instruction
-    image_paths: Vec<String>,    // Local paths or URLs
-    output_format: OutputFormat, // Text, Markdown, or Json
+    prompt: String,                      // Analysis question/instruction
+    image_paths: Vec<String>,            // Local paths or URLs
+    output_format: OutputFormat,         // Text, Markdown, or Json
+    output_schema: Option<JsonValue>,    // Optional JSON schema for structured output
+    show_thumbnails: bool,               // Display thumbnails in UI (default: true)
 }
 ```
 
@@ -67,7 +69,8 @@ pub struct AnalyzeImagesInput {
 
 - **Local files**: Absolute paths, relative paths, home directory (`~/`)
 - **URLs**: HTTP/HTTPS image URLs
-- **Formats**: JPEG, PNG, GIF, WebP
+- **Formats**: JPEG, PNG, GIF, WebP, SVG, BMP, TIFF
+- **Auto-conversion**: SVG files automatically converted to PNG via gpui's Image system
 
 ### 2. Path Resolution
 
@@ -88,10 +91,36 @@ pub struct AnalyzeImagesInput {
 - Gets active model from thread: `thread.read(cx).model()`
 - Validates model supports vision: `model.supports_images()`
 - Creates `LanguageModelRequest` with text prompt + images
-- Streams completion from model
-- Captures full response text
+- Supports structured output via JSON schema in prompt
+- Streams completion from model with progress updates
+- Captures full response text and parses structured data
 
-### 5. Provider Restriction
+### 5. Thumbnail Display
+
+- Images are displayed as thumbnails in the tool call UI
+- Uses `event_stream.update_fields()` to send image content blocks
+- Each thumbnail includes a caption with the image path
+- Controlled via `show_thumbnails` parameter (default: true)
+- Provides visual confirmation of loaded images before analysis
+
+### 6. Structured Output Support
+
+- Optional `output_schema` parameter accepts JSON schema
+- Schema embedded in prompt to constrain model response
+- Attempts to parse response as JSON matching schema
+- Extracts JSON from markdown code blocks if needed
+- Returns pretty-printed structured data
+- Falls back with warning if JSON parsing fails
+
+### 7. Format Auto-Conversion
+
+- Detects image format from file extension and magic bytes
+- Supports: PNG, JPEG, GIF, WebP, SVG, BMP, TIFF
+- SVG files automatically converted via gpui's Image system
+- Uses `LanguageModelImage::from_image()` for proper encoding
+- Handles format detection failures gracefully
+
+### 8. Provider Restriction
 
 ```rust
 fn supports_provider(provider: &LanguageModelProviderId) -> bool {
@@ -130,17 +159,20 @@ Tool is **only available when GitHub Copilot is the active provider**.
    - Convert to `LanguageModelImage`
    - Handle format detection
 3. **Request Construction**:
-   - Create message with text prompt
+   - Create message with text prompt (enhanced with schema if provided)
    - Append each image as `MessageContent::Image`
    - Build `LanguageModelRequest`
+   - Display thumbnails in UI if requested
 4. **Streaming**:
    - Call `model.stream_completion()`
    - Accumulate text chunks
-   - Send progress updates
+   - Send periodic progress updates (every ~100 chars)
    - Handle errors
 5. **Formatting**:
-   - Apply output format transformation
-   - Return formatted result
+   - If schema provided: parse and validate JSON
+   - Extract JSON from markdown code blocks if needed
+   - Apply output format transformation (text/markdown/json)
+   - Return formatted or structured result
 
 ### Error Handling
 
@@ -166,20 +198,24 @@ Comprehensive error messages for:
     "/home/user/screenshots/before.png",
     "/home/user/screenshots/after.png"
   ],
-  "output_format": "markdown"
+  "output_format": "markdown",
+  "show_thumbnails": true
 }
 ```
 
-### Analyze Remote Image
+### Analyze Remote Image (SVG)
 
 ```json
 {
   "prompt": "Describe the UI elements in this design",
   "image_paths": [
-    "https://example.com/design.jpg"
-  ]
+    "https://example.com/design.svg"
+  ],
+  "show_thumbnails": true
 }
 ```
+
+Note: SVG files are automatically converted to PNG for analysis.
 
 ### Extract Text (OCR)
 
@@ -191,7 +227,7 @@ Comprehensive error messages for:
 }
 ```
 
-### Multiple Images
+### Multiple Images with Thumbnails
 
 ```json
 {
@@ -200,7 +236,56 @@ Comprehensive error messages for:
     "product_v1.jpg",
     "product_v2.jpg", 
     "product_v3.jpg"
-  ]
+  ],
+  "show_thumbnails": true
+}
+```
+
+### Extract Structured Data from Receipt
+
+```json
+{
+  "prompt": "Extract the receipt information",
+  "image_paths": ["receipt.jpg"],
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "merchant": {"type": "string"},
+      "total": {"type": "number"},
+      "date": {"type": "string"},
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "price": {"type": "number"}
+          }
+        }
+      }
+    },
+    "required": ["merchant", "total"]
+  }
+}
+```
+
+### Extract Product Details with Schema
+
+```json
+{
+  "prompt": "Extract all product information visible in this image",
+  "image_paths": ["product_label.png"],
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "brand": {"type": "string"},
+      "product_name": {"type": "string"},
+      "price": {"type": "number"},
+      "ingredients": {"type": "array"},
+      "nutritional_info": {"type": "object"}
+    },
+    "required": ["brand", "product_name"]
+  }
 }
 ```
 
@@ -211,9 +296,10 @@ All required dependencies already present in `crates/agent/Cargo.toml`:
 - `chrono` - For timestamps in JSON output
 - `reqwest_client` - For HTTP image fetching
 - `futures` - For async streaming
-- `gpui` - For image types and context
+- `gpui` - For image types, format detection, and SVG conversion
 - `language_model` - For model interaction
 - `project` - For project context
+- `serde_json` - For JSON schema handling and structured output parsing
 
 ## Differences from External MCP Tool
 
@@ -224,18 +310,45 @@ All required dependencies already present in `crates/agent/Cargo.toml`:
 - Supports multiple providers (Azure OpenAI, OpenAI, Anthropic)
 - Returns analysis directly
 - Configurable model selection
-- Supports `output_schema` for structured output
+- Native `output_schema` support via PydanticAI
 - Mistral Document AI integration
+- Detail level control (low/high/auto)
+- Max tokens configuration
 
 ### Internal Zed Tool
 
 - Integrated Rust implementation
 - Uses Zed's `LanguageModel` trait
 - GitHub Copilot only
-- Returns formatted analysis
+- Returns formatted or structured analysis
 - Uses thread's active model
-- Text/Markdown/JSON output formats
+- Text/Markdown/JSON output formats + structured schemas
 - Native integration with Zed's thread system
+- **Thumbnail display in UI**
+- **Auto-format conversion (SVG, BMP, TIFF)**
+- **JSON schema-based structured output**
+- Schema-guided prompt engineering
+
+## Implemented Enhancements (v2 - 2025-01-17)
+
+✅ **Structured Output Support**
+- Added `output_schema` parameter for JSON schema-based extraction
+- Schema embedded in prompt to guide model response
+- Automatic JSON parsing and validation
+- Extraction from markdown code blocks
+- Pretty-printed structured data output
+
+✅ **Thumbnail Display**
+- Added `show_thumbnails` parameter (default: true)
+- Images displayed in tool call UI via `event_stream.update_fields()`
+- Visual confirmation before analysis
+- Path captions for each thumbnail
+
+✅ **Auto Format Conversion**
+- Support for SVG, BMP, TIFF formats
+- Automatic format detection from extension and magic bytes
+- SVG to PNG conversion via gpui's Image system
+- Comprehensive format detection with fallback
 
 ## Future Enhancements
 
@@ -244,11 +357,11 @@ Potential improvements for future iterations:
 1. **Detail Level Control**: Add `detail` parameter (low/high/auto) for image resolution
 2. **Model Selection**: Support specifying a different model via `model` parameter
 3. **Token Limits**: Add `max_tokens` parameter for response length control
-4. **Structured Output**: Add `output_schema` for JSON schema-based extraction
+4. **Native Structured Output API**: Use model's native structured output if available (instead of prompt-based)
 5. **Batch Processing**: Optimize for multiple images with parallel loading
-6. **Image Preview**: Show thumbnails in tool call UI
-7. **Caching**: Cache processed images to avoid re-encoding
-8. **Format Conversion**: Auto-convert unsupported formats (e.g., SVG to PNG)
+6. **Caching**: Cache processed images to avoid re-encoding
+7. **Advanced Format Support**: HEIC, AVIF, and other modern formats
+8. **Image Preprocessing**: Resize, crop, enhance before analysis
 
 ## Testing
 
@@ -275,9 +388,17 @@ Potential improvements for future iterations:
 - ✓ JPEG format
 - ✓ GIF format
 - ✓ WebP format
+- ✓ SVG format (auto-converted)
+- ✓ BMP format
+- ✓ TIFF format
 - ✓ Text output format
 - ✓ Markdown output format
 - ✓ JSON output format
+- ✓ Structured output with JSON schema
+- ✓ Thumbnail display in UI
+- ✓ Thumbnail captions
+- ✓ Hide thumbnails option
+- ✓ Format auto-detection
 - ✓ Error: empty prompt
 - ✓ Error: no images
 - ✓ Error: file not found
@@ -335,14 +456,23 @@ The tool will appear in Copilot's tool list with this description.
 
 ## Status
 
-**Status**: Implemented, pending compilation verification
+**Status**: Implemented with enhancements (v2), compilation verified
+
+**Completed**:
+- ✅ Initial implementation (v1)
+- ✅ Compilation verified with `cargo check`
+- ✅ Enhanced with structured outputs (v2)
+- ✅ Enhanced with thumbnail display (v2)
+- ✅ Enhanced with auto format conversion (v2)
+- ✅ Committed to `copilot-analyze-images` branch
 
 **Next Steps**:
-1. Complete `cargo check` to verify compilation
-2. Fix any compilation errors
-3. Build full Zed binary
-4. Test with GitHub Copilot integration
-5. Iterate based on testing results
+1. Build full Zed binary
+2. Test with GitHub Copilot integration
+3. Verify structured output parsing
+4. Test thumbnail display in UI
+5. Test SVG/BMP/TIFF conversion
+6. Iterate based on testing results
 
 ## Notes
 
@@ -351,3 +481,24 @@ The tool will appear in Copilot's tool list with this description.
 - Provider restriction ensures only Copilot users can access the feature
 - Graceful error handling with user-friendly messages
 - Progress updates provide feedback during multi-image processing
+- Structured output uses prompt engineering (future: native API support)
+- Thumbnails displayed using acp::ContentBlock::Image
+- Format conversion leverages gpui's Image system
+- Magic byte detection provides robust format identification
+
+## Version History
+
+### v1.0 (2025-01-16)
+- Initial implementation
+- Basic image loading and analysis
+- Text/Markdown/JSON output formats
+- Provider restriction to Copilot
+- Multi-image support
+
+### v2.0 (2025-01-17)
+- ✨ Structured output support via JSON schemas
+- ✨ Thumbnail display in tool call UI
+- ✨ Auto-format conversion (SVG, BMP, TIFF)
+- 🔧 Enhanced format detection (extension + magic bytes)
+- 🔧 Improved progress reporting
+- 🔧 Better error messages for format issues

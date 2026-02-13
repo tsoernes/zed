@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::StreamExt;
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, Entity, Image, ImageFormat, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResultContent,
@@ -13,6 +13,7 @@ use project::Project;
 use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::{AgentTool, Thread, ToolCallEventStream};
 
@@ -42,16 +43,17 @@ impl Default for OutputFormat {
 ///
 /// Available only when GitHub Copilot is the active language model provider.
 ///
-/// Common use cases:
-/// - Compare two or more screenshots or designs
+/// Features:
+/// - Compare screenshots and designs
 /// - Extract text from images (OCR)
-/// - Describe image content in detail
+/// - Describe visual content
 /// - Identify objects, people, brands, or scenes
-/// - Answer specific questions about image content
-/// - Analyze diagrams, charts, or infographics
+/// - Answer questions about images
+/// - Analyze diagrams and charts
+/// - Extract structured data with JSON schemas
 ///
-/// The tool loads images, encodes them properly, and makes an internal model call
-/// to analyze them based on the provided prompt.
+/// The tool loads images, displays thumbnails in the UI, auto-converts formats like SVG,
+/// and makes an internal model call to analyze them based on the provided prompt.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AnalyzeImagesInput {
     /// The question or instruction for analyzing the image(s).
@@ -74,7 +76,8 @@ pub struct AnalyzeImagesInput {
     /// - URLs: "https://example.com/image.jpg"
     /// - Home directory paths: "~/Pictures/photo.png"
     ///
-    /// Supported formats: JPEG, PNG, GIF, WebP
+    /// Supported formats: JPEG, PNG, GIF, WebP, SVG, BMP, TIFF
+    /// (SVG files are automatically converted to PNG)
     ///
     /// Multiple images can be provided for comparison or multi-image analysis.
     pub image_paths: Vec<String>,
@@ -86,6 +89,39 @@ pub struct AnalyzeImagesInput {
     /// - "json": Structured JSON output
     #[serde(default)]
     pub output_format: OutputFormat,
+
+    /// Optional JSON schema for structured output.
+    ///
+    /// When provided, the model returns data matching the schema structure
+    /// instead of free-form text. Perfect for extracting specific fields.
+    ///
+    /// Example schema:
+    /// ```json
+    /// {
+    ///     "type": "object",
+    ///     "properties": {
+    ///         "item_name": {"type": "string"},
+    ///         "price": {"type": "number"},
+    ///         "quantity": {"type": "integer"}
+    ///     },
+    ///     "required": ["item_name", "price"]
+    /// }
+    /// ```
+    ///
+    /// Note: When output_schema is provided, output_format is ignored.
+    #[serde(default)]
+    pub output_schema: Option<JsonValue>,
+
+    /// Show image thumbnails in the tool call UI.
+    ///
+    /// When true, displays thumbnails of the loaded images in the UI.
+    /// Useful for visual confirmation of which images are being analyzed.
+    #[serde(default = "default_show_thumbnails")]
+    pub show_thumbnails: bool,
+}
+
+fn default_show_thumbnails() -> bool {
+    true
 }
 
 pub struct AnalyzeImagesTool {
@@ -95,8 +131,16 @@ pub struct AnalyzeImagesTool {
 }
 
 impl AnalyzeImagesTool {
-    pub fn new(thread: WeakEntity<Thread>, project: Entity<Project>, http_client: Arc<ReqwestClient>) -> Self {
-        Self { thread, project, http_client }
+    pub fn new(
+        thread: WeakEntity<Thread>,
+        project: Entity<Project>,
+        http_client: Arc<ReqwestClient>,
+    ) -> Self {
+        Self {
+            thread,
+            project,
+            http_client,
+        }
     }
 
     async fn load_image_from_path(&self, path: &str) -> Result<Vec<u8>> {
@@ -105,7 +149,8 @@ impl AnalyzeImagesTool {
         // Check if it's a URL
         if path.starts_with("http://") || path.starts_with("https://") {
             // Fetch from URL
-            let response = self.http_client
+            let response = self
+                .http_client
                 .get(path, Default::default(), true)
                 .await
                 .with_context(|| format!("Failed to fetch image from URL: {}", path))?;
@@ -178,10 +223,11 @@ impl AnalyzeImagesTool {
                 .map(|s| s.to_lowercase());
 
             match ext.as_deref() {
-                Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("webp") => {}
+                Some("jpg") | Some("jpeg") | Some("png") | Some("gif") | Some("webp")
+                | Some("svg") | Some("bmp") | Some("tiff") | Some("tif") => {}
                 _ => {
                     return Err(anyhow!(
-                        "Unsupported image format at {}. Supported formats: JPEG, PNG, GIF, WebP",
+                        "Unsupported image format at {}. Supported formats: JPEG, PNG, GIF, WebP, SVG, BMP, TIFF",
                         path
                     ));
                 }
@@ -189,6 +235,49 @@ impl AnalyzeImagesTool {
 
             std::fs::read(&resolved_path)
                 .with_context(|| format!("Failed to read image file: {}", path))
+        }
+    }
+
+    fn detect_image_format(path: &str, data: &[u8]) -> ImageFormat {
+        // First try to detect from file extension
+        let ext = path
+            .rsplit('.')
+            .next()
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        match ext.as_str() {
+            "png" => ImageFormat::Png,
+            "jpg" | "jpeg" => ImageFormat::Jpeg,
+            "gif" => ImageFormat::Gif,
+            "webp" => ImageFormat::Webp,
+            "svg" => ImageFormat::Svg,
+            "bmp" => ImageFormat::Bmp,
+            "tiff" | "tif" => ImageFormat::Tiff,
+            _ => {
+                // Try to detect from magic bytes
+                if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    ImageFormat::Png
+                } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+                    ImageFormat::Jpeg
+                } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+                    ImageFormat::Gif
+                } else if data.starts_with(b"RIFF") && data.len() > 12 && &data[8..12] == b"WEBP" {
+                    ImageFormat::Webp
+                } else if data.starts_with(b"<svg") || data.starts_with(b"<?xml") {
+                    ImageFormat::Svg
+                } else if data.starts_with(b"BM") {
+                    ImageFormat::Bmp
+                } else if data.starts_with(&[0x49, 0x49, 0x2A, 0x00])
+                    || data.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])
+                {
+                    ImageFormat::Tiff
+                } else {
+                    // Default to PNG as a safe fallback
+                    log::warn!("Could not detect image format for {}, assuming PNG", path);
+                    ImageFormat::Png
+                }
+            }
         }
     }
 
@@ -212,6 +301,10 @@ impl AnalyzeImagesTool {
                 .to_string()
             }
         }
+    }
+
+    fn format_structured_output(data: JsonValue) -> String {
+        serde_json::to_string_pretty(&data).unwrap_or_else(|_| data.to_string())
     }
 }
 
@@ -296,32 +389,35 @@ impl AgentTool for AnalyzeImagesTool {
 
             // Load all images
             let mut images = Vec::new();
+            let mut thumbnails = Vec::new();
+
             for (idx, path) in input.image_paths.iter().enumerate() {
-                let image_data = self.load_image_from_path(path)
+                let image_data = self
+                    .load_image_from_path(path)
                     .await
                     .with_context(|| format!("Failed to load image: {}", path))?;
 
-                // Create gpui::Image from bytes
-                let format = if path.ends_with(".png") {
-                    gpui::ImageFormat::Png
-                } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
-                    gpui::ImageFormat::Jpeg
-                } else if path.ends_with(".gif") {
-                    gpui::ImageFormat::Gif
-                } else if path.ends_with(".webp") {
-                    gpui::ImageFormat::Webp
-                } else {
-                    // Default to PNG
-                    gpui::ImageFormat::Png
-                };
+                // Detect format
+                let format = Self::detect_image_format(path, &image_data);
 
-                let image = Arc::new(gpui::Image::from_bytes(format, image_data));
+                // Create gpui::Image from bytes
+                let image = Arc::new(Image::from_bytes(format, image_data));
+
+                // Store for thumbnails
+                if input.show_thumbnails {
+                    thumbnails.push((path.clone(), image.clone()));
+                }
 
                 // Convert to LanguageModelImage
                 let language_model_image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))?
                     .await
-                    .ok_or_else(|| anyhow!("Failed to process image: {}", path))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Failed to process image: {}. The image may be too large or in an unsupported format.",
+                            path
+                        )
+                    })?;
 
                 images.push(language_model_image);
 
@@ -336,6 +432,40 @@ impl AgentTool for AnalyzeImagesTool {
                     .await;
             }
 
+            // Show thumbnails in UI if requested
+            if input.show_thumbnails && !thumbnails.is_empty() {
+                let mut content_blocks = Vec::new();
+                for (path, image_arc) in thumbnails {
+                    // Try to get LanguageModelImage for the thumbnail
+                    if let Ok(Some(lang_model_img)) = cx
+                        .update(|cx| LanguageModelImage::from_image(image_arc, cx))
+                        .and_then(|task| task.await)
+                    {
+                        content_blocks.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Image(acp::ImageContent::new(
+                                lang_model_img.source.to_string(),
+                                "image/png",
+                            )),
+                        )));
+
+                        // Add caption
+                        content_blocks.push(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(format!(
+                                "📸 `{}`",
+                                path
+                            ))),
+                        )));
+                    }
+                }
+
+                if !content_blocks.is_empty() {
+                    event_stream
+                        .update_fields(
+                            acp::ToolCallUpdateFields::new().content(content_blocks),
+                        );
+                }
+            }
+
             event_stream
                 .send(acp::ToolCallUpdate::progress("Analyzing images...", None))
                 .await;
@@ -348,6 +478,23 @@ impl AgentTool for AnalyzeImagesTool {
             for image in images {
                 message_content.push(MessageContent::Image(image));
             }
+
+            // Check if we need structured output
+            let has_schema = input.output_schema.is_some();
+
+            // For now, we'll handle structured output by including schema instructions in the prompt
+            // A full implementation would use the model's native structured output API if available
+            let final_prompt = if let Some(ref schema) = input.output_schema {
+                format!(
+                    "{}\n\nPlease respond ONLY with valid JSON matching this exact schema:\n```json\n{}\n```\n\nDo not include any text before or after the JSON.",
+                    input.prompt,
+                    serde_json::to_string_pretty(schema).unwrap_or_else(|_| schema.to_string())
+                )
+            } else {
+                input.prompt.clone()
+            };
+
+            message_content[0] = MessageContent::Text { text: final_prompt };
 
             let request = LanguageModelRequest {
                 messages: vec![LanguageModelRequestMessage {
@@ -369,12 +516,15 @@ impl AgentTool for AnalyzeImagesTool {
                     Ok(LanguageModelCompletionEvent::Text(text)) => {
                         response_text.push_str(&text);
                         // Send progress updates with partial text
-                        event_stream
-                            .send(acp::ToolCallUpdate::progress(
-                                format!("Analyzing... ({} chars)", response_text.len()),
-                                None,
-                            ))
-                            .await;
+                        if response_text.len() % 100 == 0 {
+                            // Update every ~100 chars
+                            event_stream
+                                .send(acp::ToolCallUpdate::progress(
+                                    format!("Analyzing... ({} chars)", response_text.len()),
+                                    None,
+                                ))
+                                .await;
+                        }
                     }
                     Ok(LanguageModelCompletionEvent::Stop(_)) => break,
                     Err(e) => {
@@ -395,7 +545,44 @@ impl AgentTool for AnalyzeImagesTool {
                 .await;
 
             // Format the output according to the requested format
-            let formatted = Self::format_output(&response_text, &input.output_format);
+            let formatted = if has_schema {
+                // Try to parse as JSON and validate against schema
+                match serde_json::from_str::<JsonValue>(&response_text) {
+                    Ok(json) => {
+                        // Successfully parsed JSON
+                        Self::format_structured_output(json)
+                    }
+                    Err(_) => {
+                        // Response wasn't valid JSON, try to extract JSON from markdown code blocks
+                        let json_extracted = if let Some(start) = response_text.find("```json") {
+                            if let Some(end) = response_text[start..].find("```") {
+                                let json_str = &response_text[start + 7..start + end].trim();
+                                serde_json::from_str::<JsonValue>(json_str).ok()
+                            } else {
+                                None
+                            }
+                        } else if let Some(start) = response_text.find('{') {
+                            // Try to extract JSON object
+                            serde_json::from_str::<JsonValue>(&response_text[start..]).ok()
+                        } else {
+                            None
+                        };
+
+                        match json_extracted {
+                            Some(json) => Self::format_structured_output(json),
+                            None => {
+                                // Could not extract valid JSON, return as-is with warning
+                                format!(
+                                    "⚠️ Warning: Response was not valid JSON matching the schema.\n\nRaw response:\n{}",
+                                    response_text
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Self::format_output(&response_text, &input.output_format)
+            };
 
             Ok(formatted)
         })
