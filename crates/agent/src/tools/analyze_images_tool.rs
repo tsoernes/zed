@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use futures::StreamExt;
+use futures::{AsyncReadExt, StreamExt};
 use gpui::{App, Entity, Image, ImageFormat, SharedString, Task, WeakEntity};
+use http_client::AsyncBody;
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelImage, LanguageModelProviderId,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResultContent,
-    MessageContent, Role,
+    LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use project::Project;
 use reqwest_client::ReqwestClient;
@@ -149,9 +149,9 @@ impl AnalyzeImagesTool {
         // Check if it's a URL
         if path.starts_with("http://") || path.starts_with("https://") {
             // Fetch from URL
-            let response = self
+            let mut response = self
                 .http_client
-                .get(path, Default::default(), true)
+                .get(path, AsyncBody::default(), true)
                 .await
                 .with_context(|| format!("Failed to fetch image from URL: {}", path))?;
 
@@ -178,12 +178,14 @@ impl AnalyzeImagesTool {
                 }
             }
 
-            let bytes = response
-                .bytes()
+            let mut bytes = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut bytes)
                 .await
                 .with_context(|| format!("Failed to read image bytes from URL: {}", path))?;
 
-            Ok(bytes.to_vec())
+            Ok(bytes)
         } else {
             // Load from local file
             let path_obj = Path::new(path);
@@ -367,8 +369,8 @@ impl AgentTool for AnalyzeImagesTool {
                     self.thread
                         .upgrade()
                         .and_then(|thread| thread.read(cx).model().cloned())
-                })?
-                .ok_or_else(|| anyhow!("No language model configured"))?;
+                        .ok_or_else(|| anyhow!("No language model configured"))
+                })??;
 
             // Check if the model supports images
             if !model.supports_images() {
@@ -377,15 +379,10 @@ impl AgentTool for AnalyzeImagesTool {
                 ));
             }
 
-            event_stream
-                .send(acp::ToolCallUpdate::progress(
-                    "Loading images...",
-                    Some(acp::ToolProgress {
-                        total: Some(input.image_paths.len() as u64),
-                        current: 0,
-                    }),
-                ))
-                .await;
+            // Update status: Loading images
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().title("Loading images...")
+            );
 
             // Load all images
             let mut images = Vec::new();
@@ -410,8 +407,8 @@ impl AgentTool for AnalyzeImagesTool {
 
                 // Convert to LanguageModelImage
                 let language_model_image = cx
-                    .update(|cx| LanguageModelImage::from_image(image, cx))?
-                    .await
+                    .update(|cx| LanguageModelImage::from_image(image, cx))
+                    .await?
                     .ok_or_else(|| {
                         anyhow!(
                             "Failed to process image: {}. The image may be too large or in an unsupported format.",
@@ -421,15 +418,11 @@ impl AgentTool for AnalyzeImagesTool {
 
                 images.push(language_model_image);
 
-                event_stream
-                    .send(acp::ToolCallUpdate::progress(
-                        format!("Loaded image {} of {}", idx + 1, input.image_paths.len()),
-                        Some(acp::ToolProgress {
-                            total: Some(input.image_paths.len() as u64),
-                            current: (idx + 1) as u64,
-                        }),
-                    ))
-                    .await;
+                // Update progress
+                event_stream.update_fields(
+                    acp::ToolCallUpdateFields::new()
+                        .title(format!("Loaded image {} of {}", idx + 1, input.image_paths.len()))
+                );
             }
 
             // Show thumbnails in UI if requested
@@ -439,7 +432,7 @@ impl AgentTool for AnalyzeImagesTool {
                     // Try to get LanguageModelImage for the thumbnail
                     if let Ok(Some(lang_model_img)) = cx
                         .update(|cx| LanguageModelImage::from_image(image_arc, cx))
-                        .and_then(|task| task.await)
+                        .await
                     {
                         content_blocks.push(acp::ToolCallContent::Content(acp::Content::new(
                             acp::ContentBlock::Image(acp::ImageContent::new(
@@ -459,25 +452,19 @@ impl AgentTool for AnalyzeImagesTool {
                 }
 
                 if !content_blocks.is_empty() {
-                    event_stream
-                        .update_fields(
-                            acp::ToolCallUpdateFields::new().content(content_blocks),
-                        );
+                    event_stream.update_fields(
+                        acp::ToolCallUpdateFields::new().content(content_blocks)
+                    );
                 }
             }
 
-            event_stream
-                .send(acp::ToolCallUpdate::progress("Analyzing images...", None))
-                .await;
+            // Update status: Analyzing
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().title("Analyzing images...")
+            );
 
             // Create the request with images
-            let mut message_content = vec![MessageContent::Text {
-                text: input.prompt.clone(),
-            }];
-
-            for image in images {
-                message_content.push(MessageContent::Image(image));
-            }
+            let mut message_content = Vec::new();
 
             // Check if we need structured output
             let has_schema = input.output_schema.is_some();
@@ -494,17 +481,28 @@ impl AgentTool for AnalyzeImagesTool {
                 input.prompt.clone()
             };
 
-            message_content[0] = MessageContent::Text { text: final_prompt };
+            message_content.push(MessageContent::Text(final_prompt));
+
+            for image in images {
+                message_content.push(MessageContent::Image(image));
+            }
 
             let request = LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: message_content,
                     cache: false,
+                    reasoning_details: None,
                 }],
                 tools: vec![],
+                tool_choice: None,
                 stop: vec![],
                 temperature: None,
+                thinking_allowed: false,
+                thinking_effort: None,
             };
 
             // Stream the completion
@@ -518,12 +516,10 @@ impl AgentTool for AnalyzeImagesTool {
                         // Send progress updates with partial text
                         if response_text.len() % 100 == 0 {
                             // Update every ~100 chars
-                            event_stream
-                                .send(acp::ToolCallUpdate::progress(
-                                    format!("Analyzing... ({} chars)", response_text.len()),
-                                    None,
-                                ))
-                                .await;
+                            event_stream.update_fields(
+                                acp::ToolCallUpdateFields::new()
+                                    .title(format!("Analyzing... ({} chars)", response_text.len()))
+                            );
                         }
                     }
                     Ok(LanguageModelCompletionEvent::Stop(_)) => break,
@@ -540,9 +536,10 @@ impl AgentTool for AnalyzeImagesTool {
                 ));
             }
 
-            event_stream
-                .send(acp::ToolCallUpdate::progress("Analysis complete", None))
-                .await;
+            // Update status: Complete
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().title("Analysis complete")
+            );
 
             // Format the output according to the requested format
             let formatted = if has_schema {
