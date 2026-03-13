@@ -417,7 +417,7 @@ pub struct CompletionResult {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
     pub name: String,
@@ -427,7 +427,7 @@ pub struct Prompt {
     pub arguments: Option<Vec<PromptArgument>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptArgument {
     pub name: String,
