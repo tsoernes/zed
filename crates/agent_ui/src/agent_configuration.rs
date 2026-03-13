@@ -1,4 +1,5 @@
 mod add_llm_provider_modal;
+mod configure_context_server_docs_modal;
 mod configure_context_server_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
@@ -39,6 +40,7 @@ use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
 use zed_actions::ExtensionCategoryFilter;
 
+pub(crate) use configure_context_server_docs_modal::ConfigureContextServerDocsModal;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
@@ -705,6 +707,17 @@ impl AgentConfiguration {
             .map_or([].as_slice(), |tools| tools.as_slice());
         let tool_count = tools.len();
 
+        let has_docs = self
+            .context_server_store
+            .read(cx)
+            .get_running_server(&context_server_id)
+            .and_then(|server| server.client())
+            .map(|client| {
+                client.capable(context_server::protocol::ServerCapability::Prompts)
+                    || client.capable(context_server::protocol::ServerCapability::Resources)
+            })
+            .unwrap_or(false);
+
         let (source_icon, source_tooltip) = if is_from_extension {
             (
                 IconName::ZedMcpExtension,
@@ -789,6 +802,28 @@ impl AgentConfiguration {
                                     ConfigureContextServerToolsModal::toggle(
                                         context_server_id,
                                         tools,
+                                        workspace,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            }
+                        }))
+                        .when(has_docs, |this| this.entry("View Docs", None, {
+                            let context_server_id = context_server_id.clone();
+                            let context_server_store = context_server_store.clone();
+                            let workspace = workspace.clone();
+
+                            move |window, cx| {
+                                let context_server_id = context_server_id.clone();
+                                let context_server_store = context_server_store.clone();
+                                let workspace = workspace.clone();
+
+                                workspace.update(cx, |workspace, cx| {
+                                    ConfigureContextServerDocsModal::toggle(
+                                        context_server_id,
+                                        context_server_store,
                                         workspace,
                                         window,
                                         cx,
