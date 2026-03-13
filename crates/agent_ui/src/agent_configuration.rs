@@ -1,5 +1,6 @@
 mod add_llm_provider_modal;
 mod configure_context_server_modal;
+mod configure_context_server_prompts_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -11,7 +12,7 @@ use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
-use context_server::ContextServerId;
+use context_server::{ContextServerId, types::Prompt};
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
@@ -40,6 +41,7 @@ use workspace::{Workspace, create_and_open_local_file};
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
+pub(crate) use configure_context_server_prompts_modal::ConfigureContextServerPromptsModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
@@ -56,6 +58,7 @@ pub struct AgentConfiguration {
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
+    context_server_prompts: HashMap<ContextServerId, Vec<Prompt>>,
     expanded_context_server_tools: HashMap<ContextServerId, bool>,
     expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
     tools: Entity<ToolWorkingSet>,
@@ -94,8 +97,21 @@ impl AgentConfiguration {
             },
         );
 
-        cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
-            .detach();
+        cx.subscribe(&context_server_store, |this, store, event, cx| {
+            cx.notify();
+            let project::context_server_store::Event::ServerStatusChanged { server_id, status } =
+                event;
+            match status {
+                ContextServerStatus::Running => {
+                    this.load_context_server_prompts(server_id.clone(), store, cx);
+                }
+                ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                    this.context_server_prompts.remove(server_id);
+                }
+                ContextServerStatus::Starting => {}
+            }
+        })
+        .detach();
 
         let mut this = Self {
             fs,
@@ -104,7 +120,8 @@ impl AgentConfiguration {
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             agent_server_store,
-            context_server_store,
+            context_server_store: context_server_store.clone(),
+            context_server_prompts: HashMap::default(),
             expanded_context_server_tools: HashMap::default(),
             expanded_provider_configurations: HashMap::default(),
             tools,
@@ -113,7 +130,46 @@ impl AgentConfiguration {
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
+
+        // Load prompts for any servers already running
+        for server in context_server_store.read(cx).running_servers() {
+            this.load_context_server_prompts(server.id(), context_server_store.clone(), cx);
+        }
+
         this
+    }
+
+    fn load_context_server_prompts(
+        &mut self,
+        server_id: ContextServerId,
+        context_server_store: Entity<ContextServerStore>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server) = context_server_store.read(cx).get_running_server(&server_id) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let Some(protocol) = server.client() else {
+                return;
+            };
+            if protocol
+                .capable(context_server::protocol::ServerCapability::Prompts)
+            {
+                if let Some(response) = protocol
+                    .request::<context_server::types::requests::PromptsList>(())
+                    .await
+                    .log_err()
+                {
+                    this.update(cx, |this, cx| {
+                        this.context_server_prompts
+                            .insert(server_id, response.prompts);
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+            }
+        })
+        .detach();
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -705,6 +761,13 @@ impl AgentConfiguration {
             .map_or([].as_slice(), |tools| tools.as_slice());
         let tool_count = tools.len();
 
+        let prompts = self
+            .context_server_prompts
+            .get(&context_server_id)
+            .cloned()
+            .unwrap_or_default();
+        let prompt_count = prompts.len();
+
         let (source_icon, source_tooltip) = if is_from_extension {
             (
                 IconName::ZedMcpExtension,
@@ -789,6 +852,24 @@ impl AgentConfiguration {
                                     ConfigureContextServerToolsModal::toggle(
                                         context_server_id,
                                         tools,
+                                        workspace,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            }
+                        }))
+                        .when(prompt_count >= 1, |this| this.entry("View Prompts", None, {
+                            let context_server_id = context_server_id.clone();
+                            let prompts = prompts.clone();
+                            let workspace = workspace.clone();
+
+                            move |window, cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    ConfigureContextServerPromptsModal::toggle(
+                                        context_server_id.clone(),
+                                        prompts.clone(),
                                         workspace,
                                         window,
                                         cx,
@@ -912,6 +993,17 @@ impl AgentConfiguration {
                                         SharedString::from("1 tool")
                                     } else {
                                         SharedString::from(format!("{} tools", tool_count))
+                                    })
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                                )
+                            })
+                            .when(is_running && prompt_count > 0, |this| {
+                                this.child(
+                                    Label::new(if prompt_count == 1 {
+                                        SharedString::from("1 prompt")
+                                    } else {
+                                        SharedString::from(format!("{} prompts", prompt_count))
                                     })
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
